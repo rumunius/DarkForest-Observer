@@ -1,0 +1,54 @@
+{
+  "name": "darkforest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25",
+    "npm": ">=11"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run build:web && concurrently --kill-others --names core,pages,web --prefix-colors cyan,magenta,green \"npm run dev:core\" \"npm run dev:pages\" \"npm run dev:web\"",
+    "dev:web": "npm run dev --workspace @darkforest/web",
+    "dev:pages": "npm run dev:pages --workspace @darkforest/web",
+    "dev:core": "npm run dev --workspace @darkforest/match-worker",
+    "build": "npm run build:web && npm run build:core",
+    "build:web": "npm run build --workspace @darkforest/web",
+    "build:core": "npm run build --workspace @darkforest/match-worker",
+    "cf:types": "npm run cf:types --workspaces --if-present",
+    "typecheck": "npm run cf:types && npm run typecheck --workspaces --if-present && tsc --project tsconfig.tools.json",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cf:login": "wrangler login",
+    "cf:whoami": "wrangler whoami",
+    "cf:preview:create": "npm run create:preview --workspace @darkforest/web",
+    "cf:preview:deploy:core": "npm run deploy:preview --workspace @darkforest/match-worker",
+    "cf:preview:deploy:web": "npm run deploy:preview --workspace @darkforest/web",
+    "cf:preview:deploy": "npm run cf:preview:deploy:core && npm run cf:preview:deploy:web"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261102.1",
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "concurrently": "10.0.6",
+    "eslint": "10.14.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vite": "8.3.5",
+    "vitest": "5.0.5",
+    "wrangler": "4.156.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261101.1": true
+  }
+}

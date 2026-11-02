@@ -1,0 +1,3 @@
+# Pages has no secrets at the skeleton stage.
+# Future values here are server-only. Never put secrets in VITE_* variables.
+# Local non-secret bindings are configured in wrangler.jsonc.

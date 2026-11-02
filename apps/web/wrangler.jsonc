@@ -1,0 +1,30 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "darkforest-pages-dev",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-11-01",
+  "vars": { "APP_ENV": "local" },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MATCH_DO",
+        "class_name": "DarkForestMatch",
+        "script_name": "darkforest-core-local",
+      },
+    ],
+  },
+  "env": {
+    "preview": {
+      "vars": { "APP_ENV": "preview" },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "MATCH_DO",
+            "class_name": "DarkForestMatch",
+            "script_name": "darkforest-core-preview",
+          },
+        ],
+      },
+    },
+  },
+}

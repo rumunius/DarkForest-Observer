@@ -1,0 +1,22 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "darkforest-core-local",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": { "APP_ENV": "local" },
+  "durable_objects": {
+    "bindings": [{ "name": "MATCH_DO", "class_name": "DarkForestMatch" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DarkForestMatch"] }],
+  "env": {
+    "preview": {
+      "name": "darkforest-core-preview",
+      "vars": { "APP_ENV": "preview" },
+      "durable_objects": {
+        "bindings": [{ "name": "MATCH_DO", "class_name": "DarkForestMatch" }],
+      },
+    },
+  },
+}

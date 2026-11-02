@@ -1,0 +1,8 @@
+# Documentation only: these are future server-only secrets, not working credentials.
+# When authentication and cryptography are implemented, generate independent random
+# keys locally for each environment and provision preview values via Wrangler secrets.
+# Do not copy placeholders into a deployed environment.
+# CODE_HMAC_KEY=
+# CODE_ENCRYPTION_KEY=
+# SESSION_SECRET=
+# JUDGE_CREDENTIAL_SECRET=

@@ -1,0 +1,44 @@
+# Dependencies and package manager output
+node_modules/
+.npm/
+*.tsbuildinfo
+
+# Builds, tests, and local Cloudflare state
+dist/
+coverage/
+playwright-report/
+test-results/
+.wrangler/
+.vite/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+!.dev.vars.*.example
+*.pem
+*.key
+
+# Local research and tooling output
+.firecrawl/
+.tavily/
+.tmp/
+*.log
+npm-debug.log*
+
+# Editors and OS files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Event data and private exports must remain local
+backups/
+exports/

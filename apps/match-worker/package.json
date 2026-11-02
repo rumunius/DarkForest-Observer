@@ -1,0 +1,16 @@
+{
+  "name": "@darkforest/match-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --ip 127.0.0.1 --port 8787 --persist-to ../../.wrangler/state",
+    "build": "wrangler deploy --env preview --dry-run --outdir dist",
+    "cf:types": "node ../../scripts/prepare-types.mjs && wrangler types .wrangler/types/env.d.ts --include-runtime false --env-interface MatchWorkerEnv",
+    "typecheck": "tsc --project tsconfig.json",
+    "deploy:preview": "wrangler deploy --env preview"
+  },
+  "dependencies": {
+    "@darkforest/contracts": "*"
+  }
+}
