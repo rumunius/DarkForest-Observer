@@ -13,6 +13,8 @@
     "deploy:preview": "npm run build && wrangler pages deploy dist --project-name darkforest-pages-dev --branch dev --commit-dirty=true --force"
   },
   "dependencies": {
-    "@darkforest/contracts": "*"
+    "@darkforest/contracts": "*",
+    "@fontsource-variable/noto-sans-sc": "5.3.1",
+    "@fontsource/ibm-plex-mono": "5.3.0"
   }
 }
