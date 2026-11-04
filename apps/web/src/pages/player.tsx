@@ -66,7 +66,7 @@ function Current() {
   const me = data.player!;
   const match = data.match!;
   let title = '飞船保持正常出航',
-    body = '亲眼观察其他飞船两臂的完整颜色分组，再提交目击攻击。',
+    body = '亲眼观察其他飞船两臂的完整颜色分组，提交目击攻击。',
     to = '/player/actions',
     action = '前往行动';
   let countdown: ReactNode = <Timer label="距离宇宙末日" deadline={RULES.apocalypseMs} large />;
@@ -159,7 +159,7 @@ function Current() {
     countdown = <Timer label="比赛剩余有效时间" deadline={RULES.regulationMs} large />;
   } else if (me.attackLockedUntil > match.serverUtcMs) {
     title = '暂时禁止目击攻击';
-    body = '你仍在出航，可以被其他玩家击毁。其他有资格的行动仍可使用。';
+    body = '因为你提交了错误目击码，你被暂时禁止目击攻击。你仍在出航，可以被其他玩家击毁。其他有资格的行动仍可使用。';
     action = '查看其他行动';
     countdown = (
       <Timer label="距离恢复目击攻击" clock="utc" deadline={me.attackLockedUntil} large />
@@ -181,9 +181,9 @@ function Current() {
       <PageTitle title="当前" aside={<PlayerStatus />} />
       <MatchSummary />
       <section className="current-task">
-        <div className="current-task-symbol">
+        {/* <div className="current-task-symbol">
           <Icon name={me.homeAlive ? 'planet' : 'current'} size={40} />
-        </div>
+        </div> */}
         <h2>{title}</h2>
         <p>{body}</p>
         {countdown}
@@ -453,8 +453,7 @@ function Preflight() {
       )}
       <Disclosure title="查看已完成的准备">
         <p className="secondary">
-          母星口令{me.homeworld ? `已保存为${me.homeworld}` : '尚未登记'}
-          。当前准备状态以页面显示为准。
+          母星口令{me.homeworld ? `已保存为${me.homeworld}` : '尚未登记'}。
         </p>
       </Disclosure>
     </>
@@ -596,7 +595,7 @@ function ResourceAction({ action }: { action: 'broadcast' | 'photon' }) {
     <>
       <Icon name={action} />
       <span>
-        {action === 'broadcast' ? '正式广播' : '发射光粒'}
+        {action === 'broadcast' ? '发送广播' : '发射光粒'}
         <small>
           {action === 'broadcast'
             ? `剩余${me.broadcasts}次`
@@ -626,7 +625,7 @@ function CoordinateAction({ action }: { action: 'broadcast' | 'photon' }) {
   const { data, operate, busy, pending } = useApp();
   const [value, setValue] = useState(new URLSearchParams(location.search).get('code') ?? '');
   const [done, setDone] = useState(false);
-  const title = action === 'broadcast' ? '正式广播' : '发射光粒';
+  const title = action === 'broadcast' ? '发送广播' : '发射光粒';
   const duplicate =
     action === 'broadcast' && data.events.some((e) => e.kind === 'broadcast' && e.code === value);
   return (
@@ -662,10 +661,6 @@ function CoordinateAction({ action }: { action: 'broadcast' | 'photon' }) {
           ) : (
             validCode(value) && (
               <>
-                <p className="secondary">
-                  确认{action === 'broadcast' ? '广播' : '发射至'}{' '}
-                  <strong className="numeric">{value}</strong>
-                </p>
                 <Button
                   className="primary full"
                   disabled={busy || !!pending}
@@ -805,20 +800,20 @@ function Messages() {
   return (
     <>
       <PageTitle title="消息" />
+      <Link className="row-link" to="/player/intel">
+        母星坐标情报箱
+        <Icon name="arrow" size={18} />
+      </Link>
       <Tabs
         tabs={[
           { id: 'personal', label: '本人消息' },
           { id: 'public', label: '公开事件' },
-          { id: 'broadcast', label: '正式广播' },
+          { id: 'broadcast', label: '宇宙广播' },
         ]}
         active={tab}
         onChange={setTab}
       />
       <Events events={events} detailsPrefix="/player/messages" />
-      <Link className="row-link" to="/player/intel">
-        母星情报
-        <Icon name="arrow" size={18} />
-      </Link>
     </>
   );
 }
@@ -826,7 +821,7 @@ function Intel() {
   const { data } = useApp();
   return (
     <>
-      <PageTitle title="母星情报" back="/player/messages" />
+      <PageTitle title="母星坐标情报箱" back="/player/messages" />
       {data.intel.length ? (
         data.intel.map((intel) => (
           <Frame key={intel.id}>
@@ -835,11 +830,10 @@ function Intel() {
             <p className="secondary">
               {intel.source}，比赛时间{formatTime(intel.gameMs)}
             </p>
-            <p>{intel.statusAtDiscovery}</p>
             <CopyText text={intel.code} label="复制六位口令" />
             {canAct(data, 'broadcast') && (
               <Link className="text-link" to={`/player/actions/broadcast?code=${intel.code}`}>
-                用于正式广播
+                用于广播
                 <Icon name="arrow" size={18} />
               </Link>
             )}
@@ -871,7 +865,7 @@ function Me() {
           <strong className="numeric">{me.flightNumber}</strong>
         </div>
         <div>
-          <span>正式广播额度</span>
+          <span>广播额度</span>
           <strong>
             剩余<span className="numeric">{me.broadcasts}</span>次
           </strong>
@@ -908,11 +902,11 @@ function Me() {
       )}
       {[
         { to: '/player/homeworld', label: '本人母星' },
-        { to: '/player/records', label: '个人战绩与航次' },
+        { to: '/player/records', label: '个人战绩' },
         { to: '/rules', label: '比赛规则' },
         { to: '/player/help', label: '联系裁判' },
         { to: '/player/exception', label: '异常申报' },
-        { to: '/player/account', label: '账号与显示偏好' },
+        { to: '/player/account', label: '账号与设置' },
       ].map((item) => (
         <Link className="row-link" to={item.to} key={item.to}>
           {item.label}
@@ -934,7 +928,7 @@ function Bracelets() {
         back="/player/me"
       />
       <p className="secondary">
-        第{me.flightNumber}航次{me.arms ? '，只读配置' : '，配置已失效'}
+        第{me.flightNumber}航次{me.arms ? '' : '，配置已失效'}
       </p>
       {me.arms ? (
         <>
@@ -1013,7 +1007,7 @@ function Account() {
   const [quit, setQuit] = useState(false);
   return (
     <>
-      <PageTitle title="账号与显示偏好" back="/player/me" />
+      <PageTitle title="账号与设置" back="/player/me" />
       <Identity id={data.player!.id} nickname={data.player!.nickname} />
       <div className="preferences">
         <label className="check-label">
@@ -1151,7 +1145,7 @@ export function Rules() {
         <section id="rules-3">
           <h2>广播与光粒</h2>
           <p>
-            第一阶段正常出航时，每个文明最多正式广播两次，可输入任意尚未正式广播的六位数字。广播消耗一次次数并公开口令；若对应某文明的登记母星，该文明私下获得广播者的母星口令。成功文案不鉴定口令真实性。
+            第一阶段正常出航时，每个文明最多正式广播两次，可输入任意尚未正式广播的六位数字。广播消耗一次次数并公开口令；若对应某文明的登记母星，该文明私下获得广播者的母星口令。广播发布后，不会告知这组六位口令是否对应母星。
           </p>
           <p>
             每个正式广播的口令每满60秒独立接受5%的歌者首次清理检定，最多清理一次。未来清理时间不公开。

@@ -6,6 +6,7 @@ import { Button, Empty, Field, Icon, Identity, Link, MatchSummary, PageTitle } f
 import { PlayerPages, Rules } from './pages/player';
 import { Display, ObserverPages, ResultsPages } from './pages/observe';
 import { JUDGE_NAV, JudgePages } from './pages/judge';
+import { Atmosphere } from './components/atmosphere';
 
 function Stars() {
   return (
@@ -366,6 +367,7 @@ function Screen() {
     <div
       className={`site-shell ${judge ? 'judge-shell' : display ? 'display-shell' : 'player-shell'} ${!data.session ? 'public-shell' : ''}`}
     >
+      <Atmosphere />
       {(route === '/' || route === '/player' || route === '/player/bracelets' || display) && (
         <Stars />
       )}
@@ -377,7 +379,6 @@ function Screen() {
           </Link>
           {data.player && <Identity id={data.player.id} nickname={data.player.nickname} />}
           <MatchSummary compact />
-          <p>当前状态与行动以本场比赛为准。</p>
         </aside>
       )}
       <main ref={main} id="main-content" className="main-content">

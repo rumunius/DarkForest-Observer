@@ -222,7 +222,7 @@ export function EventExplorer({ title = '赛事事件', back }: { title?: string
               {[
                 ['all', '全部事件'],
                 ['sighting', '目击攻击'],
-                ['broadcast', '正式广播'],
+                ['broadcast', '广播'],
                 ['photon', '光粒'],
                 ['singer', '歌者'],
                 ['respawn', '重生'],

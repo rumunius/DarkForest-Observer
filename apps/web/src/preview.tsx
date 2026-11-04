@@ -138,7 +138,11 @@ function PreviewApp() {
       source={source}
       base="/dev-preview"
       epoch={epoch}
-      preview={<Controls onReset={() => setEpoch((e) => e + 1)} />}
+      preview={
+        new URLSearchParams(location.search).get('tools') === 'hidden' ? null : (
+          <Controls onReset={() => setEpoch((e) => e + 1)} />
+        )
+      }
     />
   );
 }

@@ -180,7 +180,7 @@ export class MockSource implements DataSource {
       {
         id: 'EVT-106',
         kind: 'broadcast',
-        title: 'C12（漂流者）发布正式广播',
+        title: 'C12（漂流者）发布广播',
         body: '这组六位口令已公开。',
         gameMs: 30 * 60000 + 12000,
         utcMs: now - 288000,
@@ -278,8 +278,7 @@ export class MockSource implements DataSource {
           nickname: '漂流者',
           code: '739216',
           gameMs: 25 * 60000 + 10000,
-          source: '成功目击获得',
-          statusAtDiscovery: '获知时母星尚存',
+          source: '成功目击获得'
         },
       ],
       civilizations,
@@ -311,7 +310,7 @@ export class MockSource implements DataSource {
             id: 'N2',
             target: '比赛QQ群',
             channel: 'group',
-            title: '正式广播公告',
+            title: '广播公告',
             body: '【坐标广播】\nC12（漂流者）发送了一条坐标广播001234，该坐标已公开。',
             status: 'copied',
             version: 2,
@@ -693,7 +692,7 @@ export class MockSource implements DataSource {
         ['homeworld-submit', 'broadcast', 'photon'].includes(action) &&
         !validCode(String(payload.code ?? ''))
       )
-        throw new ApiError('请输入6位数字，开头的0也需要保留。', 422);
+        throw new ApiError('请输入6位数字', 422);
       switch (action) {
         case 'nickname': {
           const name = String(payload.nickname ?? '').trim();
@@ -778,7 +777,7 @@ export class MockSource implements DataSource {
           this.state.events.unshift({
             id: `EVT-${crypto.randomUUID()}`,
             kind: 'broadcast',
-            title: `${me.id}（${me.nickname}）发布正式广播`,
+            title: `${me.id}（${me.nickname}）发布广播`,
             body: '这组六位口令已公开。',
             code,
             audience: 'public',

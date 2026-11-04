@@ -5,7 +5,6 @@ import {
   useState,
   type ButtonHTMLAttributes,
   type ReactNode,
-  type PointerEvent as ReactPointerEvent,
 } from 'react';
 import {
   COLORS,
@@ -58,10 +57,11 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   planet: (
-    <>
+    <g transform="rotate(-20 12 12)" strokeLinecap="round">
+      <path d="M2 12A10 3.5 0 0 1 6.802 9.01M17.198 9.01A10 3.5 0 0 1 22 12" />
       <circle cx="12" cy="12" r="6" />
-      <path d="M6 8C-3 12 2 20 14 16s14-11 4-10" />
-    </>
+      <path d="M2 12A10 3.5 0 0 0 22 12" />
+    </g>
   ),
   broadcast: (
     <>
@@ -274,7 +274,7 @@ export function CodeField({
   label?: string;
 }) {
   return (
-    <Field label={label} hint="请输入6位数字，开头的0也需要保留。">
+    <Field label={label} hint="请输入6位数字">
       <input
         className="code-input"
         type="text"
@@ -344,7 +344,6 @@ export function MatchSummary({ compact = false }: { compact?: boolean }) {
           当前阶段：{STAGE_NAMES[match.stage]}
         </span>
         <div className="match-time">
-          <span>有效比赛时间</span>
           <strong className="numeric">{formatTime(now.game)}</strong>
         </div>
         {match.paused && (
@@ -420,9 +419,13 @@ export function Identity({ id, nickname }: { id: string; nickname: string }) {
 export function PlayerStatus() {
   const { data } = useApp();
   const me = data.player;
+  const danger = me && ['eliminated', 'returning', 'preparing', 'issued'].includes(me.flight);
+  const attention = me?.flight === 'active' && !me.homeAlive;
   return (
     me && (
-      <Status tone={me.flight === 'eliminated' ? 'danger' : ''}>{FLIGHT_NAMES[me.flight]}</Status>
+      <Status tone={danger ? 'danger' : attention ? 'attention' : ''}>
+        {FLIGHT_NAMES[me.flight]}
+      </Status>
     )
   );
 }
@@ -448,16 +451,18 @@ export function MiniArms({ arms }: { arms: Arms | null }) {
   );
 }
 function Hand({ mirror = false }: { mirror?: boolean }) {
+  // Adapted from Tabler Icons hand-stop (MIT), with adjusted finger lengths and a forearm.
+  // Source and license: docs/手部SVG参考与许可.md
   return (
-    <svg className="hand" viewBox="0 0 140 260" aria-hidden="true">
-      <g transform={mirror ? 'translate(140 0) scale(-1 1)' : undefined}>
+    <svg className="hand" viewBox="0 0 180 360" aria-hidden="true">
+      <g transform={mirror ? 'translate(180 0) scale(-1 1)' : undefined}>
         <path
-          d="M42 259 40 166 26 141 17 116 18 107 24 104 31 110 40 128 42 67 43 30 48 25 53 29 55 83 58 14 63 9 68 14 69 82 74 19 79 16 84 21 82 87 89 40 94 37 99 42 98 108 98 135 92 164 96 259"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
+          className="hand-silhouette"
+          transform="translate(20 -1) scale(5 7)"
+          vectorEffect="non-scaling-stroke"
+          d="M6.8 51.6C7.4 42 8.3 32 9 26C9.2 24 8.8 22.7 7.196 20.3C6.884 19.821 5.489 17.312 3.21 13.172A1.5 1.5 0 0 1 3.746 11.15A1.867 1.867 0 0 1 6.026 11.43L8 14.1L7.6 5.5a1.3 1.3 0 0 1 2.6 0L10.8 10.3Q11 10.8 11.2 10.3V3.5a1.3 1.3 0 0 1 2.6 0V10.2Q14 10.7 14.2 10.2L14.7 5.75a1.3 1.3 0 0 1 2.6 0L17.1 10.7Q17.2 11.2 17.4 10.7L17.8 7.75a1.15 1.15 0 0 1 2.3 0L20 16C20 19 18.8 20.5 18.8 23L19 26C19.7 32 20.6 42 21.2 51.6Z"
         />
-        <path d="M40 166h52" fill="none" stroke="currentColor" strokeWidth="1" />
+        <path className="hand-detail" d="M60 98C69 106 74 115 75 126M66 168Q90 173 114 168" />
       </g>
     </svg>
   );
@@ -468,16 +473,12 @@ export function ArmsView({
   selected = null,
   onSelect,
   onRemove,
-  onPointerDown,
-  dragging,
 }: {
   arms: Arms;
   editable?: boolean;
   selected?: number | null;
   onSelect?: (arm: number) => void;
   onRemove?: (id: ColorId) => void;
-  onPointerDown?: (event: ReactPointerEvent, id: ColorId) => void;
-  dragging?: ColorId | null;
 }) {
   const { data, names } = useApp();
   return (
@@ -486,7 +487,6 @@ export function ArmsView({
         <div
           key={index}
           className={`arm ${selected === index ? 'selected' : ''}`}
-          data-drop-arm={editable ? index : undefined}
           role="group"
           aria-label={index ? '另一侧手臂' : '一侧手臂'}
         >
@@ -499,48 +499,45 @@ export function ArmsView({
               <CutOutline cut={10} />
               <span className="arm-title">
                 {index ? '另一侧手臂' : '一侧手臂'}
-                <small>
-                  {selected === index ? '正在选择' : arm.length ? `${arm.length}条` : '尚未选择'}
-                </small>
               </span>
             </button>
           ) : (
             <div className="arm-title">
               {index ? '另一侧手臂' : '一侧手臂'}
-              <small>{arm.length}条</small>
             </div>
           )}
-          <Hand mirror={index === 1} />
-          <div className="arm-bands">
-            {COLORS.filter((c) => arm.includes(c.id)).map((c) =>
-              editable ? (
-                <button
-                  key={c.id}
-                  data-color={c.id}
-                  className={`wrist-band ${dragging === c.id ? 'drag-origin' : ''}`}
-                  aria-label={`${c.name}，${index ? '另一侧手臂' : '一侧手臂'}，点击移除`}
-                  onPointerDown={(e) => onPointerDown?.(e, c.id)}
-                  onClick={() => onRemove?.(c.id)}
-                >
-                  <span
-                    data-swatch={c.id}
-                    className="swatch"
-                    style={{ backgroundColor: data.site.colors[c.id] }}
-                  />
-                  {names && <span className="band-name">{c.name}</span>}
-                </button>
-              ) : (
-                <div key={c.id} className="wrist-band">
-                  <span
-                    className="swatch"
-                    style={{ backgroundColor: data.site.colors[c.id] }}
-                    role="img"
-                    aria-label={c.name}
-                  />
-                  {names && <span className="band-name">{c.name}</span>}
-                </div>
-              ),
-            )}
+          <div className="arm-figure">
+            <Hand mirror={index === 1} />
+            <div className="arm-bands">
+              {COLORS.filter((c) => arm.includes(c.id)).map((c) =>
+                editable ? (
+                  <button
+                    key={c.id}
+                    data-color={c.id}
+                    className="wrist-band"
+                    aria-label={`${c.name}，${index ? '另一侧手臂' : '一侧手臂'}，点击移除`}
+                    onClick={() => onRemove?.(c.id)}
+                  >
+                    <span
+                      data-swatch={c.id}
+                      className="swatch"
+                      style={{ backgroundColor: data.site.colors[c.id] }}
+                    />
+                    {names && <span className="band-name">{c.name}</span>}
+                  </button>
+                ) : (
+                  <div key={c.id} className="wrist-band">
+                    <span
+                      className="swatch"
+                      style={{ backgroundColor: data.site.colors[c.id] }}
+                      role="img"
+                      aria-label={c.name}
+                    />
+                    {names && <span className="band-name">{c.name}</span>}
+                  </div>
+                ),
+              )}
+            </div>
           </div>
         </div>
       ))}
@@ -604,7 +601,10 @@ export function Events({ events, detailsPrefix }: { events: GameEvent[]; details
   return events.length ? (
     <div className="event-list">
       {events.map((event) => (
-        <article className="event-row" key={event.id}>
+        <article
+          className={`event-row ${['photon', 'singer'].includes(event.kind) ? 'event-danger' : ''}`}
+          key={event.id}
+        >
           <span className="event-icon">
             <Icon
               name={
@@ -695,19 +695,18 @@ export function ColorEditor() {
     online,
     operate,
   } = useApp();
-  const [feedback, setFeedback] = useState('已选择一侧手臂，请选择颜色。');
   const [confirmation, setConfirmation] = useState<Arms | null>(null);
-  const [dragging, setDragging] = useState<ColorId | null>(null);
-  const [moving, setMoving] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-  const ghost = useRef<HTMLDivElement>(null);
   const previous = useRef(new Map<string, DOMRect>());
   const draftRef = useRef(draft);
   draftRef.current = draft;
-  const cancelRef = useRef<() => void>(() => {});
-  const suppressClick = useRef(false);
   const locked = busy || !!pending || !online;
   const valid = validArms(draft);
+  const capturePositions = () => {
+    root.current?.querySelectorAll<HTMLElement>('[data-swatch]').forEach((element) => {
+      previous.current.set(element.dataset.swatch!, element.getBoundingClientRect());
+    });
+  };
   useEffect(() => {
     setSelectedArm(0);
     root.current?.querySelector<HTMLElement>('.arm-select')?.focus({ preventScroll: true });
@@ -721,7 +720,6 @@ export function ColorEditor() {
       if (
         old &&
         !reduced &&
-        !moving &&
         (old.x !== rect.x || old.y !== rect.y || old.width !== rect.width)
       ) {
         element.getAnimations().forEach((a) => a.cancel());
@@ -738,145 +736,75 @@ export function ColorEditor() {
       next.set(key, rect);
     });
     previous.current = next;
-  }, [draft, reduced, moving]);
+  }, [draft, reduced]);
+  useEffect(() => {
+    const settle = () => {
+      root.current?.querySelectorAll('[data-swatch], .palette-color').forEach((element) => {
+        element.getAnimations().forEach((animation) => animation.cancel());
+      });
+      previous.current.clear();
+    };
+    window.addEventListener('resize', settle);
+    window.addEventListener('blur', settle);
+    document.addEventListener('visibilitychange', settle);
+    if (reduced || locked) settle();
+    return () => {
+      window.removeEventListener('resize', settle);
+      window.removeEventListener('blur', settle);
+      document.removeEventListener('visibilitychange', settle);
+    };
+  }, [reduced, locked]);
+  const rejectPaletteColor = (id: ColorId) => {
+    const element = root.current?.querySelector<HTMLElement>(`.palette-color[data-color="${id}"]`);
+    if (!element) return;
+    element.getAnimations().forEach((animation) => animation.cancel());
+    const still = reduced || matchMedia('(prefers-reduced-motion: reduce)').matches;
+    element.animate(
+      still
+        ? [
+            { boxShadow: 'inset 0 0 0 1px var(--attention)' },
+            { boxShadow: 'inset 0 0 0 1px transparent' },
+          ]
+        : [
+            { transform: 'translateX(0)' },
+            { transform: 'translateX(-4px)' },
+            { transform: 'translateX(4px)' },
+            { transform: 'translateX(-3px)' },
+            { transform: 'translateX(3px)' },
+            { transform: 'translateX(0)' },
+          ],
+      { duration: still ? 160 : 260, easing: 'ease-out' },
+    );
+  };
   const move = (id: ColorId, target: number | null) => {
     if (locked) return;
     const result = moveBracelet(draftRef.current, id, target);
     if ('error' in result) {
-      setFeedback(result.error);
+      rejectPaletteColor(id);
       return;
     }
     const next = result.arms;
     target = result.target;
     if (target !== null) setSelectedArm(target);
-    const name = COLORS.find((c) => c.id === id)!.name;
+    const viewport = { x: window.scrollX, y: window.scrollY };
+    capturePositions();
     setDraft(next);
-    setFeedback(
-      target === null
-        ? `${name}已退回色盘。`
-        : `${result.overflow ? '原手臂已满，已自动切换。' : ''}${name}已移到${target ? '另一侧手臂' : '一侧手臂'}，共${next[target]!.length}条。`,
-    );
-    requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
       root.current
         ?.querySelector<HTMLElement>(`[data-color="${id}"]`)
-        ?.focus({ preventScroll: true }),
-    );
+        ?.focus({ preventScroll: true });
+      // Reparenting the focused color must not scroll the player's input away.
+      window.scrollTo(viewport.x, viewport.y);
+    });
   };
   const click = (id: ColorId, remove = false) => {
-    if (suppressClick.current || dragging || locked) return;
+    if (locked) return;
     if (remove) move(id, null);
-    else if (selectedArm === null) setFeedback('请先选择一侧手臂。');
+    else if (selectedArm === null) rejectPaletteColor(id);
     else move(id, selectedArm);
   };
-  const pointerDown = (event: ReactPointerEvent, id: ColorId) => {
-    if (locked || dragging || event.button !== 0 || !event.isPrimary) return;
-    const startX = event.clientX,
-      startY = event.clientY,
-      pointerId = event.pointerId;
-    const origin = event.currentTarget as HTMLElement;
-    const color = origin.querySelector<HTMLElement>('.swatch')?.getBoundingClientRect();
-    let active = false;
-    let cancelled = false;
-    let x = startX;
-    let y = startY;
-    const position = () => {
-      if (ghost.current) {
-        ghost.current.style.left = `${x}px`;
-        ghost.current.style.top = `${y - (event.pointerType === 'touch' ? 20 : 0)}px`;
-      }
-    };
-    const lift = () => {
-      if (cancelled) return;
-      active = true;
-      suppressClick.current = true;
-      setMoving(true);
-      setDragging(id);
-      origin.setPointerCapture(pointerId);
-      requestAnimationFrame(position);
-    };
-    const timer = event.pointerType === 'touch' ? window.setTimeout(lift, 180) : undefined;
-    const clear = () => {
-      if (timer) clearTimeout(timer);
-      cancelled = true;
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
-      document.removeEventListener('pointercancel', cancel);
-      document.removeEventListener('touchmove', onTouchMove);
-      origin.removeEventListener('lostpointercapture', cancel);
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('blur', cancel);
-      window.removeEventListener('resize', cancel);
-      document.removeEventListener('visibilitychange', cancel);
-      if (origin.hasPointerCapture(pointerId)) origin.releasePointerCapture(pointerId);
-      root.current
-        ?.querySelectorAll('.drop-active')
-        .forEach((el) => el.classList.remove('drop-active'));
-      setDragging(null);
-      window.setTimeout(() => {
-        suppressClick.current = false;
-        setMoving(false);
-      }, 0);
-    };
-    const cancel = () => {
-      clear();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancel();
-    };
-    const onTouchMove = (e: TouchEvent) => {
-      if (active && e.cancelable) e.preventDefault();
-    };
-    const onMove = (e: PointerEvent) => {
-      if (e.pointerId !== pointerId) return;
-      x = e.clientX;
-      y = e.clientY;
-      const distance = Math.hypot(x - startX, y - startY);
-      if (!active && event.pointerType === 'touch' && distance > 8) {
-        cancel();
-        return;
-      }
-      if (!active && event.pointerType !== 'touch' && distance > 6) lift();
-      if (!active) return;
-      e.preventDefault();
-      position();
-      root.current
-        ?.querySelectorAll('.drop-active')
-        .forEach((el) => el.classList.remove('drop-active'));
-      document
-        .elementFromPoint(x, y)
-        ?.closest('[data-drop-arm], [data-palette]')
-        ?.classList.add('drop-active');
-    };
-    const onUp = (e: PointerEvent) => {
-      if (e.pointerId !== pointerId) return;
-      if (active) {
-        const target = document
-          .elementFromPoint(e.clientX, e.clientY)
-          ?.closest<HTMLElement>('[data-drop-arm], [data-palette]');
-        if (target?.dataset.dropArm !== undefined) {
-          const index = Number(target.dataset.dropArm);
-          move(id, index);
-        } else if (target?.hasAttribute('data-palette')) move(id, null);
-      }
-      clear();
-    };
-    if (color) {
-      document.addEventListener('pointermove', onMove, { passive: false });
-      document.addEventListener('pointerup', onUp);
-      document.addEventListener('pointercancel', cancel);
-      document.addEventListener('touchmove', onTouchMove, { passive: false });
-      origin.addEventListener('lostpointercapture', cancel);
-      document.addEventListener('keydown', onKey);
-      window.addEventListener('blur', cancel);
-      window.addEventListener('resize', cancel);
-      document.addEventListener('visibilitychange', cancel);
-      cancelRef.current = cancel;
-    }
-  };
-  useEffect(() => () => cancelRef.current(), []);
   useEffect(() => {
     if (locked) {
-      cancelRef.current();
       setConfirmation(null);
     }
   }, [locked]);
@@ -894,13 +822,11 @@ export function ColorEditor() {
         selected={selectedArm}
         onSelect={setSelectedArm}
         onRemove={(id) => click(id, true)}
-        onPointerDown={pointerDown}
-        dragging={dragging}
       />
       <p className="arm-caption">同侧顺序不限，两侧可以交换。</p>
       {!locked && (
         <>
-          <div className="palette" data-palette="true" aria-label="共享七色盘">
+          <div className="palette" aria-label="共享七色盘">
             {COLORS.map((c) =>
               draft.flat().includes(c.id) ? (
                 <span key={c.id} className="palette-space" aria-hidden="true" />
@@ -909,10 +835,9 @@ export function ColorEditor() {
                   key={c.id}
                   type="button"
                   data-color={c.id}
-                  className={`palette-color ${dragging === c.id ? 'drag-origin' : ''}`}
+                  className="palette-color"
                   aria-label={`${c.name}，色盘，点击移入所选手臂`}
                   onClick={() => click(c.id)}
-                  onPointerDown={(e) => pointerDown(e, c.id)}
                 >
                   <span
                     className="swatch"
@@ -930,9 +855,16 @@ export function ColorEditor() {
                 <button
                   className="text-button"
                   onClick={() => {
+                    const viewport = { x: window.scrollX, y: window.scrollY };
+                    capturePositions();
                     setDraft([[], []]);
                     setSelectedArm(0);
-                    setFeedback('已清空选择，请为一侧手臂选择颜色。');
+                    requestAnimationFrame(() => {
+                      root.current
+                        ?.querySelector<HTMLElement>('.arm-select')
+                        ?.focus({ preventScroll: true });
+                      window.scrollTo(viewport.x, viewport.y);
+                    });
                   }}
                 >
                   清空选择
@@ -942,45 +874,50 @@ export function ColorEditor() {
           </div>
         </>
       )}
-      <p className="selection-feedback secondary" aria-live="polite">
-        {feedback}
-      </p>
-      <div className="attack-consequence">
-        <p className="secondary">
-          提交错误目击码的次数 <strong className="numeric">{wrong}</strong>
-        </p>
-        <p>
-          {wrong === 0
-            ? '提交错误的目击码，将禁止目击攻击5分钟。'
-            : wrong === 1
-              ? '再次提交错误的目击码，有50%的概率永久淘汰，有50%的概率禁止目击攻击15分钟。'
-              : '再次提交错误的目击码，将永久淘汰。'}
-        </p>
-      </div>
-      {valid && !locked ? (
-        <Button
-          className="primary full"
-          disabled={!!dragging}
-          onClick={() => setConfirmation([[...draft[0]], [...draft[1]]])}
-        >
-          <Icon name="action" size={20} />
-          确认攻击
-          <Icon name="arrow" size={20} />
-        </Button>
-      ) : (
-        !locked && (
-          <p className="confirm-hint">
-            {draft.every((a) => a.length)
-              ? '两侧数量应为两条与一条、两条与两条，或三条与一条。'
-              : '请选完两侧手臂的颜色。'}
+      <div className="attack-commit">
+        <div className={`attack-consequence ${wrong > 0 ? 'consequence-danger' : ''}`}>
+          <p className="secondary">
+            提交错误目击码的次数 <strong className="numeric">{wrong}</strong>
           </p>
-        )
-      )}
+          <p>
+            {wrong === 0
+              ? '提交错误的目击码，将禁止目击攻击5分钟。'
+              : wrong === 1
+                ? '再次提交错误的目击码，有50%的概率永久淘汰，有50%的概率禁止目击攻击15分钟。'
+                : '再次提交错误的目击码，将永久淘汰。'}
+          </p>
+        </div>
+        {valid && !locked ? (
+          <Button
+            className="primary full attack-submit"
+            onClick={() => setConfirmation([[...draft[0]], [...draft[1]]])}
+          >
+            <Icon name="action" size={20} />
+            确认攻击
+            <Icon name="arrow" size={20} />
+          </Button>
+        ) : (
+          !locked && (
+            <p className="confirm-hint">
+              {draft.every((a) => a.length)
+                ? '两侧数量应为两条与一条、两条与两条，或三条与一条。'
+                : '请选完两侧手臂的颜色。'}
+            </p>
+          )
+        )}
+      </div>
       {confirmation && valid && !locked && (
         <AttackConfirmation
           arms={confirmation}
           wrong={wrong}
-          onCancel={() => setConfirmation(null)}
+          onCancel={() => {
+            setConfirmation(null);
+            requestAnimationFrame(() =>
+              root.current
+                ?.querySelector<HTMLElement>('.attack-submit')
+                ?.focus({ preventScroll: true }),
+            );
+          }}
           onConfirm={async () => {
             const arms = confirmation;
             setConfirmation(null);
@@ -992,14 +929,7 @@ export function ColorEditor() {
           }}
         />
       )}
-      {dragging && (
-        <div
-          className="drag-ghost"
-          ref={ghost}
-          style={{ backgroundColor: data.site.colors[dragging] }}
-          aria-hidden="true"
-        />
-      )}
+
     </div>
   );
 }
@@ -1033,7 +963,6 @@ function AttackConfirmation({
       }}
     >
       <Frame>
-        <span className="eyebrow">目击攻击 · 最终核对</span>
         <h2 id="attack-confirm-title">确认提交这组手环？</h2>
         {arms.map((arm, index) => (
           <div className="confirmation-arm" key={index}>
@@ -1065,7 +994,7 @@ function AttackConfirmation({
           <Button autoFocus onClick={onCancel}>
             返回检查
           </Button>
-          <Button className="primary" onClick={onConfirm}>
+          <Button className="primary attack-submit" onClick={onConfirm}>
             确认提交攻击
           </Button>
         </div>

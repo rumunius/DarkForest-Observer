@@ -1098,11 +1098,11 @@ function SystemStatus() {
       <PageTitle title="系统状态" />
       <div className="stat-lines">
         <div>
-          <span>最近成功调度</span>
+          <span>最近一次成功处理时间</span>
           <strong>{new Date(s.lastSuccessUtcMs).toLocaleTimeString('zh-CN')}</strong>
         </div>
         <div>
-          <span>下一次唤醒</span>
+          <span>下次自动处理时间</span>
           <strong>
             {s.nextWakeUtcMs
               ? new Date(s.nextWakeUtcMs).toLocaleTimeString('zh-CN')
@@ -1110,7 +1110,7 @@ function SystemStatus() {
           </strong>
         </div>
         <div>
-          <span>到期积压</span>
+          <span>已到期但尚未处理的事件</span>
           <strong>{s.backlog}个事件</strong>
         </div>
         <div>
@@ -1119,9 +1119,9 @@ function SystemStatus() {
         </div>
       </div>
       <ManagementForm
-        title="重新安排调度"
+        title="重新安排自动处理时间"
         path="/judge/scheduler/rearm"
-        change="根据当前持久化赛事计划，重新安排最近一次唤醒"
+        change="根据已保存的赛事计划，重新安排下次自动处理时间"
       />
       <ManagementForm
         title="结算到期事件"
@@ -1302,7 +1302,7 @@ function ResultsManagement() {
         </>
       ) : (
         <Empty title="当前尚未正式完赛" to="/judge">
-          名次直接采用服务器归档结果，不按当前列表推算。
+          比赛结束后可查看并导出正式结果。
         </Empty>
       )}
     </>
@@ -1314,7 +1314,7 @@ function JudgeAccount() {
     <>
       <PageTitle title="裁判账号" />
       <h2>{data.session!.name}</h2>
-      <p className="secondary">职责授权由服务端确认。</p>
+      <p className="secondary">当前账号可以使用以下功能。</p>
       <div className="permission-list">
         {JUDGE_NAV.flatMap((g) => g.items)
           .filter(([area]) => judgeCan(data, area!))

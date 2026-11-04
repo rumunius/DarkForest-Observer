@@ -125,7 +125,6 @@ export interface Intel {
   code: string;
   gameMs: number;
   source: string;
-  statusAtDiscovery: string;
 }
 export interface Voyage {
   number: number;
