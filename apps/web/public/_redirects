@@ -1,0 +1,13 @@
+/dev-preview /dev-preview/ 302
+/dev-preview/* /dev-preview/index.html 200
+/player /index.html 200
+/player/* /index.html 200
+/judge /index.html 200
+/judge/* /index.html 200
+/observer /index.html 200
+/observer/* /index.html 200
+/results /index.html 200
+/results/* /index.html 200
+/display /index.html 200
+/login /index.html 200
+/rules /index.html 200
