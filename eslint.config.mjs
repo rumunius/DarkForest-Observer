@@ -6,7 +6,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['apps/web/src/**/*.ts', 'packages/contracts/src/**/*.ts'],
+    files: ['apps/web/src/**/*.{ts,tsx}', 'packages/contracts/src/**/*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',

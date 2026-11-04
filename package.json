@@ -14,6 +14,7 @@
   "scripts": {
     "dev": "npm run build:web && concurrently --kill-others --names core,pages,web --prefix-colors cyan,magenta,green \"npm run dev:core\" \"npm run dev:pages\" \"npm run dev:web\"",
     "dev:web": "npm run dev --workspace @darkforest/web",
+    "dev:preview": "npm run dev --workspace @darkforest/web -- --open /dev-preview/",
     "dev:pages": "npm run dev:pages --workspace @darkforest/web",
     "dev:core": "npm run dev --workspace @darkforest/match-worker",
     "build": "npm run build:web && npm run build:core",
@@ -38,6 +39,8 @@
     "@cloudflare/workers-types": "5.20261102.1",
     "@eslint/js": "10.0.1",
     "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "concurrently": "10.0.6",
     "eslint": "10.14.0",
     "prettier": "3.9.10",

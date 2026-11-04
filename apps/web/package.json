@@ -13,6 +13,8 @@
     "deploy:preview": "npm run build && wrangler pages deploy dist --project-name darkforest-pages-dev --branch dev --commit-dirty=true --force"
   },
   "dependencies": {
-    "@darkforest/contracts": "*"
+    "@darkforest/contracts": "*",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   }
 }
