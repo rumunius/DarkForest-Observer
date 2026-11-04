@@ -336,7 +336,6 @@ function Preflight() {
   const me = data.player!;
   const match = data.match!;
   const [checked, setChecked] = useState(false);
-  const [swap, setSwap] = useState(false);
   const submit = (action: Action) => void operate(`/action/${action}`);
   return (
     <>
@@ -413,10 +412,7 @@ function Preflight() {
       ) : me.flight === 'outfitting' && me.arms ? (
         <>
           <h2>需要佩戴的手环</h2>
-          <ArmsView arms={swap ? [me.arms[1], me.arms[0]] : me.arms} />
-          <button className="text-button" onClick={() => setSwap(!swap)}>
-            交换两侧示意
-          </button>
+          <ArmsView arms={me.arms} />
           <p>请按图示佩戴手环，其余手环收入口袋。同侧顺序不限，两侧可以交换。</p>
           {canAct(data, 'preflight-ready') && (
             <Button
@@ -564,8 +560,6 @@ function Respawn() {
 function Actions({ sightingOnly = false }: { sightingOnly?: boolean }) {
   const { data } = useApp();
   const sighting = canAct(data, 'sighting');
-  const broadcast = canAct(data, 'broadcast');
-  const photon = canAct(data, 'photon');
   return (
     <>
       <PageTitle
@@ -573,39 +567,59 @@ function Actions({ sightingOnly = false }: { sightingOnly?: boolean }) {
         back={sightingOnly ? '/player/actions' : undefined}
       />
       {sighting ? <ColorEditor /> : <LockedAction />}
-      {!sightingOnly && (broadcast || photon) && (
+      {!sightingOnly && (
         <div className="other-actions">
-          {broadcast && (
-            <Link to="/player/actions/broadcast">
-              <Icon name="broadcast" />
-              <span>
-                正式广播<small>剩余{data.player!.broadcasts}次</small>
-              </span>
-              <Icon name="arrow" size={18} />
-            </Link>
-          )}
-          {photon && (
-            <Link to="/player/actions/photon">
-              <Icon name="photon" />
-              <span>
-                发射光粒<small>可用{data.player!.photons}枚</small>
-              </span>
-              <Icon name="arrow" size={18} />
-            </Link>
-          )}
+          <ResourceAction action="broadcast" />
+          <ResourceAction action="photon" />
         </div>
       )}
       <Disclosure title="查看目击规则">
         <p>
           必须在比赛开始后亲眼观察目标两臂当前完整配置。同色只能出现一次，合法数量为两条与一条、两条与两条、三条与一条。
         </p>
-        <p>输入和拖动颜色不会攻击。点击“确认攻击”才提交。不要远程猜码或使用照片录像放大读码。</p>
+        <p>
+          输入和拖动颜色不会攻击。点击“确认攻击”并在弹窗核对后才提交。不要远程猜码或使用照片录像放大读码。
+        </p>
         <Link className="text-link" to="/rules?topic=sighting">
           查看完整规则
           <Icon name="arrow" size={18} />
         </Link>
       </Disclosure>
     </>
+  );
+}
+function ResourceAction({ action }: { action: 'broadcast' | 'photon' }) {
+  const { data } = useApp();
+  const me = data.player!;
+  const available = canAct(data, action);
+  const content = (
+    <>
+      <Icon name={action} />
+      <span>
+        {action === 'broadcast' ? '正式广播' : '发射光粒'}
+        <small>
+          {action === 'broadcast'
+            ? `剩余${me.broadcasts}次`
+            : me.photons > 0
+              ? `剩余${me.photons}枚光粒`
+              : '无光粒'}
+        </small>
+      </span>
+      {available ? (
+        <Icon name="arrow" size={18} />
+      ) : (
+        <small className="action-unavailable">不可用</small>
+      )}
+    </>
+  );
+  return available ? (
+    <Link className="resource-action" to={`/player/actions/${action}`}>
+      {content}
+    </Link>
+  ) : (
+    <div className="resource-action unavailable" aria-disabled="true">
+      {content}
+    </div>
   );
 }
 function CoordinateAction({ action }: { action: 'broadcast' | 'photon' }) {
@@ -857,6 +871,24 @@ function Me() {
           <strong className="numeric">{me.flightNumber}</strong>
         </div>
         <div>
+          <span>正式广播额度</span>
+          <strong>
+            剩余<span className="numeric">{me.broadcasts}</span>次
+          </strong>
+        </div>
+        <div>
+          <span>光粒额度</span>
+          <strong>
+            {me.photons > 0 ? (
+              <>
+                剩余<span className="numeric">{me.photons}</span>枚
+              </>
+            ) : (
+              '无光粒'
+            )}
+          </strong>
+        </div>
+        <div>
           <span>已击毁的不同文明数</span>
           <strong className="numeric">{me.kills}</strong>
         </div>
@@ -1052,6 +1084,17 @@ export function PlayerPages() {
 
 export function Rules() {
   const { data } = useApp();
+  useEffect(() => {
+    const topic = new URLSearchParams(location.search).get('topic');
+    const id =
+      location.hash.slice(1).replace(/^rule-/, 'rules-') || (topic === 'sighting' ? 'rules-1' : '');
+    if (id) {
+      const frame = requestAnimationFrame(() =>
+        document.getElementById(id)?.scrollIntoView({ block: 'start' }),
+      );
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [data.session?.id]);
   return (
     <>
       <PageTitle
@@ -1068,20 +1111,20 @@ export function Rules() {
           '淘汰后观战',
           '排名与现场要求',
         ].map((s, i) => (
-          <a key={s} href={`#rule-${i}`}>
+          <a key={s} href={`#rules-${i}`}>
             {s}
           </a>
         ))}
       </nav>
       <div className="rules-article">
-        <section id="rule-0">
+        <section id="rules-0">
           <h2>比赛流程</h2>
           <p>首航准备与正式开赛分开进行。发码后佩戴并确认就绪，等服务器确认正式开赛后才能攻防。</p>
           <p>
             比赛使用有效比赛时间：0至65分钟为黑暗森林，65至90分钟为宇宙末日，90至98分钟转场。98分钟自动暂停进行终局资格核验，完成后恢复最后狩猎，通常进行至120分钟。完整结算后存活文明不超过一个时可以提前完赛。
           </p>
         </section>
-        <section id="rule-1">
+        <section id="rules-1">
           <h2>手环与目击</h2>
           <p>
             在开赛后亲眼辨认目标两臂的当前完整颜色分组，再提交目击。七种颜色各最多使用一次。合法分组为两条与一条、两条与两条、三条与一条；同侧顺序不限，两侧交换等价。
@@ -1093,7 +1136,7 @@ export function Rules() {
             历史退役码、本人码和服务器可证实的并发抢先击毁不增加错误次数，以服务器结算为准。成功击毁后取得目标已审核母星口令。不得传播当前有效手环码、远程猜码、偷拍或放大照片录像读码。
           </p>
         </section>
-        <section id="rule-2">
+        <section id="rules-2">
           <h2>母星与重生</h2>
           <p>
             第一阶段被正常目击击毁且母星尚存时，可以重生。立即摘下全部比赛手环，正常步行返航，拍摄时间水印照片并发给裁判，再离开母星至少50米、领取新配置、佩戴并确认完成出航。
@@ -1105,7 +1148,7 @@ export function Rules() {
             母星毁灭时若飞船正常出航，继续最后一命。65:00所有母星毁灭，未正常出航的文明同时淘汰。
           </p>
         </section>
-        <section id="rule-3">
+        <section id="rules-3">
           <h2>广播与光粒</h2>
           <p>
             第一阶段正常出航时，每个文明最多正式广播两次，可输入任意尚未正式广播的六位数字。广播消耗一次次数并公开口令；若对应某文明的登记母星，该文明私下获得广播者的母星口令。成功文案不鉴定口令真实性。
@@ -1117,7 +1160,7 @@ export function Rules() {
             技术爆炸获得者秘密得到一枚光粒，正常出航时可以消耗它清理任意六位口令。获得者正在返航时不能发射。65:00起广播和光粒停止，未使用光粒失效。
           </p>
         </section>
-        <section id="rule-4">
+        <section id="rules-4">
           <h2>终局要求</h2>
           <p>
             90:00起停止目击，加入比赛QQ群位置共享，正常步行在98:00前进入终局圈。请查看QQ群文件中的
@@ -1127,7 +1170,7 @@ export function Rules() {
             98:00有效时钟自动暂停，由总裁判批量核验资格。网站无需确认入圈或共享。核验完成且至少两人存活时恢复攻击。之后持续共享位置，离圈、停止共享或定位违规将由裁判淘汰。
           </p>
         </section>
-        <section id="rule-5">
+        <section id="rules-5">
           <h2>淘汰后观战</h2>
           <p>
             永久淘汰后摘下全部手环，步行返回裁判室，停止攻防、侦察和向活人传递情报。自淘汰生效真实时间起满180秒，经服务器确认后可查看宇宙观测。比赛暂停不会冻结这段等待。
@@ -1136,7 +1179,7 @@ export function Rules() {
             观战可以查看当前完整战况和已经发生的赛事信息，只能与已淘汰玩家交流。提案在线下交给裁判决定，不获得任何裁判操作权限。比赛结束后全部本场参赛者可以查看完整复盘，无需继续等待180秒。
           </p>
         </section>
-        <section id="rule-6">
+        <section id="rules-6">
           <h2>排名与现场要求</h2>
           <p>
             生存优先。幸存者按击毁的不同文明数排序；同一文明多次被击毁只计一次。淘汰者按生效时间从晚到早排列，同批淘汰并列。全体淘汰时没有存活冠军。

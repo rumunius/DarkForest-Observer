@@ -287,10 +287,12 @@ function Screen() {
   const observer = route.startsWith('/observer');
   const results = route.startsWith('/results');
   useEffect(() => {
-    const timer = setTimeout(
-      () => main.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true }),
-      30,
-    );
+    const timer = setTimeout(() => {
+      const target =
+        main.current?.querySelector<HTMLElement>('.color-editor .arm-select') ??
+        main.current?.querySelector<HTMLElement>('h1');
+      target?.focus({ preventScroll: true });
+    }, 30);
     return () => clearTimeout(timer);
   }, [route]);
   useEffect(() => {

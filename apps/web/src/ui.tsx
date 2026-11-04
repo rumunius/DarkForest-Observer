@@ -11,12 +11,14 @@ import {
   COLORS,
   FLIGHT_NAMES,
   STAGE_NAMES,
+  RULES,
   validArms,
   type Arms,
   type ColorId,
   type GameEvent,
 } from '@darkforest/contracts';
 import { useApp, useClock } from './state';
+import { moveBracelet } from './bracelets';
 
 const paths: Record<string, ReactNode> = {
   current: (
@@ -326,22 +328,81 @@ export function MatchSummary({ compact = false }: { compact?: boolean }) {
   const now = useClock();
   const match = data.match;
   if (!match) return null;
+  const elapsed = Math.min(RULES.regulationMs, Math.max(0, now.game));
+  const ended = match.stage === 'ended';
+  const stages = [
+    { id: 'forest', start: 0, end: RULES.apocalypseMs },
+    { id: 'apocalypse', start: RULES.apocalypseMs, end: RULES.transferMs },
+    { id: 'transfer', start: RULES.transferMs, end: RULES.cutoffMs },
+    { id: 'hunt', start: RULES.cutoffMs, end: RULES.regulationMs },
+  ] as const;
   return (
-    <div className={`match-summary ${compact ? 'compact' : ''}`}>
-      <span className="phase">
-        <i />
-        {STAGE_NAMES[match.stage]}
-      </span>
-      <div className="match-time">
-        <span>有效比赛时间</span>
-        <strong className="numeric">{formatTime(now.game)}</strong>
+    <div className={`match-block ${compact ? 'compact' : ''}`}>
+      <div className={`match-summary ${compact ? 'compact' : ''}`}>
+        <span className="phase">
+          <i />
+          当前阶段：{STAGE_NAMES[match.stage]}
+        </span>
+        <div className="match-time">
+          <span>有效比赛时间</span>
+          <strong className="numeric">{formatTime(now.game)}</strong>
+        </div>
+        {match.paused && (
+          <p className="attention">
+            {match.verification ? '终局资格确认中' : '比赛已暂停'}
+            {match.pauseReason && `：${match.pauseReason}`}
+          </p>
+        )}
       </div>
-      {match.paused && (
-        <p className="attention">
-          {match.verification ? '终局资格确认中' : '比赛已暂停'}
-          {match.pauseReason && `：${match.pauseReason}`}
-        </p>
-      )}
+      <div className="match-timeline">
+        <div className="timeline-caption">
+          <span>
+            赛程 <span className="numeric">120</span> 分钟
+          </span>
+          <span>{ended ? '比赛已结束' : `剩余 ${formatTime(RULES.regulationMs - elapsed)}`}</span>
+        </div>
+        <div
+          className="timeline-track"
+          role="progressbar"
+          aria-label="120分钟比赛进度"
+          aria-valuemin={0}
+          aria-valuemax={120}
+          aria-valuenow={Math.floor(elapsed / 60000)}
+          aria-valuetext={`${STAGE_NAMES[match.stage]}，${ended ? '比赛已结束' : `剩余${formatTime(RULES.regulationMs - elapsed)}`}${match.paused ? '，已暂停' : ''}`}
+        >
+          {stages.map((stage) => (
+            <span
+              key={stage.id}
+              className={`timeline-segment ${match.stage === stage.id && !ended ? 'current' : ''}`}
+              style={{ width: `${((stage.end - stage.start) / RULES.regulationMs) * 100}%` }}
+            >
+              <span
+                className="timeline-elapsed"
+                style={{
+                  width: `${Math.min(1, Math.max(0, (elapsed - stage.start) / (stage.end - stage.start))) * 100}%`,
+                }}
+              />
+            </span>
+          ))}
+          <span
+            className={`timeline-marker ${match.paused ? 'paused' : ''}`}
+            style={{ left: `${(elapsed / RULES.regulationMs) * 100}%` }}
+          />
+        </div>
+        <div className="timeline-legend">
+          {stages.map((stage) => (
+            <span
+              key={stage.id}
+              aria-current={match.stage === stage.id && !ended ? 'step' : undefined}
+            >
+              <span>{STAGE_NAMES[stage.id]}</span>
+              <small className="numeric">
+                {stage.start / 60000}—{stage.end / 60000}
+              </small>
+            </span>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -628,14 +689,14 @@ export function ColorEditor() {
     setSelectedArm,
     data,
     names,
-    setNames,
     reduced,
     busy,
     pending,
     online,
     operate,
   } = useApp();
-  const [feedback, setFeedback] = useState('先选一侧手臂，再选颜色。');
+  const [feedback, setFeedback] = useState('已选择一侧手臂，请选择颜色。');
+  const [confirmation, setConfirmation] = useState<Arms | null>(null);
   const [dragging, setDragging] = useState<ColorId | null>(null);
   const [moving, setMoving] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -647,6 +708,10 @@ export function ColorEditor() {
   const suppressClick = useRef(false);
   const locked = busy || !!pending || !online;
   const valid = validArms(draft);
+  useEffect(() => {
+    setSelectedArm(0);
+    root.current?.querySelector<HTMLElement>('.arm-select')?.focus({ preventScroll: true });
+  }, [setSelectedArm]);
   useLayoutEffect(() => {
     const next = new Map<string, DOMRect>();
     root.current?.querySelectorAll<HTMLElement>('[data-swatch]').forEach((element) => {
@@ -676,25 +741,20 @@ export function ColorEditor() {
   }, [draft, reduced, moving]);
   const move = (id: ColorId, target: number | null) => {
     if (locked) return;
-    const next = draftRef.current.map((arm) => arm.filter((c) => c !== id)) as Arms;
-    if (target !== null) {
-      const arm = next[target]!;
-      if (arm.length >= 3) {
-        setFeedback('每侧最多选择3条。');
-        return;
-      }
-      if (next.flat().length >= 4) {
-        setFeedback('最多选择4条手环。');
-        return;
-      }
-      arm.push(id);
+    const result = moveBracelet(draftRef.current, id, target);
+    if ('error' in result) {
+      setFeedback(result.error);
+      return;
     }
+    const next = result.arms;
+    target = result.target;
+    if (target !== null) setSelectedArm(target);
     const name = COLORS.find((c) => c.id === id)!.name;
     setDraft(next);
     setFeedback(
       target === null
         ? `${name}已退回色盘。`
-        : `${name}已移到${target ? '另一侧手臂' : '一侧手臂'}，共${next[target]!.length}条。`,
+        : `${result.overflow ? '原手臂已满，已自动切换。' : ''}${name}已移到${target ? '另一侧手臂' : '一侧手臂'}，共${next[target]!.length}条。`,
     );
     requestAnimationFrame(() =>
       root.current
@@ -796,7 +856,6 @@ export function ColorEditor() {
         if (target?.dataset.dropArm !== undefined) {
           const index = Number(target.dataset.dropArm);
           move(id, index);
-          setSelectedArm(index);
         } else if (target?.hasAttribute('data-palette')) move(id, null);
       }
       clear();
@@ -816,7 +875,10 @@ export function ColorEditor() {
   };
   useEffect(() => () => cancelRef.current(), []);
   useEffect(() => {
-    if (locked) cancelRef.current();
+    if (locked) {
+      cancelRef.current();
+      setConfirmation(null);
+    }
   }, [locked]);
   const wrong = data.player?.wrongCount ?? 0;
   return (
@@ -863,26 +925,17 @@ export function ColorEditor() {
             )}
           </div>
           <div className="editor-tools">
-            <label className="check-label">
-              <input type="checkbox" checked={names} onChange={(e) => setNames(e.target.checked)} />
-              显示颜色名称
-            </label>
             <div>
               {draft.flat().length > 0 && (
                 <button
                   className="text-button"
                   onClick={() => {
                     setDraft([[], []]);
-                    setSelectedArm(null);
-                    setFeedback('已清空选择，请先选一侧手臂。');
+                    setSelectedArm(0);
+                    setFeedback('已清空选择，请为一侧手臂选择颜色。');
                   }}
                 >
                   清空选择
-                </button>
-              )}
-              {draft.every((a) => a.length > 0) && (
-                <button className="text-button" onClick={() => setDraft([draft[1], draft[0]])}>
-                  交换两侧
                 </button>
               )}
             </div>
@@ -908,16 +961,7 @@ export function ColorEditor() {
         <Button
           className="primary full"
           disabled={!!dragging}
-          onClick={async () => {
-            const response = await operate('/action/sighting', {
-              arm_a: draft[0],
-              arm_b: draft[1],
-            });
-            if (response?.status === 'complete') {
-              setDraft([[], []]);
-              setSelectedArm(null);
-            }
-          }}
+          onClick={() => setConfirmation([[...draft[0]], [...draft[1]]])}
         >
           <Icon name="action" size={20} />
           确认攻击
@@ -932,6 +976,22 @@ export function ColorEditor() {
           </p>
         )
       )}
+      {confirmation && valid && !locked && (
+        <AttackConfirmation
+          arms={confirmation}
+          wrong={wrong}
+          onCancel={() => setConfirmation(null)}
+          onConfirm={async () => {
+            const arms = confirmation;
+            setConfirmation(null);
+            const response = await operate('/action/sighting', { arm_a: arms[0], arm_b: arms[1] });
+            if (response?.status === 'complete') {
+              setDraft([[], []]);
+              setSelectedArm(0);
+            }
+          }}
+        />
+      )}
       {dragging && (
         <div
           className="drag-ghost"
@@ -941,5 +1001,75 @@ export function ColorEditor() {
         />
       )}
     </div>
+  );
+}
+
+function AttackConfirmation({
+  arms,
+  wrong,
+  onCancel,
+  onConfirm,
+}: {
+  arms: Arms;
+  wrong: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const { data, names } = useApp();
+  useEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    return () => element.close();
+  }, []);
+  return (
+    <dialog
+      ref={dialog}
+      className="attack-dialog"
+      aria-labelledby="attack-confirm-title"
+      onCancel={(event) => {
+        event.preventDefault();
+        onCancel();
+      }}
+    >
+      <Frame>
+        <span className="eyebrow">目击攻击 · 最终核对</span>
+        <h2 id="attack-confirm-title">确认提交这组手环？</h2>
+        {arms.map((arm, index) => (
+          <div className="confirmation-arm" key={index}>
+            <span>{index ? '另一侧手臂' : '一侧手臂'}</span>
+            <div>
+              {COLORS.filter((color) => arm.includes(color.id)).map((color) => (
+                <span key={color.id}>
+                  <span
+                    className="mini-band"
+                    style={{ backgroundColor: data.site.colors[color.id] }}
+                    role="img"
+                    aria-label={color.name}
+                  />
+                  {names && <small>{color.name}</small>}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+        <p className="secondary">请确认这是你在现场亲眼观察到的完整配置。提交后由服务器结算。</p>
+        <p className="attention">
+          {wrong === 0
+            ? '提交错误的目击码，将禁止目击攻击5分钟。'
+            : wrong === 1
+              ? '再次提交错误的目击码，有50%的概率永久淘汰，有50%的概率禁止目击攻击15分钟。'
+              : '再次提交错误的目击码，将永久淘汰。'}
+        </p>
+        <div className="confirmation-actions">
+          <Button autoFocus onClick={onCancel}>
+            返回检查
+          </Button>
+          <Button className="primary" onClick={onConfirm}>
+            确认提交攻击
+          </Button>
+        </div>
+      </Frame>
+    </dialog>
   );
 }

@@ -3,6 +3,51 @@ import { validArms, validCode, type Arms } from '@darkforest/contracts';
 import { canAct } from '../../apps/web/src/permissions';
 import { MockSource } from '../../apps/web/src/dev/mock-source';
 import { ApiError } from '../../apps/web/src/data/http';
+import { moveBracelet } from '../../apps/web/src/bracelets';
+
+describe('bracelet overflow', () => {
+  it.each([0, 1])('spills into the other arm when arm %i is full', (target) => {
+    const arms: Arms = target === 0 ? [['BK', 'WH', 'GY'], []] : [[], ['BK', 'WH', 'GY']];
+    const result = moveBracelet(arms, 'YL', target);
+    expect(result).toEqual({
+      arms: target === 0 ? [['BK', 'WH', 'GY'], ['YL']] : [['YL'], ['BK', 'WH', 'GY']],
+      target: target === 0 ? 1 : 0,
+      overflow: true,
+    });
+    expect(arms.flat()).toEqual(['BK', 'WH', 'GY']);
+  });
+  it('rejects a fifth bracelet without losing the existing draft', () => {
+    const arms: Arms = [['BK', 'WH', 'GY'], ['YL']];
+    expect(moveBracelet(arms, 'OR', 0)).toEqual({ error: '最多选择4条手环。' });
+    expect(arms).toEqual([['BK', 'WH', 'GY'], ['YL']]);
+  });
+  it('moves across arms atomically and removes a bracelet to the palette', () => {
+    expect(moveBracelet([['BK', 'WH', 'GY'], ['YL']], 'YL', 0)).toEqual({
+      arms: [['BK', 'WH', 'GY'], ['YL']],
+      target: 1,
+      overflow: true,
+    });
+    expect(
+      moveBracelet(
+        [
+          ['BK', 'WH'],
+          ['GY', 'YL'],
+        ],
+        'GY',
+        0,
+      ),
+    ).toEqual({
+      arms: [['BK', 'WH', 'GY'], ['YL']],
+      target: 0,
+      overflow: false,
+    });
+    expect(moveBracelet([['BK', 'WH'], ['GY']], 'BK', null)).toEqual({
+      arms: [['WH'], ['GY']],
+      target: null,
+      overflow: false,
+    });
+  });
+});
 
 describe('frontend input and authorized disclosure', () => {
   it.each<Arms>([

@@ -454,6 +454,74 @@ textarea::placeholder {
   font-size: 14px;
   margin: 0;
 }
+.match-block {
+  min-width: 0;
+  flex: 1;
+}
+.match-timeline {
+  padding: 14px 0 6px;
+}
+.timeline-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--secondary);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.timeline-track {
+  position: relative;
+  display: flex;
+  height: 4px;
+  gap: 3px;
+}
+.timeline-segment {
+  position: relative;
+  flex-shrink: 1;
+  background: var(--quiet);
+}
+.timeline-segment.current {
+  outline: 1px solid var(--control);
+  outline-offset: 2px;
+}
+.timeline-elapsed {
+  display: block;
+  height: 100%;
+  background: var(--strong);
+}
+.timeline-marker {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 12px;
+  background: var(--text);
+  transform: translateX(-50%);
+}
+.timeline-marker.paused {
+  background: var(--attention);
+}
+.timeline-legend {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.timeline-legend > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.timeline-legend [aria-current='step'] {
+  color: var(--text);
+}
+.timeline-legend [aria-current='step'] > span::before {
+  content: '▸ ';
+}
+.match-block.compact .timeline-legend {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .timer {
   display: flex;
   flex-direction: column;
@@ -652,6 +720,14 @@ textarea::placeholder {
 .arm.selected .cut-fill {
   stroke-width: 2px;
 }
+/* Arm panels use their existing cut border as the focus indicator. */
+.arm-select:focus-visible > .cut-outline .cut-focus {
+  visibility: hidden;
+}
+.arm-select:focus-visible > .cut-outline .cut-fill {
+  stroke: var(--info);
+  stroke-width: 2px;
+}
 .arm-title {
   position: absolute;
   top: 15px;
@@ -824,23 +900,82 @@ textarea::placeholder {
   border-top: 1px solid var(--quiet);
   margin-top: 24px;
 }
-.other-actions a {
+.resource-action {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 20px 0;
   border-bottom: 1px solid var(--quiet);
 }
-.other-actions a > svg:last-child {
+.resource-action > svg:last-child,
+.resource-action .action-unavailable {
   margin-left: auto;
 }
-.other-actions a span {
+.resource-action > span {
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
 .other-actions small {
   color: var(--muted);
+}
+.resource-action.unavailable {
+  color: var(--secondary);
+}
+.action-unavailable {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.attack-dialog {
+  width: min(480px, calc(100% - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  overflow: auto;
+}
+.attack-dialog::backdrop {
+  background: rgb(0 0 0 / 78%);
+}
+.attack-dialog .frame {
+  margin: 0;
+  --cut-line: var(--control);
+}
+.attack-dialog h2 {
+  margin-top: 8px;
+}
+.confirmation-arm {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--quiet);
+  font-size: 14px;
+}
+.confirmation-arm > div,
+.confirmation-arm > div > span {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.confirmation-arm > div > span {
+  flex-direction: column;
+  gap: 4px;
+}
+.confirmation-arm .mini-band {
+  width: 32px;
+  height: 12px;
+}
+.confirmation-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 24px;
+}
+.confirmation-actions .button {
+  padding-inline: 8px;
 }
 .disclosure {
   border-bottom: 1px solid var(--quiet);

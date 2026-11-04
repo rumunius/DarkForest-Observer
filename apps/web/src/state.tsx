@@ -61,6 +61,13 @@ export function useApp(): AppContext {
   return c;
 }
 const positions = new Map<string, number>();
+// Fragment navigation wins over page-position restoration, including browser Back/Forward.
+function restorePosition() {
+  const id = location.hash.slice(1).replace(/^rule-/, 'rules-');
+  const target = id && document.getElementById(id);
+  if (target) target.scrollIntoView({ block: 'start' });
+  else if (!id) window.scrollTo(0, positions.get(location.pathname) ?? 0);
+}
 const pendingKey = 'darkforest.pending-operation';
 type PendingRecord = { id: string; account: string; match: string; path?: string };
 function readPending(key = pendingKey): PendingRecord | null {
@@ -150,11 +157,13 @@ export function AppProvider({
       positions.set(location.pathname, scrollY);
       const next = `${base}${path === '/' ? '/' : path}`;
       history[replace ? 'replaceState' : 'pushState']({}, '', next);
-      setRoute(path.split('?')[0] || '/');
+      setRoute(
+        new URL(next, location.origin).pathname.slice(base.length).replace(/\/$/, '') || '/',
+      );
       setError('');
       readError.current = false;
       setResult(null);
-      requestAnimationFrame(() => window.scrollTo(0, positions.get(next) ?? 0));
+      requestAnimationFrame(restorePosition);
     },
     [base],
   );
@@ -226,7 +235,7 @@ export function AppProvider({
         setPending(null);
         if (stored.path === '/action/sighting') {
           setDraft([[], []]);
-          setSelectedArm(null);
+          setSelectedArm(0);
         }
         await refresh();
       }
@@ -343,7 +352,7 @@ export function AppProvider({
   useEffect(() => {
     const pop = () => {
       setRoute(currentPath());
-      requestAnimationFrame(() => scrollTo(0, positions.get(location.pathname) ?? 0));
+      requestAnimationFrame(restorePosition);
     };
     const resume = () => {
       setOnline(navigator.onLine);
