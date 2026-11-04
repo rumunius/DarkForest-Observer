@@ -278,7 +278,7 @@ export class MockSource implements DataSource {
           nickname: '漂流者',
           code: '739216',
           gameMs: 25 * 60000 + 10000,
-          source: '成功目击获得'
+          source: '成功目击获得',
         },
       ],
       civilizations,

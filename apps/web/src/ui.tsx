@@ -497,14 +497,10 @@ export function ArmsView({
               aria-pressed={selected === index}
             >
               <CutOutline cut={10} />
-              <span className="arm-title">
-                {index ? '另一侧手臂' : '一侧手臂'}
-              </span>
+              <span className="arm-title">{index ? '另一侧手臂' : '一侧手臂'}</span>
             </button>
           ) : (
-            <div className="arm-title">
-              {index ? '另一侧手臂' : '一侧手臂'}
-            </div>
+            <div className="arm-title">{index ? '另一侧手臂' : '一侧手臂'}</div>
           )}
           <div className="arm-figure">
             <Hand mirror={index === 1} />
@@ -717,11 +713,7 @@ export function ColorEditor() {
       const key = element.dataset.swatch!;
       const rect = element.getBoundingClientRect();
       const old = previous.current.get(key);
-      if (
-        old &&
-        !reduced &&
-        (old.x !== rect.x || old.y !== rect.y || old.width !== rect.width)
-      ) {
+      if (old && !reduced && (old.x !== rect.x || old.y !== rect.y || old.width !== rect.width)) {
         element.getAnimations().forEach((a) => a.cancel());
         element.animate(
           [
@@ -929,7 +921,6 @@ export function ColorEditor() {
           }}
         />
       )}
-
     </div>
   );
 }

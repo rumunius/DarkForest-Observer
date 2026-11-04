@@ -159,7 +159,8 @@ function Current() {
     countdown = <Timer label="比赛剩余有效时间" deadline={RULES.regulationMs} large />;
   } else if (me.attackLockedUntil > match.serverUtcMs) {
     title = '暂时禁止目击攻击';
-    body = '因为你提交了错误目击码，你被暂时禁止目击攻击。你仍在出航，可以被其他玩家击毁。其他有资格的行动仍可使用。';
+    body =
+      '因为你提交了错误目击码，你被暂时禁止目击攻击。你仍在出航，可以被其他玩家击毁。其他有资格的行动仍可使用。';
     action = '查看其他行动';
     countdown = (
       <Timer label="距离恢复目击攻击" clock="utc" deadline={me.attackLockedUntil} large />
