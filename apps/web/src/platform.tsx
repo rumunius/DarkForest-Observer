@@ -926,7 +926,7 @@ function ManageMatch({
       <p>
         本场正式名单 {data.current.players} 人。
         {PHASE_NAMES[data.current.phase] ?? '正在读取比赛阶段'}
-        。邀请、文明绑定、正式名单分开处理。
+        。
       </p>
       <div className="platform-row-actions">
         {data.current.members.find((m) => m.account_id === client.session?.account.id)?.state ===
