@@ -11,6 +11,7 @@ export default defineConfig({
           CODE_HMAC_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
           CODE_ENCRYPTION_KEY: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=',
           BOOTSTRAP_SECRET: 'integration-only-bootstrap-secret',
+          PLATFORM_BOOTSTRAP_SECRET: 'integration-platform-maintenance-secret',
         },
       },
     }),

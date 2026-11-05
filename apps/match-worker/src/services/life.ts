@@ -131,7 +131,13 @@ export function finish(e: Engine, reason: string, game: number, utc: number, sou
   archiveReport(e, '');
   const registered = e.db.all<{ id: string }>('SELECT player_id AS id FROM roster_members');
   for (const player of registered) retire(e, player.id, 'match_ended', game, utc);
-  e.db.exec("UPDATE scheduled_events SET status='cancelled' WHERE status='pending'");
+  e.db.exec(
+    "UPDATE command_objects SET status='cancelled' WHERE kind='schedule' AND status='pending' AND json_extract(data,'$.afterEnd')='cancel'",
+  );
+  e.db.exec("UPDATE command_objects SET status='cancelled' WHERE kind='job' AND status='pending'");
+  e.db.exec(
+    "UPDATE scheduled_events SET status='cancelled' WHERE status='pending' AND NOT (kind='judge_command_task' AND id IN (SELECT id FROM command_objects WHERE kind='schedule' AND status='pending' AND json_extract(data,'$.afterEnd')='keep'))",
+  );
   logEvent(
     e,
     `finish:${source}`,
@@ -209,6 +215,7 @@ export function archiveReport(e: Engine, correctionReason: string): void {
   );
 }
 export function autoFinish(e: Engine, game: number, utc: number, source: string): void {
+  if (e.commandBatch) return;
   const match = e.db.match();
   if (!match.start_settled || match.phase === 'ended') return;
   const count = survivors(e).length;

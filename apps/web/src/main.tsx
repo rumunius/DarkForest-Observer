@@ -1,6 +1,8 @@
 import { createRoot } from 'react-dom/client';
-import { App } from './app';
-import { HttpSource } from './data/http';
+import { MatchApp, PlatformApp } from './platform';
 import './styles.css';
 
-createRoot(document.getElementById('app')!).render(<App source={new HttpSource()} />);
+const match = /^\/m\/([A-Za-z0-9_-]+)(?:\/|$)/.exec(location.pathname);
+createRoot(document.getElementById('app')!).render(
+  match ? <MatchApp id={match[1]!} /> : <PlatformApp />,
+);

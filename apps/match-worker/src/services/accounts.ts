@@ -29,7 +29,7 @@ export async function prepareCredential(e: Engine, actor: string): Promise<Crede
     ciphertext: await encrypt(
       keys.encryption,
       credential,
-      `credential|${e.env.MATCH_ID}|${actor}|${id}`,
+      `credential|${e.matchId}|${actor}|${id}`,
     ),
   };
 }
@@ -42,6 +42,12 @@ export function validateAccount(e: Engine, actor: Actor, body: Record<string, un
     'ACCOUNT_VERSION_CONFLICT',
     '账号状态已更新，请刷新后核对。',
   );
+  if (e.db.one('SELECT id FROM match_identity'))
+    requireThat(
+      account.role === 'player' && ['disable', 'enable'].includes(String(body.operation)),
+      'PLATFORM_ACCOUNT_REQUIRED',
+      '长期口令请由平台管理员在账号池找回；裁判换人请使用本场岗位交接。',
+    );
   requireThat(
     target !== actor.id && !(JSON.parse(account.permissions) as string[]).includes('system'),
     'HEAD_ACCOUNT_PROTECTED',
@@ -99,6 +105,12 @@ export function updateAccount(
     );
   }
   e.db.exec('UPDATE sessions SET revoked=1 WHERE account_id=?', target);
+  if (e.db.one('SELECT id FROM match_identity'))
+    e.db.exec(
+      'UPDATE memberships SET epoch=(SELECT version FROM accounts WHERE id=?) WHERE local_id=?',
+      target,
+      target,
+    );
   e.db.exec('DELETE FROM previews WHERE actor=?', target);
   return body.operation === 'reset' ? material!.id : undefined;
 }

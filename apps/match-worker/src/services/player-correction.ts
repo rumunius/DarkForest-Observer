@@ -6,6 +6,7 @@ import { retire } from './life';
 export function restoration(
   e: Engine,
   target: string,
+  intervention = false,
 ): { status: string; deadline: number | null } {
   const db = e.db,
     m = db.match(),
@@ -26,6 +27,10 @@ export function restoration(
     'SELECT source,reason FROM eliminations WHERE player_id=? AND valid=1',
     target,
   )!;
+  if (intervention) {
+    requireThat(out, 'RESTORE_EVIDENCE_MISSING', '未找到当前有效淘汰记录。');
+    return { status: 'issued', deadline: null };
+  }
   const manual = db.one<{ before_json: string }>(
     'SELECT before_json FROM judge_eliminations WHERE source=? AND player_id=?',
     out.source,
@@ -87,8 +92,9 @@ export function restorePlayer(
   id: string,
   source: string,
   prepared: PreparedCode[],
+  intervention = false,
 ): void {
-  const next = restoration(e, target),
+  const next = restoration(e, target, intervention),
     db = e.db;
   retire(e, target, 'judge_restoration', e.game(), e.now());
   db.exec('UPDATE eliminations SET valid=0 WHERE player_id=? AND valid=1', target);

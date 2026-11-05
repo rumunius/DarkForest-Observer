@@ -2,6 +2,7 @@ import { gameTime, uniformInt } from '../domain/rules';
 import { Fault, requireThat, type Scheduled } from '../storage/store';
 import type { Engine } from '../services/engine';
 import { autoFinish, destroyHome, eliminate, finish, logEvent } from '../services/life';
+import { executeCommandEvent } from '../services/commands';
 import {
   ContractError,
   coordinate,
@@ -98,6 +99,10 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
     payload = object(JSON.parse(event.payload));
   const game = event.clock === 'game' ? event.due : event.kind === 'match_start' ? 0 : e.game(utc);
   switch (event.kind) {
+    case 'judge_command_task':
+    case 'judge_command_job':
+      executeCommandEvent(e, event);
+      break;
     case 'code_release':
       requireThat(m.phase === 'armed', 'RELEASE_STATE_CONFLICT', '发码阶段需要裁判核查。');
       db.exec("UPDATE matches SET phase='outfitting'");
@@ -121,6 +126,10 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
       );
       break;
     case 'match_start': {
+      db.exec(
+        "INSERT OR IGNORE INTO participation_history SELECT m.account_id,m.local_id,? FROM memberships m JOIN roster_members r ON r.player_id=m.local_id WHERE m.kind='player' AND m.state='bound'",
+        e.now(),
+      );
       const roster = db.all<{ id: string }>(
         "SELECT id FROM players WHERE entry_status='registered' AND id IN (SELECT player_id FROM roster_members)",
       );

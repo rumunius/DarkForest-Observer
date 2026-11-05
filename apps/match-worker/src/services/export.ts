@@ -38,12 +38,24 @@ export const BACKUP_TABLES = [
   'credential_deliveries',
   'notice_actions',
   'judge_eliminations',
+  'command_objects',
+  'command_tags',
+  'judge_command_log',
+  'match_identity',
+  'memberships',
+  'staff_assignments',
+  'authorization_fences',
+  'control_operations',
+  'match_outbox',
+  'audit_identities',
+  'participation_history',
 ] as const;
 export async function exportData(
   e: Engine,
   actor: Actor,
   kind: string,
   keys: Awaited<ReturnType<Engine['keys']>>,
+  options: { omitSessionData?: boolean } = {},
 ): Promise<{ fileName: string; text: string }> {
   permission(
     actor,
@@ -63,7 +75,13 @@ export async function exportData(
       '请先暂停比赛。',
     );
     const snapshot = e.db.tx(() =>
-      Object.fromEntries(BACKUP_TABLES.map((table) => [table, e.db.all(`SELECT * FROM ${table}`)])),
+      Object.fromEntries(
+        BACKUP_TABLES.filter(
+          (table) =>
+            !options.omitSessionData ||
+            !['sessions', 'credential_deliveries', 'control_operations'].includes(table),
+        ).map((table) => [table, e.db.all(`SELECT * FROM ${table}`)]),
+      ),
     );
     const bookmark = await e.db.storage.getCurrentBookmark();
     const envelope = {
@@ -103,9 +121,15 @@ export async function exportData(
   );
   const report = results(e, keys)!;
   return {
-    fileName: '正式战报.json',
+    fileName:
+      e.db.one<{ kind: string }>('SELECT kind FROM match_identity')?.kind === 'trial'
+        ? '试玩战报.json'
+        : '正式战报.json',
     text: JSON.stringify(
       {
+        matchId: match.id,
+        matchKind:
+          e.db.one<{ kind: string }>('SELECT kind FROM match_identity')?.kind ?? 'official',
         version: report.version,
         reason: report.reason,
         champions: report.champions,

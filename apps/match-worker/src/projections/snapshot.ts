@@ -24,6 +24,7 @@ import { currentCode, results, survivors } from '../services/life';
 import { accountList } from '../services/accounts';
 import { judgeRecords, noticeProjection } from './judge-records';
 import { TIMES } from '../domain/rules';
+import { readCommandHistory } from '../services/commands';
 type Keys = Awaited<ReturnType<Engine['keys']>>;
 export function matchProjection(e: Engine): MatchState {
   const m = e.db.match();
@@ -347,7 +348,8 @@ export function projectSnapshot(
   if (route.startsWith('/judge')) {
     permission(actor, 'overview');
     const area = route.split('/')[2] ?? 'overview';
-    if (!['more', 'account', ''].includes(area)) permission(actor, area);
+    if (!['more', 'account', ''].includes(area))
+      permission(actor, area === 'commands' ? 'overview' : area);
     snapshot.judge = judgeProjection(e, actor);
     const permits = JSON.parse(actor.permissions) as string[];
     if (permits.includes('system')) snapshot.judge.accounts = accountList(e, actor);
@@ -468,6 +470,8 @@ export function readEndpoint(e: Engine, actor: Actor | null, path: string, keys:
   if (route === '/public/match') return matchProjection(e);
   requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
   if (route === '/judge/accounts') return accountList(e, actor);
+  if (route === '/judge/command/history')
+    return readCommandHistory(e, actor, Object.fromEntries(url.searchParams));
   if (route === '/judge/events' || route.startsWith('/judge/events/')) {
     permission(actor, 'system');
     const events = judgeProjection(e, actor).scheduledEvents ?? [];

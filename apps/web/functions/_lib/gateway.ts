@@ -1,10 +1,12 @@
 import type { DarkForestMatch } from '../../../match-worker/src/index';
 import type { RpcInput } from '../../../match-worker/src/rpc/types';
+import type { DarkForestPlatform } from '../../../match-worker/src/platform/platform';
 export interface GatewayEnv {
   APP_ENV: string;
   MATCH_ID: string;
   TRUSTED_ORIGINS: string;
   MATCH_DO: DurableObjectNamespace<DarkForestMatch>;
+  PLATFORM_DO?: DurableObjectNamespace<DarkForestPlatform>;
 }
 const MAX_BODY = 16_384;
 const HEADERS = {
@@ -29,7 +31,20 @@ export async function gateway(request: Request, env: GatewayEnv): Promise<Respon
   const url = new URL(request.url);
   const bootstrap = url.pathname === '/api/bootstrap' && env.APP_ENV === 'preview';
   const recovery = url.pathname === '/api/recovery';
-  const bodyLimit = recovery ? 32_000_000 : bootstrap ? 65_536 : MAX_BODY;
+  // JSON escaping can expand a legal 256KiB command; command bytes are checked again in the DO.
+  const command = /^\/api\/(?:matches\/[A-Za-z0-9_-]+\/)?judge\/command\/(preview|execute)$/.test(
+    url.pathname,
+  );
+  const platformMaintenance =
+    url.pathname === '/api/install' || url.pathname === '/api/maintenance';
+  const bodyLimit =
+    recovery || url.pathname === '/api/maintenance'
+      ? 32_000_000
+      : bootstrap
+        ? 65_536
+        : command
+          ? 6 * 262144 + 16384
+          : MAX_BODY;
   const origins = env.TRUSTED_ORIGINS.split(',').map((v) => v.trim());
   if (request.method === 'POST') {
     const origin = request.headers.get('origin');
@@ -73,6 +88,28 @@ export async function gateway(request: Request, env: GatewayEnv): Promise<Respon
       return fail(400, 'BAD_JSON', '提交内容格式不正确。');
     }
   }
+  if (platformMaintenance && request.method === 'POST') {
+    if (!env.PLATFORM_DO) return fail(503, 'PLATFORM_NOT_CONFIGURED', '平台绑定尚未配置。');
+    const secret = request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
+    if (!/^[A-Za-z0-9_-]{43}$/.test(secret)) return fail(403, 'FORBIDDEN', '维护授权无效。');
+    try {
+      const platform = env.PLATFORM_DO.getByName('platform:primary');
+      return json(
+        JSON.parse(
+          url.pathname === '/api/install'
+            ? await platform.bootstrap(secret, body)
+            : await platform.maintenance(secret, body),
+        ),
+        200,
+      );
+    } catch (error) {
+      return fail(
+        409,
+        'MAINTENANCE_REJECTED',
+        error instanceof Error ? error.message : '维护操作未完成，请查看原任务状态。',
+      );
+    }
+  }
   if ((bootstrap || recovery) && request.method === 'POST') {
     const secret = request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
     if (!/^[A-Za-z0-9_-]{43}$/.test(secret)) return fail(403, 'FORBIDDEN', '无法初始化。');
@@ -86,7 +123,25 @@ export async function gateway(request: Request, env: GatewayEnv): Promise<Respon
       return fail(503, 'BOOTSTRAP_UNAVAILABLE', '初始化服务暂时不可用。');
     }
   }
-  const cookieName = env.APP_ENV === 'local' ? 'df_session_local' : '__Host-df_session';
+  const platformPath =
+    !!env.PLATFORM_DO &&
+    /^\/api\/(auth(?:\/|$)|me(?:\/|$)|platform(?:\/|$)|matches(?:\/|$))/.test(url.pathname);
+  const audience =
+    url.pathname.startsWith('/api/platform/') ||
+    request.headers.get('x-darkforest-audience') === 'staff' ||
+    (body &&
+      typeof body === 'object' &&
+      'audience' in body &&
+      ['staff', 'judge'].includes(String(body.audience)))
+      ? 'staff'
+      : 'player';
+  const cookieName = platformPath
+    ? env.APP_ENV === 'local'
+      ? `df_${audience}_local`
+      : `__Host-df_${audience}`
+    : env.APP_ENV === 'local'
+      ? 'df_session_local'
+      : '__Host-df_session';
   const cookies =
     request.headers
       .get('cookie')
@@ -108,7 +163,20 @@ export async function gateway(request: Request, env: GatewayEnv): Promise<Respon
     ...(request.headers.get('x-csrf-token') ? { csrf: request.headers.get('x-csrf-token')! } : {}),
   };
   try {
-    const reply = await env.MATCH_DO.getByName(`match:${env.MATCH_ID}`).call(input);
+    if (env.PLATFORM_DO && !platformPath && !sessionToken)
+      return fail(409, 'MATCH_REQUIRED', '请从我的比赛进入明确的场次地址。');
+    if (env.PLATFORM_DO && !platformPath) {
+      const check = await env.MATCH_DO.getByName(`match:${env.MATCH_ID}`).call({
+        ...input,
+        method: 'GET',
+        path: '/auth/session',
+      });
+      if (check.status !== 200 || !JSON.parse(check.body))
+        return fail(401, 'UNAUTHENTICATED', '旧会话无法定位比赛，请重新登录。');
+    }
+    const reply = platformPath
+      ? await env.PLATFORM_DO!.getByName('platform:primary').call(input)
+      : await env.MATCH_DO.getByName(`match:${env.MATCH_ID}`).call(input);
     const secure = env.APP_ENV === 'local' ? '' : '; Secure';
     const cookie = reply.sessionToken
       ? `${cookieName}=${reply.sessionToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200${secure}`
@@ -117,7 +185,8 @@ export async function gateway(request: Request, env: GatewayEnv): Promise<Respon
         : undefined;
     return json(JSON.parse(reply.body), reply.status, {
       ...(cookie ? { 'Set-Cookie': cookie } : {}),
-      'X-Darkforest-Worker-Version': reply.workerVersion ?? 'unreported',
+      'X-Darkforest-Worker-Version':
+        'workerVersion' in reply ? String(reply.workerVersion ?? 'unreported') : 'platform',
     });
   } catch {
     return json(

@@ -3,20 +3,29 @@ import { useApp } from '../state';
 import { Button, CopyText, Field } from '../ui';
 import { ManagementForm } from './judge';
 export function AccountsManagement() {
-  const { data, source, result } = useApp();
+  const { data, source, result, base } = useApp();
+  const platform = base.startsWith('/m/');
   const [selected, setSelected] = useState(''),
     [operation, setOperation] = useState('disable'),
     [duty, setDuty] = useState('communications');
   const [delivery, setDelivery] = useState<{ accountId: string; credential: string } | null>(null),
     [error, setError] = useState('');
   const accounts = data.judge?.accounts?.filter(
-    (a) => a.id !== data.session?.id && !a.permissions.includes('system'),
+    (a) =>
+      a.id !== data.session?.id &&
+      !a.permissions.includes('system') &&
+      (!platform || a.role === 'player'),
   );
   const account = accounts?.find((a) => a.id === selected) ?? accounts?.[0];
   if (!account) return null;
   return (
     <section>
       <h2>账号管理</h2>
+      {platform && (
+        <p>
+          此处暂停或恢复玩家在本场的访问。长期口令找回由平台管理员在账号池办理；裁判换人请使用本场岗位交接。
+        </p>
+      )}
       <Field label="需要处理的账号">
         <select
           value={account.id}
@@ -37,7 +46,7 @@ export function AccountsManagement() {
         <select value={operation} onChange={(event) => setOperation(event.target.value)}>
           <option value="disable">停用账号</option>
           <option value="enable">启用账号</option>
-          <option value="reset">重置登录口令</option>
+          {!platform && <option value="reset">重置登录口令</option>}
           {account.role === 'judge' && <option value="duty">调整裁判职责</option>}
         </select>
       </Field>

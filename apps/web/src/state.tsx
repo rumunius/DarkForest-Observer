@@ -118,7 +118,7 @@ export function AppProvider({
   const generation = useRef(0);
   const previousEpoch = useRef(epoch);
   const readError = useRef(false);
-  const storageKey = `${pendingKey}${base ? '.preview' : ''}`;
+  const storageKey = `${pendingKey}${base.startsWith('/m/') ? `.${base}` : base ? '.preview' : ''}`;
   const pendingRecord = useRef(readPending(storageKey));
   const persistPending = useCallback(
     (value: PendingRecord | null) => {
@@ -134,7 +134,7 @@ export function AppProvider({
   routeRef.current = route;
   const timelineKey = useRef('');
   const historyLoading = useRef(false);
-  const accountKey = `${base ? 'preview.' : ''}darkforest.read.${data.session?.id ?? 'guest'}`;
+  const accountKey = `${base}.darkforest.read.${data.session?.matchId ?? ''}.${data.session?.role ?? ''}.${data.session?.id ?? 'guest'}`;
   useEffect(() => {
     try {
       setReadIds(JSON.parse(sessionStorage.getItem(accountKey) ?? '[]') as string[]);

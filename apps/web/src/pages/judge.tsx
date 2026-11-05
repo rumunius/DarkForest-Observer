@@ -1,3 +1,4 @@
+import { CommandConsole } from './command-console';
 import { useState, type ReactNode } from 'react';
 import {
   COLORS,
@@ -63,7 +64,7 @@ export const JUDGE_NAV = [
       ['clock', '比赛时间', '/judge/clock'],
       ['equipment', '手环处理', '/judge/equipment'],
       ['effects', '临时效果', '/judge/effects'],
-      ['commands', '指令控制台', '/judge/commands'],
+      ['overview', '指令控制台', '/judge/commands'],
     ],
   },
   {
@@ -1070,138 +1071,11 @@ function Equipment() {
     </>
   );
 }
-const COMMANDS = [
-  ['/inspect C07', '查询文明状态'],
-  ['/history C07', '查询航次与历史'],
-  ['/events list', '查询赛事事件'],
-  ['/clock status', '查询比赛时钟'],
-  ['/codebook status', '查询手环发行情况'],
-  ['/clock pause', '暂停比赛'],
-  ['/clock resume', '恢复比赛'],
-  ['/pause_attack @a 60', '全场暂时禁止目击60秒'],
-  ['/player grant C07 photoid 1', '修正文明光粒库存'],
-  ['/player revive C07', '恢复参赛资格'],
-  ['/event retry EVT-1024', '重新结算指定事件'],
-  ['/announce @a "请联系裁判"', '发送全场公告'],
-  ['/schedule 90 /announce @a "请留意赛事通知"', '延迟发送公告'],
-];
 function Commands() {
-  const { data, operate, busy } = useApp();
-  const [command, setCommand] = useState('');
-  const [search, setSearch] = useState('');
-  const [reason, setReason] = useState('');
-  const [preview, setPreview] = useState<ManagementPreview | null>(null);
-  const [stamp, setStamp] = useState('');
-  const query = /^\/(inspect|history|events list|clock status|codebook status|help)(\s|$)/.test(
-    command,
-  );
   return (
     <>
-      <PageTitle title="指令控制台" />
-      <Disclosure title="查询命令与参数提示">
-        <Field label="搜索操作">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="例如暂停、文明、事件"
-          />
-        </Field>
-        <div className="command-help">
-          {COMMANDS.filter(([cmd, label]) => `${cmd}${label}`.includes(search)).map(
-            ([cmd, label]) => (
-              <button
-                key={cmd}
-                onClick={() => {
-                  setCommand(cmd!);
-                  setPreview(null);
-                }}
-              >
-                <strong>{label}</strong>
-                <code>{cmd}</code>
-              </button>
-            ),
-          )}
-        </div>
-        <p>
-          目标：C07为指定文明，@a为全场参赛者，@alive为存活文明，@dead为淘汰者。随机目标在执行时确定。
-        </p>
-      </Disclosure>
-      <Field label="输入赛事指令">
-        <textarea
-          className="command-input"
-          value={command}
-          onChange={(e) => {
-            setCommand(e.target.value);
-            setPreview(null);
-          }}
-          rows={3}
-          placeholder="/inspect C07"
-          spellCheck={false}
-        />
-      </Field>
-      {!query && (
-        <Field label="本次执行原因">
-          <input
-            value={reason}
-            onChange={(e) => {
-              setReason(e.target.value);
-              setPreview(null);
-            }}
-          />
-        </Field>
-      )}
-      {command.trim() && (query || reason.trim()) && !preview && (
-        <Button
-          className="primary"
-          disabled={busy}
-          onClick={async () => {
-            const r = await operate(query ? '/judge/command/execute' : '/judge/command/preview', {
-              command,
-              reason,
-              expected_revision: data.match!.revision,
-            });
-            if (r?.preview) {
-              setPreview(r.preview);
-              setStamp(`${command}|${reason}`);
-            }
-          }}
-        >
-          {query ? '执行查询' : '预览指令影响'}
-          <Icon name="arrow" size={18} />
-        </Button>
-      )}
-      {preview && stamp === `${command}|${reason}` && (
-        <Frame>
-          <h2>指令影响预览</h2>
-          <code className="command-preview">{command}</code>
-          {preview.changes.map((c, i) => (
-            <p key={i}>
-              {c.target}：{c.before} → {c.after}
-            </p>
-          ))}
-          {preview.consequences.map((c) => (
-            <p className="secondary" key={c}>
-              {c}
-            </p>
-          ))}
-          <Button
-            className="primary full"
-            disabled={busy}
-            onClick={async () => {
-              const r = await operate('/judge/command/execute', {
-                command,
-                reason,
-                preview_token: preview.token,
-                expected_revision: preview.revision,
-              });
-              if (r?.status === 'complete') setPreview(null);
-            }}
-          >
-            确认执行
-          </Button>
-        </Frame>
-      )}
-      <h2>执行历史</h2>
+      <CommandConsole />
+      <h2>业务审计</h2>
       <AuditEntries />
     </>
   );
@@ -1519,7 +1393,7 @@ export function JudgePages() {
         ))}
       </>
     );
-  if (!judgeCan(data, area))
+  if (!judgeCan(data, area === 'commands' ? 'overview' : area))
     return (
       <>
         <PageTitle title="当前职责无此权限" />

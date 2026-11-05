@@ -86,7 +86,7 @@ export async function openCheckpoint(
   ]);
   requireThat(
     c.format === 'darkforest-checkpoint-v1' &&
-      c.matchId === e.env.MATCH_ID &&
+      c.matchId === e.matchId &&
       c.schemaVersion === SCHEMA_VERSION,
     'CHECKPOINT_MISMATCH',
     '恢复文件的场次或数据版本不匹配。',
@@ -108,7 +108,7 @@ export async function openCheckpoint(
   }
   requireThat(
     tables.matches?.length === 1 &&
-      tables.matches[0]!.id === e.env.MATCH_ID &&
+      tables.matches[0]!.id === e.matchId &&
       tables.matches[0]!.recovery_state === envelope.marker &&
       tables.matches[0]!.key_fingerprint === keys.fingerprint,
     'CHECKPOINT_MISMATCH',
@@ -169,7 +169,7 @@ export async function openCarry(
 ): Promise<{ envelope: Carry; data: RecoveryData }> {
   const body = strict(raw, ['format', 'matchId', 'id', 'createdUtc', 'ciphertext']);
   requireThat(
-    body.format === 'darkforest-recovery-v1' && body.matchId === e.env.MATCH_ID,
+    body.format === 'darkforest-recovery-v1' && body.matchId === e.matchId,
     'RECOVERY_MISMATCH',
     '恢复材料与本场不匹配。',
     400,
@@ -389,7 +389,44 @@ export async function completeRecovery(
         void seq;
         insertRow(e, 'audit_logs', rest);
       }
+    // Carry the latest authorization and progress, preserving original due times and late policy.
+    for (const row of data.latest.judge_command_log ?? [])
+      if (!db.one('SELECT id FROM judge_command_log WHERE id=?', row.id!)) {
+        const { seq, ...rest } = row;
+        void seq;
+        insertRow(e, 'judge_command_log', rest);
+      }
+    for (const row of data.latest.command_objects ?? []) {
+      db.exec('DELETE FROM command_objects WHERE id=?', row.id!);
+      insertRow(e, 'command_objects', row);
+    }
+    db.exec("UPDATE command_objects SET status='cancelled' WHERE kind='plan' AND status='pending'");
+    db.exec(
+      "DELETE FROM scheduled_events WHERE kind IN ('judge_command_task','judge_command_job')",
+    );
+    for (const row of data.latest.scheduled_events ?? [])
+      if (['judge_command_task', 'judge_command_job'].includes(String(row.kind)))
+        insertRow(e, 'scheduled_events', row);
     db.exec('UPDATE sessions SET revoked=1');
+    if (data.latest.match_identity?.length) {
+      for (const table of [
+        'memberships',
+        'staff_assignments',
+        'authorization_fences',
+        'participation_history',
+      ] as const) {
+        db.exec(`DELETE FROM ${table}`);
+        for (const row of data.latest[table] ?? []) insertRow(e, table, row);
+      }
+      db.exec(
+        'UPDATE memberships SET epoch=(SELECT version FROM accounts WHERE id=memberships.local_id) WHERE local_id IS NOT NULL',
+      );
+      db.exec(
+        'UPDATE match_identity SET recovery_generation=MAX(recovery_generation,?)+1,erasure_generation=MAX(erasure_generation,?)',
+        Number(data.latest.match_identity[0]!.recovery_generation ?? 0),
+        Number(data.latest.match_identity[0]!.erasure_generation ?? 0),
+      );
+    }
     db.exec('DELETE FROM previews');
     db.exec(
       'UPDATE matches SET recovery_state=?,revision=MAX(revision,?)+1',

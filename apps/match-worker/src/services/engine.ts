@@ -20,11 +20,18 @@ import {
   type Actor,
   type CodeRow,
 } from '../storage/store';
-import type { BackendEnv, RpcInput, RpcReply } from '../rpc/types';
+import type { BackendEnv, MatchGrant, RpcInput, RpcReply } from '../rpc/types';
+import { membershipActor } from '../platform/match-control';
+import { derive } from '../platform/security';
 import { projectSnapshot, readEndpoint } from '../projections/snapshot';
 import { playerAction } from './player';
 import { judgeAction, previewAction } from './judge';
-import { commandAction } from './commands';
+import { commandAction, recordCommand, prepareCommandCredentials } from './commands';
+import {
+  commandSpec,
+  parseCommandTree,
+  CommandSyntaxError,
+} from '../../../../packages/contracts/src/commands';
 import { settleDue, rearm, EventFailure, recordEventFailure } from '../scheduler/events';
 import { SCHEMA_VERSION } from '../storage/schema';
 import { exportData } from './export';
@@ -57,6 +64,16 @@ const HEAD = [
   'account',
 ];
 export class Engine {
+  platformKeys = false;
+  taskAuthorization = new Set<string>();
+  get matchId(): string {
+    return this.db.one<{ id: string }>('SELECT id FROM matches')?.id ?? this.env.MATCH_ID;
+  }
+  /** Scoped to one synchronous command transaction; never persisted or exposed to players. */
+  commandBatch = false;
+  commandPrepared: PreparedCode[] = [];
+  commandSnapshot: Record<string, string[]> = {};
+  commandCredentials: Record<string, Awaited<ReturnType<typeof prepareCredential>>> = {};
   resolvedKeys: Codebook | undefined;
   private materials:
     | Promise<{
@@ -69,6 +86,7 @@ export class Engine {
   constructor(
     public db: Store,
     public env: BackendEnv,
+    public grant?: MatchGrant,
   ) {}
   now(): number {
     return Date.now();
@@ -79,17 +97,23 @@ export class Engine {
   async keys(): Promise<Codebook> {
     if (!this.materials)
       this.materials = (async () => {
+        const modern =
+          this.platformKeys || !!this.db.one('SELECT id FROM match_identity WHERE key_version=2');
+        const [hmacRaw, encryptionRaw] = modern
+          ? await Promise.all([
+              derive(this.env, `match|${this.matchId}|bracelet`),
+              derive(this.env, `match|${this.matchId}|encryption|${this.env.CODE_ENCRYPTION_KEY}`),
+            ])
+          : [this.env.CODE_HMAC_KEY, this.env.CODE_ENCRYPTION_KEY];
         const [hmac, encryption] = await Promise.all([
-          secretKey(this.env.CODE_HMAC_KEY, 'HMAC'),
-          secretKey(this.env.CODE_ENCRYPTION_KEY, 'AES-GCM'),
+          secretKey(hmacRaw, 'HMAC'),
+          secretKey(encryptionRaw, 'AES-GCM'),
         ]);
-        const fingerprint = await digest(
-          `${this.env.CODE_HMAC_KEY}|${this.env.CODE_ENCRYPTION_KEY}`,
-        );
+        const fingerprint = await digest(`${hmacRaw}|${encryptionRaw}`);
         const codes = await Promise.all(
           enumerateCodes().map(async (key) => ({
             key,
-            mac: await mac(hmac, `bracelet|${this.env.MATCH_ID}|${key}`),
+            mac: await mac(hmac, `bracelet|${this.matchId}|${key}`),
           })),
         );
         const result = { hmac, encryption, fingerprint, codes };
@@ -114,7 +138,7 @@ export class Engine {
         return {
           id,
           mac: c.mac,
-          ciphertext: await encrypt(keys.encryption, c.key, `${this.env.MATCH_ID}|${id}`),
+          ciphertext: await encrypt(keys.encryption, c.key, `${this.matchId}|${id}`),
         };
       }),
     );
@@ -135,24 +159,26 @@ export class Engine {
     requireThat(count <= max, 'RATE_LIMITED', '请求过于频繁，请稍后重试。', 429);
   }
   actor(tokenHash: string): Actor {
+    if (this.grant) return membershipActor(this, this.grant);
+    requireThat(
+      !this.db.one('SELECT id FROM match_identity'),
+      'PLATFORM_LOGIN_REQUIRED',
+      '请从长期账号入口登录。',
+      401,
+    );
     const actor = this.db.one<Actor>(
       'SELECT a.* FROM accounts a JOIN sessions s ON s.account_id=a.id WHERE s.token_hash=? AND s.revoked=0 AND s.expires>? AND a.enabled=1',
       tokenHash,
       this.now(),
     );
-    requireThat(
-      actor && actor.match_id === this.env.MATCH_ID,
-      'UNAUTHENTICATED',
-      '请重新登录。',
-      401,
-    );
+    requireThat(actor && actor.match_id === this.matchId, 'UNAUTHENTICATED', '请重新登录。', 401);
     return actor;
   }
   session(actor: Actor, tokenHash: string): Session {
-    const csrf = this.db.one<{ csrf: string }>(
-      'SELECT csrf FROM sessions WHERE token_hash=?',
-      tokenHash,
-    )!.csrf;
+    const csrf =
+      this.grant?.csrf ??
+      this.db.one<{ csrf: string }>('SELECT csrf FROM sessions WHERE token_hash=?', tokenHash)!
+        .csrf;
     return {
       id: actor.id,
       matchId: actor.match_id,
@@ -225,16 +251,29 @@ export class Engine {
       JSON.stringify(detail),
       this.game(),
     );
+    const member = this.db.one<{ account_id: string; assignment_id: string | null; name: string }>(
+      'SELECT account_id,assignment_id,name FROM memberships WHERE local_id=?',
+      actor,
+    );
+    if (member)
+      this.db.exec(
+        'INSERT INTO audit_identities VALUES((SELECT MAX(seq) FROM audit_logs),?,?,?)',
+        member.account_id,
+        member.assignment_id,
+        member.name,
+      );
   }
   notice(source: string, target: string, title: string, body: string, game = this.game()): void {
+    const trial =
+      this.db.one<{ kind: string }>('SELECT kind FROM match_identity')?.kind === 'trial';
     this.db.exec(
       'INSERT OR IGNORE INTO notice_queue(id,dedup_key,channel,target,title,body,game_ms,priority,ordering_seq) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(ordering_seq),0)+1 FROM notice_queue))',
       crypto.randomUUID(),
       `${source}|${target}|${title}`,
       target === 'group' ? 'group' : 'private',
       target,
-      title,
-      body,
+      trial ? `【试玩】${title}` : title,
+      trial ? `本场为试玩比赛。${body}` : body,
       game,
       title === '永久淘汰' ? 100 : title === '飞船被击毁' ? 90 : title === '母星毁灭' ? 80 : 0,
     );
@@ -252,7 +291,7 @@ export class Engine {
       403,
     );
     const body = strict(raw, ['match_id', 'accounts']);
-    requireThat(body.match_id === this.env.MATCH_ID, 'MATCH_MISMATCH', '初始化场次不匹配。', 400);
+    requireThat(body.match_id === this.matchId, 'MATCH_MISMATCH', '初始化场次不匹配。', 400);
     requireThat(
       Array.isArray(body.accounts) && body.accounts.length >= 5 && body.accounts.length <= 353,
       'BAD_ROSTER',
@@ -323,7 +362,7 @@ export class Engine {
       );
       this.db.exec(
         'INSERT INTO matches(id,key_fingerprint,site_json,created_at) VALUES(?,?,?,?)',
-        this.env.MATCH_ID,
+        this.matchId,
         keys.fingerprint,
         JSON.stringify(DEFAULT_SITE),
         this.now(),
@@ -332,7 +371,7 @@ export class Engine {
         this.db.exec(
           'INSERT INTO accounts(id,match_id,role,name,credential_hash,permissions) VALUES(?,?,?,?,?,?)',
           a.id,
-          this.env.MATCH_ID,
+          this.matchId,
           a.role,
           a.name,
           a.hash,
@@ -347,13 +386,13 @@ export class Engine {
       this.db.exec(
         "INSERT INTO roster_members SELECT id FROM players WHERE entry_status='registered'",
       );
-      this.audit('bootstrap', 'initialize', this.env.MATCH_ID, '一次性场次引导', {
+      this.audit('bootstrap', 'initialize', this.matchId, '一次性场次引导', {
         players: accounts.filter((a) => a.role === 'player').length,
       });
     });
     return {
       status: 201,
-      body: { initialized: true, matchId: this.env.MATCH_ID, schemaVersion: SCHEMA_VERSION },
+      body: { initialized: true, matchId: this.matchId, schemaVersion: SCHEMA_VERSION },
     };
   }
   async call(input: RpcInput): Promise<RpcReply> {
@@ -361,6 +400,46 @@ export class Engine {
       return await this.handle(input);
     } catch (error) {
       if (error instanceof EventFailure) recordEventFailure(this, error);
+      if (input.path.startsWith('/judge/command/') && input.token) {
+        try {
+          const actor = this.actor(await digest(input.token));
+          if (actor.role === 'judge') {
+            const body = object(input.body),
+              id = typeof body.request_id === 'string' ? body.request_id.slice(0, 100) : 'unknown';
+            const keys = await this.keys();
+            const cipher =
+              typeof body.command === 'string'
+                ? await encrypt(
+                    keys.encryption,
+                    body.command,
+                    `command|${this.matchId}|${actor.id}|${id}`,
+                  )
+                : null;
+            let rejectedPath = 'unparsed';
+            try {
+              rejectedPath =
+                commandSpec(parseCommandTree(String(body.command)))?.path ?? rejectedPath;
+            } catch {
+              /* Syntax rejection remains unparsed. */
+            }
+            recordCommand(
+              this,
+              actor,
+              id,
+              rejectedPath,
+              'rejected',
+              {
+                code: error instanceof Fault ? error.code : 'BAD_REQUEST',
+                reason: typeof body.reason === 'string' ? body.reason : '裁判指令被拒绝',
+                reference: typeof body.preview_token === 'string' ? body.preview_token : null,
+              },
+              cipher,
+            );
+          }
+        } catch {
+          /* Preserve the original authentication or command error. */
+        }
+      }
       if (
         input.method === 'POST' &&
         input.path.startsWith('/judge/') &&
@@ -377,7 +456,7 @@ export class Engine {
             this.audit(
               actor.id,
               input.path,
-              typeof body.target === 'string' ? body.target.slice(0, 180) : this.env.MATCH_ID,
+              typeof body.target === 'string' ? body.target.slice(0, 180) : this.matchId,
               typeof body.reason === 'string' ? body.reason.slice(0, 500) : '管理操作失败',
               {
                 requestId:
@@ -401,7 +480,7 @@ export class Engine {
           status: error.status,
           body: { code: error.code, message: error.message, definitive: true },
         };
-      if (error instanceof ContractError)
+      if (error instanceof ContractError || error instanceof CommandSyntaxError)
         return {
           status: 400,
           body: { code: 'BAD_REQUEST', message: error.message, definitive: true },
@@ -437,14 +516,47 @@ export class Engine {
         permission(actor, 'overview');
       } else {
         const action = path === '/judge/manage/preview' ? body.path : path;
+        let commandAllowed = false;
+        if (path.startsWith('/judge/command/') && typeof body.command === 'string') {
+          let node = parseCommandTree(body.command);
+          if (node.words[0] === 'confirm') {
+            const plan = this.db.one<{ actor: string; data: string; status: string }>(
+              "SELECT actor,data,status FROM command_objects WHERE id=? AND kind='plan'",
+              node.words[1] ?? '',
+            );
+            if (plan?.actor === actor.id && plan.status === 'pending')
+              node = (JSON.parse(plan.data) as { node: typeof node }).node;
+          } else if (
+            node.words[0] === 'plan' &&
+            !['inspect', 'cancel'].includes(node.words[1] ?? '')
+          ) {
+            node = { ...node, words: node.words.slice(1) };
+          }
+          const spec = commandSpec(node);
+          commandAllowed =
+            !!spec &&
+            (spec.query ||
+              [
+                'plan inspect',
+                'plan cancel',
+                'request inspect',
+                'clock pause',
+                'event retry',
+                'event cancel',
+                'scheduler rearm',
+                'scheduler settle-due',
+              ].includes(spec.path));
+          if (commandAllowed) permission(actor, spec!.permission);
+        }
         if (!(
+          commandAllowed ||
           action === '/judge/pause' ||
           action === '/judge/event-control' ||
           action === '/judge/scheduler/rearm' ||
           action === '/judge/events/settle-due'
         ))
           throw error;
-        permission(actor, 'system');
+        if (!commandAllowed) permission(actor, 'system');
       }
       recordEventFailure(this, error);
     }
@@ -468,6 +580,14 @@ export class Engine {
     const db = this.db;
     const keys = await this.keys();
     this.requireRecoveryAccess(path, method === 'POST');
+    const creators = db
+      .all<{ actor: string }>(
+        "SELECT DISTINCT actor FROM command_objects WHERE kind IN ('schedule','job') AND status='pending'",
+      )
+      .map((r) => r.actor);
+    if (path.startsWith('/judge/command/') || creators.length)
+      this.commandPrepared = await this.prepareCode();
+    if (creators.length) await prepareCommandCredentials(this, creators);
     requireThat(
       db.match().key_fingerprint === keys.fingerprint,
       'KEY_CONFIGURATION_CHANGED',
@@ -475,6 +595,12 @@ export class Engine {
       503,
     );
     if (path === '/auth/exchange' && method === 'POST') {
+      requireThat(
+        !db.one('SELECT id FROM match_identity'),
+        'PLATFORM_LOGIN_REQUIRED',
+        '请从长期账号入口登录。',
+        401,
+      );
       this.limit(`login:${input.clientKey}`, 120);
       const body = strict(input.body, ['credential', 'audience']);
       requireThat(
@@ -552,7 +678,7 @@ export class Engine {
         const credential = await decrypt(
           keys.encryption,
           row.ciphertext,
-          `credential|${this.env.MATCH_ID}|${actor.id}|${deliveryId}`,
+          `credential|${this.matchId}|${actor.id}|${deliveryId}`,
         );
         permission(this.actor(hash), 'system');
         return { status: 200, body: { accountId: row.account_id, credential } };
@@ -615,18 +741,38 @@ export class Engine {
       });
     }
     const id = requestId(body.request_id);
-    const bodyDigest = await digest(stableJson(body));
+    const digestBody =
+      path.startsWith('/judge/command/') && typeof body.command === 'string'
+        ? {
+            command: parseCommandTree(body.command),
+            reason: body.reason ?? '',
+            preview_token: body.preview_token ?? null,
+          }
+        : body;
+    const bodyDigest = await digest(stableJson(digestBody));
     actor = this.actor(hash);
     const old = this.replay(actor, id, path, bodyDigest);
     if (old) return { status: 200, body: old };
+    const commandCiphertext = path.startsWith('/judge/command/')
+      ? await encrypt(
+          keys.encryption,
+          text(body.command, 262144),
+          `command|${this.matchId}|${actor.id}|${id}`,
+        )
+      : null;
+    if (path.startsWith('/judge/command/')) {
+      await prepareCommandCredentials(this, [...creators, actor.id]);
+    }
     const prepared =
       path.endsWith('issue-code') ||
       path === '/judge/attack-correction' ||
       path === '/judge/player-restore' ||
       (path === '/judge/correction' && body.field === 'restore') ||
       (path === '/judge/equipment-correction' && body.mode === 'reissue') ||
-      (path.startsWith('/judge/command/') && String(body.command).startsWith('/code reissue '))
-        ? await this.prepareCode()
+      path.startsWith('/judge/command/')
+        ? path.startsWith('/judge/command/')
+          ? this.commandPrepared
+          : await this.prepareCode()
         : [];
     const credentialMaterial =
       path === '/judge/accounts' && body.operation === 'reset'
@@ -643,7 +789,7 @@ export class Engine {
       if (replay) return replay;
       let result: OperationResult;
       if (path.startsWith('/judge/command/'))
-        result = commandAction(this, current, id, path, body, prepared, keys);
+        result = commandAction(this, current, id, path, body, prepared, keys, commandCiphertext);
       else if (path === '/judge/manage/preview') result = previewAction(this, current, id, body);
       else if (path.startsWith('/judge/'))
         result = judgeAction(this, current, id, path, body, prepared, credentialMaterial);

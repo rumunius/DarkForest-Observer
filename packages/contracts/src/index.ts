@@ -367,3 +367,4 @@ export function validArms(arms: Arms): boolean {
 export function validCode(value: string): boolean {
   return /^\d{6}$/.test(value);
 }
+export type * from './platform';

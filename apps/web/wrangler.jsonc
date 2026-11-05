@@ -11,6 +11,11 @@
   "durable_objects": {
     "bindings": [
       {
+        "name": "PLATFORM_DO",
+        "class_name": "DarkForestPlatform",
+        "script_name": "darkforest-core-local",
+      },
+      {
         "name": "MATCH_DO",
         "class_name": "DarkForestMatch",
         "script_name": "darkforest-core-local",
@@ -26,6 +31,11 @@
       },
       "durable_objects": {
         "bindings": [
+          {
+            "name": "PLATFORM_DO",
+            "class_name": "DarkForestPlatform",
+            "script_name": "darkforest-core-preview",
+          },
           {
             "name": "MATCH_DO",
             "class_name": "DarkForestMatch",

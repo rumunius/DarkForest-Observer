@@ -8,6 +8,7 @@ import { digest, decrypt, encrypt, secretKey } from '../../apps/match-worker/src
 import { eliminate, finish, retire } from '../../apps/match-worker/src/services/life';
 import { rearm } from '../../apps/match-worker/src/scheduler/events';
 import { migrate } from '../../apps/match-worker/src/storage/schema';
+import { SCHEMA_VERSION } from '../../apps/match-worker/src/storage/schema';
 import {
   createCheckpoint,
   openCheckpoint,
@@ -109,7 +110,21 @@ it('upgrades an existing v5 database without losing notices and applies the upgr
       db.exec(`ALTER TABLE scheduled_events DROP COLUMN ${column}`);
     db.exec('ALTER TABLE audit_logs DROP COLUMN game_ms');
     db.exec('ALTER TABLE previews DROP COLUMN impact');
-    db.exec('DELETE FROM schema_meta WHERE version=6');
+    db.exec('DROP TABLE judge_command_log');
+    db.exec('DROP TABLE command_tags');
+    db.exec('DROP TABLE command_objects');
+    for (const table of [
+      'match_identity',
+      'memberships',
+      'staff_assignments',
+      'authorization_fences',
+      'control_operations',
+      'match_outbox',
+      'audit_identities',
+      'participation_history',
+    ])
+      db.exec(`DROP TABLE ${table}`);
+    db.exec('DELETE FROM schema_meta WHERE version>=6');
     migrate(state.storage);
     migrate(state.storage);
     expect(
@@ -118,7 +133,9 @@ it('upgrades an existing v5 database without losing notices and applies the upgr
         'legacy-notice',
       ),
     ).toEqual({ status: 'pending', priority: 90, copied_by: null, sent_by: null });
-    expect(db.one('SELECT MAX(version) AS version FROM schema_meta')).toEqual({ version: 6 });
+    expect(db.one('SELECT MAX(version) AS version FROM schema_meta')).toEqual({
+      version: SCHEMA_VERSION,
+    });
     expect(db.one('SELECT COUNT(*) AS count FROM accounts')).toEqual({ count: 5 });
   });
 });

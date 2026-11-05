@@ -691,7 +691,13 @@ describe('real Workers SQLite and RPC', () => {
   });
   it('HTTP boundary rejects cross-origin, CSRF, oversized JSON, and serves JSON 404', async () => {
     await seed();
-    const env = { ...bindings, TRUSTED_ORIGINS: 'https://game.test' };
+    // This fixture exercises the legacy deployment; platform routing has its own tests.
+    const env = {
+      APP_ENV: bindings.APP_ENV,
+      MATCH_ID: bindings.MATCH_ID,
+      MATCH_DO: bindings.MATCH_DO,
+      TRUSTED_ORIGINS: 'https://game.test',
+    };
     const rejected = await gateway(
       new Request('https://game.test/api/auth/exchange', {
         method: 'POST',
@@ -1285,7 +1291,7 @@ describe('real Workers SQLite and RPC', () => {
     const { head, players } = await start();
     const match = (await call('/public/match')).body as { revision: number };
     const preview = await action('/judge/command/preview', head, {
-      command: '/schedule 10 /announce @a "请联系裁判"',
+      command: '/schedule create utc in 10s run { announce @a "请联系裁判" }',
       reason: '测试通知',
       expected_revision: match.revision,
     });
@@ -1293,7 +1299,7 @@ describe('real Workers SQLite and RPC', () => {
     expect(
       (
         await action('/judge/command/execute', head, {
-          command: '/schedule 10 /announce @a "请联系裁判"',
+          command: '/schedule create utc in 10s run { announce @a "请联系裁判" }',
           reason: '测试通知',
           expected_revision: match.revision,
           preview_token: (preview.body as { preview: { token: string } }).preview.token,

@@ -19,17 +19,26 @@ export class ApiError extends Error {
 
 /** The browser has no rule engine. These endpoints return authorized projections. */
 export class HttpSource implements DataSource {
+  constructor(
+    readonly matchId?: string,
+    readonly audience: 'player' | 'staff' = 'player',
+  ) {}
   private session: Session | null = null;
   private async request<T>(path: string, body?: unknown): Promise<T> {
     const controller = new AbortController();
     const timeout = globalThis.setTimeout(() => controller.abort(), 12000);
     try {
-      const response = await fetch(`/api${path}`, {
+      const prefix =
+        this.matchId && !path.startsWith('/auth/')
+          ? `/api/matches/${encodeURIComponent(this.matchId)}`
+          : '/api';
+      const response = await fetch(`${prefix}${path}`, {
         method: body === undefined ? 'GET' : 'POST',
         credentials: 'same-origin',
         cache: 'no-store',
         headers: {
           Accept: 'application/json',
+          ...(this.matchId ? { 'X-Darkforest-Audience': this.audience } : {}),
           ...(body === undefined
             ? {}
             : {

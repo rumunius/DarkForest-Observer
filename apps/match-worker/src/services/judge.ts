@@ -774,6 +774,7 @@ export function judgeAction(
       credentialDeliveryId = updateAccount(e, actor, raw, credentialMaterial);
       break;
     case '/judge/arm-code-release': {
+      db.exec("INSERT OR IGNORE INTO settings(key,value) VALUES('parameters_frozen','true')");
       const time = integer(raw.time);
       db.exec("UPDATE matches SET phase='armed',release_at=?", time);
       e.schedule('code_release', 'code_release', 'utc', time, 0);

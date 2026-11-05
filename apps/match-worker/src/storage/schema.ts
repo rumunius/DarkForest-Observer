@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 8;
 /** All statements are static. Platform migration tags are independent of this version. */
 const migration1 = `
 CREATE TABLE matches (
@@ -120,6 +120,45 @@ export function migrate(storage: DurableObjectStorage): void {
       );
       sql.exec('INSERT INTO schema_meta VALUES(6,?)', Date.now());
     }
+    if (version < 7) {
+      // Active restoration makes fourth and later mismatches representable; the >=3 penalty is unchanged.
+      sql.exec(
+        'CREATE TABLE attack_controls_v7 (player_id TEXT PRIMARY KEY REFERENCES players(id),wrong INTEGER NOT NULL DEFAULT 0 CHECK(wrong BETWEEN 0 AND 9007199254740990),locked_until INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,last_at INTEGER)',
+      );
+      sql.exec('INSERT INTO attack_controls_v7 SELECT * FROM attack_controls');
+      sql.exec('DROP TABLE attack_controls');
+      sql.exec('ALTER TABLE attack_controls_v7 RENAME TO attack_controls');
+      sql.exec(
+        `CREATE TABLE IF NOT EXISTS command_objects (id TEXT PRIMARY KEY, kind TEXT NOT NULL, actor TEXT NOT NULL REFERENCES accounts(id), status TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_utc INTEGER NOT NULL, data TEXT NOT NULL)`,
+      );
+      sql.exec(
+        'CREATE INDEX IF NOT EXISTS command_objects_kind ON command_objects(kind,created_utc,id)',
+      );
+      sql.exec(
+        'CREATE TABLE IF NOT EXISTS command_tags(player_id TEXT NOT NULL REFERENCES players(id),tag TEXT NOT NULL,PRIMARY KEY(player_id,tag))',
+      );
+      sql.exec(
+        'CREATE TABLE IF NOT EXISTS judge_command_log(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,actor TEXT NOT NULL REFERENCES accounts(id),request_id TEXT NOT NULL,status TEXT NOT NULL,path TEXT NOT NULL,created_utc INTEGER NOT NULL,game_ms INTEGER NOT NULL,detail TEXT NOT NULL,ciphertext TEXT)',
+      );
+      sql.exec('CREATE INDEX IF NOT EXISTS command_log_order ON judge_command_log(actor,seq)');
+      sql.exec('INSERT INTO schema_meta VALUES(7,?)', Date.now());
+    }
+    if (version < 8) {
+      sql.exec(`
+        CREATE TABLE match_identity(id TEXT PRIMARY KEY,kind TEXT NOT NULL,creation_id TEXT NOT NULL UNIQUE,body_hash TEXT NOT NULL,key_version INTEGER NOT NULL DEFAULT 2,recovery_generation INTEGER NOT NULL DEFAULT 0,erasure_generation INTEGER NOT NULL DEFAULT 0,management_state TEXT NOT NULL DEFAULT 'draft');
+        CREATE TABLE memberships(account_id TEXT PRIMARY KEY,kind TEXT NOT NULL,name TEXT NOT NULL,local_id TEXT UNIQUE REFERENCES accounts(id),state TEXT NOT NULL,epoch INTEGER NOT NULL DEFAULT 1,assignment_id TEXT);
+        CREATE TABLE staff_assignments(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,seat_id TEXT NOT NULL,started_utc INTEGER NOT NULL,ended_utc INTEGER,epoch INTEGER NOT NULL);
+        CREATE UNIQUE INDEX active_staff_seat ON staff_assignments(seat_id) WHERE ended_utc IS NULL;
+        CREATE UNIQUE INDEX active_staff_account ON staff_assignments(account_id) WHERE ended_utc IS NULL;
+        CREATE TABLE authorization_fences(account_id TEXT PRIMARY KEY,auth_epoch INTEGER NOT NULL,disabled INTEGER NOT NULL);
+        CREATE TABLE control_operations(id TEXT PRIMARY KEY,body_hash TEXT NOT NULL,result TEXT NOT NULL);
+        CREATE TABLE match_outbox(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,generation INTEGER NOT NULL,data TEXT NOT NULL,acknowledged INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE audit_identities(seq INTEGER PRIMARY KEY,account_id TEXT NOT NULL,assignment_id TEXT,display_name TEXT NOT NULL);
+        CREATE TABLE participation_history(account_id TEXT PRIMARY KEY,local_id TEXT NOT NULL,confirmed_utc INTEGER NOT NULL);
+      `);
+      sql.exec('INSERT INTO schema_meta VALUES(8,?)', Date.now());
+    }
+    sql.exec('DROP TABLE IF EXISTS archive_parts');
     if (sql.exec<{ foreign_keys: number }>('PRAGMA foreign_keys').one().foreign_keys !== 1)
       throw new Error('FOREIGN_KEYS_DISABLED');
   });
