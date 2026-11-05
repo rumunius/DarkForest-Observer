@@ -25,6 +25,7 @@ export interface PlatformSession {
   csrfToken: string;
   recent: boolean;
   secondFactor: boolean;
+  secondFactorEnabled?: boolean;
 }
 export interface MatchEntry {
   id: string;
@@ -38,6 +39,8 @@ export interface MatchEntry {
   recommended: number;
   retention_days: number;
   audit_days: number;
+  membership?: MatchMember;
+  phase?: string;
 }
 export interface PlatformOperation {
   id: string;

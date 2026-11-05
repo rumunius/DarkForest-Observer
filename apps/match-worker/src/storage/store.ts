@@ -113,7 +113,7 @@ export const DEFAULT_SITE: SiteConfig = {
   version: 1,
   title: '黑暗森林：观察者效应',
   description:
-    '以文明为名，参加一场现场观察与信息博弈。使用参赛口令进入比赛，所有现场移动请正常步行。',
+    '以文明为名，参加一场现场观察与信息博弈。使用长期口令登录并选择比赛，所有现场移动请正常步行。',
   timezone: 'Asia/Shanghai',
   qqGroup: '',
   judgeContact: '',

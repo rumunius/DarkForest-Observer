@@ -25,6 +25,7 @@ import { accountList } from '../services/accounts';
 import { judgeRecords, noticeProjection } from './judge-records';
 import { TIMES } from '../domain/rules';
 import { readCommandHistory } from '../services/commands';
+import { eventBody } from './event-copy';
 type Keys = Awaited<ReturnType<Engine['keys']>>;
 export function matchProjection(e: Engine): MatchState {
   const m = e.db.match();
@@ -175,18 +176,25 @@ export function events(
     actor: string | null;
     game_ms: number;
     utc_ms: number;
+    sighting_actor: string | null;
   }>(
     full
-      ? 'SELECT * FROM event_log WHERE seq<? ORDER BY seq DESC LIMIT ?'
-      : "SELECT * FROM event_log WHERE seq<? AND (audience='public' OR owner=?) ORDER BY seq DESC LIMIT ?",
+      ? "SELECT l.*,a.actor AS sighting_actor FROM event_log l LEFT JOIN attacks a ON a.id=(CASE WHEN substr(l.id,-7)=':target' THEN substr(l.id,1,length(l.id)-7) ELSE l.id END)||':attack' WHERE l.seq<? ORDER BY l.seq DESC LIMIT ?"
+      : "SELECT l.*,NULL AS sighting_actor FROM event_log l WHERE l.seq<? AND (l.audience='public' OR l.owner=?) ORDER BY l.seq DESC LIMIT ?",
     ...(full ? [before, limit] : [before, actor.id, limit]),
   );
   return rows.map((r) => ({
     id: r.id,
     kind: r.kind,
     title: r.title,
-    body: r.body,
+    body: eventBody(
+      r,
+      r.owner ? e.identity(r.owner) : '',
+      actor.role === 'player' && r.owner === actor.id,
+      r.sighting_actor ? e.identity(r.sighting_actor) : undefined,
+    ),
     audience: r.audience,
+    ...(r.owner ? { recipient: r.owner } : {}),
     civilizationIds: JSON.parse(r.civilization_ids) as string[],
     gameMs: r.game_ms,
     utcMs: r.utc_ms,
@@ -199,8 +207,15 @@ export function events(
 export function intel(e: Engine, actor: Actor): Intel[] {
   if (!e.db.roster().includes(actor.id)) return [];
   return e.db
-    .all<{ id: string; target: string; nickname: string; code: string; game_ms: number }>(
-      'SELECT i.id,i.target,p.nickname,i.code,i.game_ms FROM intel_grants i JOIN players p ON p.id=i.target WHERE i.owner=? ORDER BY i.game_ms DESC',
+    .all<{
+      id: string;
+      target: string;
+      nickname: string;
+      code: string;
+      game_ms: number;
+      source_kind: string | null;
+    }>(
+      "SELECT i.id,i.target,p.nickname,i.code,i.game_ms,COALESCE(l.kind,CASE WHEN a.id IS NOT NULL THEN 'sighting' END) AS source_kind FROM intel_grants i JOIN players p ON p.id=i.target LEFT JOIN event_log l ON l.id=i.source LEFT JOIN attacks a ON a.id=i.source||':attack' WHERE i.owner=? ORDER BY i.game_ms DESC",
       actor.id,
     )
     .map((r) => ({
@@ -209,7 +224,12 @@ export function intel(e: Engine, actor: Actor): Intel[] {
       nickname: r.nickname,
       code: r.code,
       gameMs: r.game_ms,
-      source: '赛事情报',
+      source:
+        r.source_kind === 'broadcast'
+          ? '反向监听'
+          : r.source_kind === 'sighting'
+            ? '击毁飞船'
+            : '历史情报（来源未记录）',
     }));
 }
 function judgeProjection(e: Engine, actor: Actor): JudgeState {

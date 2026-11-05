@@ -300,7 +300,9 @@ describe('audit fixes without a complete command language', () => {
     await manage('/judge/resume', head);
     expect((await action('/action/broadcast', players[0]!, { code: '000002' })).status).toBe(200);
     expect((await call('/player/intel', undefined, players[1])).body).toEqual(
-      expect.arrayContaining([expect.objectContaining({ civilization: 'C01', code: '000001' })]),
+      expect.arrayContaining([
+        expect.objectContaining({ civilization: 'C01', code: '000001', source: '反向监听' }),
+      ]),
     );
   });
 
@@ -833,7 +835,7 @@ describe('real Workers SQLite and RPC', () => {
     });
   });
   it('allows only one concurrent hit, grants private intelligence, permits fixed-deadline respawn', async () => {
-    const { players, arms, startUtc } = await start();
+    const { players, arms, startUtc, head } = await start();
     const target = arms[2]!;
     const shots = await Promise.all([
       action('/action/sighting', players[0]!, { arm_a: target[0], arm_b: target[1] }),
@@ -845,6 +847,26 @@ describe('real Workers SQLite and RPC', () => {
     );
     expect(outcomes.filter((r) => r.target === 'C03')).toHaveLength(1);
     expect(outcomes.every((r) => r.wrongCount === 0)).toBe(true);
+    const winner = outcomes.findIndex((outcome) => outcome.target === 'C03');
+    const intel = (await call('/player/intel', undefined, players[winner])).body;
+    expect(intel).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ civilization: 'C03', source: '击毁飞船' }),
+      ]),
+    );
+    const judgeView = (await call('/snapshot?route=/judge', undefined, head)).body as Snapshot;
+    const destroyed = judgeView.events.find((event) => event.title === '飞船被击毁')!;
+    expect(destroyed.body).toContain(`C0${winner + 1}`);
+    expect(destroyed.body).toContain('C03');
+    expect(destroyed.body).not.toContain('你的');
+    const victimView = (await call('/snapshot?route=/player', undefined, players[2]))
+      .body as Snapshot;
+    expect(victimView.events.find((event) => event.title === '飞船被击毁')!.body).toContain(
+      '你的飞船',
+    );
+    expect(victimView.events.find((event) => event.title === '飞船被击毁')!.body).not.toContain(
+      `C0${winner + 1}`,
+    );
     const victim = players[2]!;
     expect((await call('/player/self', undefined, victim)).body).toMatchObject({
       flight: 'returning',

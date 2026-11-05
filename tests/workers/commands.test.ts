@@ -113,6 +113,27 @@ it('rejects players and checks expanded permissions; communications can query an
   expect(p.status, JSON.stringify(p.body)).toBe(200);
   expect((p.body as OperationResult).preview).toBeDefined();
 });
+it('人工技术爆炸只在执行时产生本人通知，重试不重复且其他玩家不可见', async () => {
+  await forest();
+  const preview = await plan('/event trigger tech-burst C01');
+  expect(await sql("SELECT id FROM event_log WHERE kind='tech'")).toEqual([]);
+  expect((await confirm(preview.token, 'notify-tech')).status).toBe(200);
+  expect((await confirm(preview.token, 'notify-tech')).status).toBe(200);
+  const own = await call('/snapshot?route=/player', undefined, player);
+  const events = (own.body as { events: { title: string; body: string }[] }).events;
+  expect(events.filter((event) => event.title === '技术爆炸')).toEqual([
+    expect.objectContaining({ body: expect.stringContaining('你获得一枚光粒') }),
+  ]);
+  expect(await sql("SELECT target FROM notice_queue WHERE title='技术爆炸'")).toEqual([
+    { target: 'C01' },
+  ]);
+  const other = await call('/snapshot?route=/player', undefined, await login('C02'));
+  expect(
+    (other.body as { events: { title: string }[] }).events.some(
+      (event) => event.title === '技术爆炸',
+    ),
+  ).toBe(false);
+});
 
 function resultData(reply: Awaited<ReturnType<typeof command>>) {
   expect(reply.status, JSON.stringify(reply.body)).toBe(200);

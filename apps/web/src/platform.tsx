@@ -17,7 +17,7 @@ import { accountCsv } from './data/csv';
 const states: Record<string, string> = {
   draft: '草稿',
   provisioning: '创建中',
-  available: '可进入',
+  available: '已发布',
   archiving: '归档中',
   archived: '已归档',
   purge_pending: '待清理',
@@ -93,10 +93,11 @@ function Delivery({ value }: { value: Record<string, unknown> | null }) {
 }
 export function PlatformApp() {
   const route = location.pathname;
+  const requestedAudience = new URLSearchParams(location.search).get('audience');
   const [audience, setAudience] = useState<'player' | 'staff'>(
-    route.startsWith('/manage') || new URLSearchParams(location.search).get('audience') === 'staff'
+    route.startsWith('/manage') || requestedAudience === 'staff'
       ? 'staff'
-      : sessionStorage.getItem('df.portal.audience') === 'staff'
+      : requestedAudience !== 'player' && sessionStorage.getItem('df.portal.audience') === 'staff'
         ? 'staff'
         : 'player',
   );
@@ -164,10 +165,14 @@ export function PlatformApp() {
           黑暗森林<span>赛事与账号</span>
         </a>
         <nav aria-label="赛事中心导航">
-          <a href="/matches" aria-current={route === '/matches' ? 'page' : undefined}>
-            我的比赛
-          </a>
-          <a href="/account">账号与安全</a>
+          {session && (
+            <>
+              <a href="/matches" aria-current={route === '/matches' ? 'page' : undefined}>
+                我的比赛
+              </a>
+              <a href="/account">账号与安全</a>
+            </>
+          )}
           {manage && (
             <>
               <a href="/manage">管理待办</a>
@@ -410,6 +415,57 @@ function useRows<T>(client: PlatformClient, path: string, tick: number) {
   }, [client, path, tick]);
   return { data, error };
 }
+function matchEnded(entry: MatchEntry) {
+  if (entry.phase) return entry.phase === 'ended';
+  try {
+    return JSON.parse(entry.summary).phase === 'ended';
+  } catch {
+    return false;
+  }
+}
+function AcceptInvitation({
+  client,
+  id,
+  run,
+  accepted,
+}: {
+  client: PlatformClient;
+  id: string;
+  run: Run;
+  accepted: boolean;
+}) {
+  const [state, setState] = useState<'idle' | 'pending' | 'done'>('idle');
+  if (state === 'done')
+    return (
+      <span role="status">
+        {client.audience === 'player' ? '已加入比赛' : '已接受邀请，等待安排裁判岗位'}
+      </span>
+    );
+  return (
+    <Button
+      disabled={state === 'pending'}
+      onClick={() => {
+        void run(async () => {
+          setState('pending');
+          try {
+            const result = await client.mutate<{ operationId: string }>(
+              `/matches/${id}/members/accept`,
+              { consent: true, reason: '本人接受活动说明与数据保留期限，并加入本场比赛' },
+            );
+            await client.waitOperation(result.operationId);
+            setState('done');
+            return undefined;
+          } catch (error) {
+            setState('idle');
+            throw error;
+          }
+        });
+      }}
+    >
+      {state === 'pending' ? '正在加入比赛' : accepted ? '加入比赛' : '接受邀请'}
+    </Button>
+  );
+}
 function Matches({
   client,
   tick,
@@ -467,37 +523,38 @@ function Matches({
                   <a href={`/manage/matches/${d.id}`}>管理比赛</a>
                 ) : (
                   <>
-                    <a href={`/m/${d.id}/${client.audience === 'staff' ? 'judge' : 'player'}`}>
-                      进入比赛
-                    </a>
-                    <Button
-                      onClick={() =>
-                        void run(() =>
-                          client.mutate(`/matches/${d.id}/members/accept`, {
-                            consent: true,
-                            reason: '已确认活动说明与数据保留期限',
-                          }),
-                        )
-                      }
-                    >
-                      接受邀请
-                    </Button>
-                    {client.audience === 'player' && (
-                      <Button
-                        onClick={() =>
-                          void run(() =>
-                            client.mutate(`/matches/${d.id}/members/bind`, {
-                              reason: '本人确认本场文明',
-                            }),
-                          )
-                        }
-                      >
-                        确认本场文明
-                      </Button>
+                    {d.membership?.state === 'bound' && d.state === 'available' && (
+                      <a href={`/m/${d.id}/${client.audience === 'staff' ? 'judge' : 'player'}`}>
+                        进入比赛
+                      </a>
+                    )}
+                    {(d.membership?.state === 'invited' ||
+                      (d.membership?.state === 'accepted' && client.audience === 'player')) && (
+                      <>
+                        <p className="secondary">接受邀请即确认本场活动说明与上述资料保留期限。</p>
+                        <AcceptInvitation
+                          key={`${d.id}:${d.membership.state}`}
+                          client={client}
+                          id={d.id}
+                          run={run}
+                          accepted={d.membership.state === 'accepted'}
+                        />
+                      </>
+                    )}
+                    {d.membership?.state === 'bound' && (
+                      <span>
+                        已加入本场，身份为 {d.membership.local_id}
+                        {d.state === 'draft' ? '，等待发布比赛' : ''}
+                      </span>
+                    )}
+                    {d.membership?.state === 'accepted' && client.audience === 'staff' && (
+                      <span>已接受邀请，等待安排裁判岗位</span>
                     )}
                   </>
                 )}
-                <a href={`/m/${d.id}/history?audience=${client.audience}`}>历史与版本</a>
+                {matchEnded(d) && (
+                  <a href={`/m/${d.id}/history?audience=${client.audience}`}>赛后资料与版本</a>
+                )}
               </div>
             </article>
           ))}
@@ -633,7 +690,7 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
               天
             </p>
             <p>
-              创建后进入草稿；在管理页面邀请玩家、确认本场文明和配置三个裁判岗位，再发布准备入口。复制时采用活动说明、七色色值和比赛参数。
+              创建后进入草稿；在管理页面邀请玩家并任命总裁判，再发布准备入口。玩家接受邀请后自动获得本场文明，通讯与事件裁判可按需增设。复制时采用活动说明、七色色值和比赛参数。
             </p>
             <Button onClick={() => setStage(0)}>返回修改</Button>
           </Notice>
@@ -873,22 +930,14 @@ function ManageMatch({
       </p>
       <div className="platform-row-actions">
         {data.current.members.find((m) => m.account_id === client.session?.account.id)?.state ===
-          'invited' && (
-          <Button
-            onClick={() =>
-              void run(() =>
-                client.mutate(`/matches/${id}/members/accept`, {
-                  consent: true,
-                  reason: '本人接受本场任职邀请与数据保留期限',
-                }),
-              )
-            }
-          >
-            接受本人的任职邀请
-          </Button>
+          'invited' && <AcceptInvitation client={client} id={id} run={run} accepted={false} />}
+        {d.state === 'available' &&
+          data.current.members.some(
+            (m) => m.account_id === client.session?.account.id && m.state === 'bound',
+          ) && <a href={`/m/${id}/judge`}>进入本人裁判工作台</a>}
+        {data.current.phase === 'ended' && (
+          <a href={`/m/${id}/history?audience=staff`}>查看赛后资料</a>
         )}
-        <a href={`/m/${id}/judge`}>进入本人裁判工作台</a>
-        <a href={`/m/${id}/history?audience=staff`}>查看赛后资料</a>
         <a href={`/manage/matches/new?copy=${id}`}>以此设置再建一场</a>
       </div>
       <section className="platform-detail">
@@ -941,7 +990,7 @@ function ManageMatch({
         >
           邀请到本场
         </Button>
-        <p>对方需用自己的账号接受邀请。玩家接受后自行确认本场文明；总裁判在场内选择正式名单。</p>
+        <p>对方需用自己的账号接受邀请。玩家接受时自动确认本场文明；总裁判在场内选择正式名单。</p>
         <h2>裁判交接与失联接管</h2>
         <Field label="裁判岗位">
           <select
@@ -1001,7 +1050,7 @@ function ManageMatch({
         <h2>本场成员</h2>
         {data.current.members.map((m) => (
           <p key={m.account_id}>
-            <strong>{m.name}</strong>，{m.local_id ?? '尚未确认本场身份'} ·{' '}
+            <strong>{m.name}</strong>，{m.local_id ?? '尚未确认本场身份'}，
             {
               (
                 {
@@ -1115,7 +1164,7 @@ function Security({
             onChange={(e) => setCredential(e.target.value)}
           />
         </Field>
-        <Field label="第二因素验证码或恢复码">
+        <Field label="第二因素验证码或恢复码（已启用时填写）">
           <input
             autoComplete="one-time-code"
             value={code}
@@ -1126,10 +1175,12 @@ function Security({
           重新认证（有效10分钟）
         </Button>
       </form>
-      {!client.session?.secondFactor && (
+      {!client.session?.secondFactorEnabled && (
         <section className="platform-detail">
           <h2>设置第二因素</h2>
-          <p>正式环境的平台管理要求第二因素。请使用认证器保存密钥，再输入当前验证码确认。</p>
+          <p>
+            你可以自愿启用第二因素验证。启用后，登录需要认证器验证码或恢复码，也可以在这里关闭。
+          </p>
           <Button
             onClick={() =>
               void run(async () => {
@@ -1160,19 +1211,37 @@ function Security({
               </Button>
             </>
           )}
-          {recovery.length > 0 && (
-            <>
-              <p>一次性恢复码，请安全保存，离页后不再显示。</p>
-              <pre>{recovery.join('\n')}</pre>
-            </>
-          )}
+        </section>
+      )}
+      {client.session?.secondFactorEnabled && (
+        <section className="platform-detail">
+          <h2>第二因素验证已启用</h2>
+          <Button
+            disabled={!client.session.recent || !client.session.secondFactor}
+            onClick={() =>
+              void run(async () => {
+                await client.request('/me/security/disable', {});
+                setRecovery([]);
+                await refresh();
+              })
+            }
+          >
+            关闭第二因素验证
+          </Button>
+          {!client.session.recent && <p>关闭前请先重新认证。</p>}
+        </section>
+      )}
+      {recovery.length > 0 && (
+        <section className="platform-detail">
+          <p>一次性恢复码，请安全保存，离页后不再显示。</p>
+          <pre>{recovery.join('\n')}</pre>
         </section>
       )}
       <section className="platform-detail">
         <h2>设备会话</h2>
         {sessions?.map((s, i) => (
           <p key={i}>
-            {new Date(s.created_utc).toLocaleString('zh-CN')} ·{' '}
+            {new Date(s.created_utc).toLocaleString('zh-CN')}，
             {s.revoked ? '已撤销' : new Date(s.expires).toLocaleString('zh-CN') + ' 到期'}
           </p>
         ))}
@@ -1382,55 +1451,106 @@ function RoleManager({ client, tick, run }: { client: PlatformClient; tick: numb
   );
 }
 export function MatchApp({ id }: { id: string }) {
+  const requestedAudience = new URLSearchParams(location.search).get('audience');
   const internal = location.pathname.slice(`/m/${id}`.length) || '/',
     audience: 'staff' | 'player' =
       internal.startsWith('/judge') ||
       internal === '/manage' ||
       internal === '/display' ||
-      new URLSearchParams(location.search).get('audience') === 'staff'
+      requestedAudience === 'staff' ||
+      requestedAudience === 'judge' ||
+      (!internal.startsWith('/player') &&
+        requestedAudience !== 'player' &&
+        sessionStorage.getItem('df.portal.audience') === 'staff')
         ? 'staff'
         : 'player';
   const source = useMemo(() => new HttpSource(id, audience), [id, audience]),
     client = useMemo(() => new PlatformClient(audience), [audience]),
-    [entry, setEntry] = useState<MatchEntry | null>(null);
+    [entry, setEntry] = useState<MatchEntry | null>(null),
+    [error, setError] = useState('');
   useEffect(() => {
-    void client
-      .load()
-      .then(() => client.request<MatchEntry[]>('/me/matches'))
-      .then((rows) => setEntry(rows.find((d) => d.id === id) ?? null))
-      .catch(() => {});
-  }, [client, id]);
+    sessionStorage.setItem('df.portal.audience', audience);
+    let active = true;
+    void (async () => {
+      const session = await client.load();
+      if (!active) return;
+      if (!session) {
+        location.replace(`/?audience=${audience}`);
+        return;
+      }
+      const rows = await client.request<MatchEntry[]>('/me/matches');
+      let current = rows.find((d) => d.id === id);
+      if (!current && session.roles.some((role) => role === 'owner' || role === 'admin'))
+        current = (await client.request<MatchEntry[]>('/platform/matches')).find(
+          (d) => d.id === id,
+        );
+      if (!active) return;
+      if (internal !== '/manage' && internal !== '/history') {
+        if (current?.membership?.state !== 'bound' || current.state !== 'available') {
+          location.replace(`/matches?audience=${audience}`);
+          return;
+        }
+        if (internal === '/' || internal === '/login') {
+          location.replace(`/m/${id}/${audience === 'staff' ? 'judge' : 'player'}`);
+          return;
+        }
+      }
+      if (!current) throw new Error('当前账号不能查看这场比赛。请返回我的比赛选择场次。');
+      setEntry(current);
+    })().catch((e) => {
+      if (active) setError(e instanceof Error ? e.message : '暂时无法读取比赛，请刷新重试。');
+    });
+    return () => {
+      active = false;
+    };
+  }, [client, id, audience, internal]);
   const leave = (event: React.MouseEvent) => {
     if (sessionStorage.getItem(`darkforest.pending-operation./m/${id}`)) {
       event.preventDefault();
       alert('请先在本场查询原操作结果，取得确定结论后再切换比赛。');
     }
   };
+  if (!entry)
+    return (
+      <main className="platform-history">
+        {error ? (
+          <>
+            <p role="alert">{error}</p>
+            <a href={`/matches?audience=${audience}`}>返回我的比赛</a>
+          </>
+        ) : (
+          <p role="status">正在读取比赛</p>
+        )}
+      </main>
+    );
+  if (internal !== '/history' && internal !== '/manage')
+    return <App source={source} base={`/m/${id}`} matchContext={{ entry, audience }} />;
   return (
-    <>
-      <div className="match-context-banner">
-        <a href="/matches" onClick={leave}>
-          我的比赛
-        </a>
-        <strong>{entry?.name ?? '本场比赛'}</strong>
-        <Label>{entry ? (entry.kind === 'trial' ? '试玩' : '正式比赛') : '正在读取比赛信息'}</Label>
-        <a href={`/m/${id}/history?audience=${audience}`} onClick={leave}>
-          赛后资料
-        </a>
-        {audience === 'staff' && (
-          <a href={`/m/${id}/manage`} onClick={leave}>
-            本场成员与岗位
+    <div className="platform-shell">
+      <aside className="platform-sidebar">
+        <strong className="platform-brand">{entry.name}</strong>
+        <nav aria-label="本场比赛导航">
+          <a href={`/matches?audience=${audience}`} onClick={leave}>
+            我的比赛
           </a>
+          {entry.membership?.state === 'bound' && entry.state === 'available' && (
+            <a href={`/m/${id}/${audience === 'staff' ? 'judge' : 'player'}`} onClick={leave}>
+              返回本场比赛
+            </a>
+          )}
+          <a href={`/account?audience=${audience}`} onClick={leave}>
+            账号与安全
+          </a>
+        </nav>
+      </aside>
+      <div className="platform-main">
+        {internal === '/history' ? (
+          <History client={client} id={id} />
+        ) : (
+          <MatchManagement client={client} id={id} />
         )}
       </div>
-      {internal === '/history' ? (
-        <History client={client} id={id} />
-      ) : internal === '/manage' ? (
-        <MatchManagement client={client} id={id} />
-      ) : (
-        <App source={source} base={`/m/${id}`} />
-      )}
-    </>
+    </div>
   );
 }
 function MatchManagement({ client, id }: { client: PlatformClient; id: string }) {

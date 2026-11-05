@@ -11,6 +11,7 @@ import type { Arms, DataSource, OperationResult, Snapshot } from '@darkforest/co
 import { DEFAULT_SITE } from './config';
 import { ApiError } from './data/http';
 import { mergeRecords, type Collection } from './judge-records';
+import { personalMessage } from './data/messages';
 
 const empty: Snapshot = {
   site: DEFAULT_SITE,
@@ -137,7 +138,11 @@ export function AppProvider({
   const accountKey = `${base}.darkforest.read.${data.session?.matchId ?? ''}.${data.session?.role ?? ''}.${data.session?.id ?? 'guest'}`;
   useEffect(() => {
     try {
-      setReadIds(JSON.parse(sessionStorage.getItem(accountKey) ?? '[]') as string[]);
+      setReadIds(
+        JSON.parse(
+          localStorage.getItem(accountKey) ?? sessionStorage.getItem(accountKey) ?? '[]',
+        ) as string[],
+      );
     } catch {
       setReadIds([]);
     }
@@ -148,7 +153,7 @@ export function AppProvider({
         if (previous.includes(id)) return previous;
         const next = [...previous, id];
         try {
-          sessionStorage.setItem(accountKey, JSON.stringify(next));
+          localStorage.setItem(accountKey, JSON.stringify(next));
         } catch {
           /* Reading preferences can stay in memory. */
         }
@@ -500,8 +505,9 @@ export function AppProvider({
         setSelectedArm,
         receivedAt,
         online,
-        unread: data.events.filter((e) => e.audience === 'personal' && !readIds.includes(e.id))
-          .length,
+        unread: data.events.filter(
+          (e) => personalMessage(e, data.player?.id ?? data.session?.id) && !readIds.includes(e.id),
+        ).length,
         markRead,
       }}
     >

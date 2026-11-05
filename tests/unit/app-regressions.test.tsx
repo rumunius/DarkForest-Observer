@@ -38,6 +38,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState({}, '', '/player/homeworld');
   sessionStorage.clear();
+  localStorage.clear();
   vi.stubGlobal('scrollTo', vi.fn());
 });
 afterEach(async () => {
@@ -50,6 +51,29 @@ afterEach(async () => {
 });
 
 describe('actual React state and forms', () => {
+  it('阅读本人消息后红点消失并跨页面保留，观战中他人私人事件不计入本人未读', async () => {
+    const source = new MockSource(),
+      fixture = await source.read('/player');
+    const original = fixture.events.find((event) => event.audience === 'personal')!;
+    fixture.events = [
+      { ...original, id: 'mine', recipient: fixture.player!.id },
+      { ...original, id: 'someone-else', recipient: 'C99' },
+    ];
+    vi.spyOn(source, 'read').mockImplementation(async () => structuredClone(fixture));
+    history.replaceState({}, '', '/player');
+    await mount(source, true);
+    expect(latest.unread).toBe(1);
+    await act(async () => latest.go('/player/messages'));
+    expect(latest.unread).toBe(0);
+    expect(document.body.textContent).not.toContain('someone-else');
+    await act(async () => root!.unmount());
+    root = undefined;
+    await mount(source, true);
+    expect(latest.unread).toBe(0);
+    await act(async () => latest.go('/player/me'));
+    await act(async () => latest.refresh());
+    expect(latest.unread).toBe(0);
+  });
   it('submits the real homeworld form through HttpSource using the shared strict wire schema', async () => {
     const initial = await new MockSource().read('/player');
     initial.player = {

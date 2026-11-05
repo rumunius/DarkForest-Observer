@@ -427,7 +427,7 @@ export function playerAction(
               nickname: db.player(target).nickname ?? '',
               code: db.home(target)!.code,
               gameMs: game,
-              source: '目击成功',
+              source: '击毁飞船',
             }
           : undefined;
       result = completed(

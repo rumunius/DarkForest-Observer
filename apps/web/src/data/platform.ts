@@ -83,6 +83,16 @@ export class PlatformClient {
     this.session = await this.request<PlatformSession | null>('/auth/session');
     return this.session;
   }
+  async waitOperation(id: string) {
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const result = await this.request<{ status: string; error?: string }>(`/me/operations/${id}`);
+      if (result.status === 'succeeded') return;
+      if (['failed', 'cancelled', 'partial'].includes(result.status))
+        throw new Error(result.error || '加入比赛未完成，请刷新比赛列表后重试。');
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error('邀请仍在处理中，请刷新比赛列表核对结果。');
+  }
   async login(credential: string, code: string) {
     this.session = await this.request<PlatformSession>('/auth/exchange', {
       credential,

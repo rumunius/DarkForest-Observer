@@ -10,6 +10,8 @@ import {
 import { useApp } from '../state';
 import { DEFAULT_PARAMETERS, duration } from '../rule-text';
 import { canAct } from '../permissions';
+import { MatchLinks } from '../components/match-context';
+import { personalMessage } from '../data/messages';
 import {
   ArmsView,
   Button,
@@ -772,7 +774,11 @@ function Messages() {
   const event = data.events.find((e) => e.id === detailId);
   useEffect(() => {
     if (event) markRead(event.id);
-  }, [event?.id, markRead]);
+    else if (!detailId && tab === 'personal')
+      data.events
+        .filter((item) => personalMessage(item, data.player?.id ?? data.session?.id))
+        .forEach((item) => markRead(item.id));
+  }, [event, detailId, tab, data.events, data.player?.id, data.session?.id, markRead]);
   if (detailId)
     return (
       <>
@@ -793,7 +799,7 @@ function Messages() {
     );
   const events = data.events.filter((e) =>
     tab === 'personal'
-      ? e.audience === 'personal'
+      ? personalMessage(e, data.player?.id ?? data.session?.id)
       : tab === 'broadcast'
         ? e.kind === 'broadcast'
         : e.audience === 'public',
@@ -914,6 +920,7 @@ function Me() {
           <Icon name="arrow" size={18} />
         </Link>
       ))}
+      <MatchLinks />
     </>
   );
 }
@@ -1009,6 +1016,7 @@ function Account() {
   return (
     <>
       <PageTitle title="账号与设置" back="/player/me" />
+      <MatchLinks />
       <Identity id={data.player!.id} nickname={data.player!.nickname} />
       <div className="preferences">
         <label className="check-label">

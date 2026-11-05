@@ -117,6 +117,7 @@ export interface GameEvent {
   utcMs: number;
   audience: 'public' | 'personal' | 'global';
   civilizationIds: string[];
+  recipient?: string;
   code?: string;
   actor?: string;
 }

@@ -81,6 +81,31 @@ function freezeCheck(e: Engine) {
     '首次锁定 T0 后不能新增、替换或绑定选手。',
   );
 }
+function bindCivilization(e: Engine, accountId: string, name: string) {
+  freezeCheck(e);
+  const db = e.db;
+  const n = db.one<{ n: number }>('SELECT COUNT(*) AS n FROM players')!.n + 1;
+  requireThat(n <= 350, 'CAPACITY', '本场最多绑定350个文明。');
+  const id = `C${String(n).padStart(2, '0')}`;
+  db.exec(
+    'INSERT INTO accounts(id,match_id,role,name,credential_hash,permissions) VALUES(?,?,?,?,?,?)',
+    id,
+    e.matchId,
+    'player',
+    name,
+    `platform-only:${token()}`,
+    '[]',
+  );
+  db.exec('INSERT INTO players(id) VALUES(?)', id);
+  db.exec('INSERT INTO flights(player_id) VALUES(?)', id);
+  db.exec('INSERT INTO attack_controls(player_id) VALUES(?)', id);
+  db.exec(
+    "UPDATE memberships SET local_id=?,state='bound',epoch=1 WHERE account_id=?",
+    id,
+    accountId,
+  );
+  return { accepted: true, localId: id };
+}
 function cancelManagement(e: Engine, seat: string) {
   e.db.exec(
     "UPDATE command_objects SET status='review',version=version+1 WHERE actor=? AND kind IN ('schedule','job','plan') AND status='pending'",
@@ -372,23 +397,29 @@ export async function matchControl(
         );
         result = { invited: true };
       } else if (request.action === 'accept') {
-        const member = db.one<{ kind: string; state: string }>(
-          'SELECT * FROM memberships WHERE account_id=?',
-          request.actor,
-        );
+        const member = db.one<{
+          kind: string;
+          state: string;
+          name: string;
+          local_id: string | null;
+        }>('SELECT * FROM memberships WHERE account_id=?', request.actor);
         requireThat(
-          member && member.state === 'invited',
+          member && ['invited', 'accepted', 'bound'].includes(member.state),
           'INVITATION_REQUIRED',
           '没有待接受的本场邀请。',
           403,
         );
-        if (member.kind === 'player') freezeCheck(e);
         requireThat(p.consent === true, 'CONSENT_REQUIRED', '请先确认活动说明与数据期限。', 400);
-        db.exec(
-          "UPDATE memberships SET state='accepted',epoch=epoch+1 WHERE account_id=?",
-          request.actor,
-        );
-        result = { accepted: true };
+        if (member.state === 'bound') result = { accepted: true, localId: member.local_id };
+        else if (member.kind === 'player') result = bindCivilization(e, request.actor, member.name);
+        else {
+          if (member.state === 'invited')
+            db.exec(
+              "UPDATE memberships SET state='accepted',epoch=epoch+1 WHERE account_id=?",
+              request.actor,
+            );
+          result = { accepted: true };
+        }
       } else if (request.action === 'bind') {
         freezeCheck(e);
         const member = db.one<{ kind: string; name: string; state: string }>(
@@ -401,27 +432,7 @@ export async function matchControl(
           '请先接受本场邀请。',
           403,
         );
-        const n = db.one<{ n: number }>('SELECT COUNT(*) AS n FROM players')!.n + 1;
-        requireThat(n <= 350, 'CAPACITY', '本场最多绑定350个文明。');
-        const id = `C${String(n).padStart(2, '0')}`;
-        db.exec(
-          'INSERT INTO accounts(id,match_id,role,name,credential_hash,permissions) VALUES(?,?,?,?,?,?)',
-          id,
-          e.matchId,
-          'player',
-          member.name,
-          `platform-only:${token()}`,
-          '[]',
-        );
-        db.exec('INSERT INTO players(id) VALUES(?)', id);
-        db.exec('INSERT INTO flights(player_id) VALUES(?)', id);
-        db.exec('INSERT INTO attack_controls(player_id) VALUES(?)', id);
-        db.exec(
-          "UPDATE memberships SET local_id=?,state='bound',epoch=1 WHERE account_id=?",
-          id,
-          request.actor,
-        );
-        result = { localId: id };
+        result = bindCivilization(e, request.actor, member.name);
       } else if (request.action === 'assign') {
         const account = text(p.accountId, 100),
           seat = text(p.seat, 3);
@@ -502,11 +513,11 @@ export async function matchControl(
         result = { fenced: true, authEpoch: p.authEpoch };
       } else if (request.action === 'publish') {
         requireThat(
-          ['J01', 'J02', 'J03'].every((seat) =>
-            db.one('SELECT id FROM staff_assignments WHERE seat_id=? AND ended_utc IS NULL', seat),
+          db.one(
+            "SELECT a.id FROM accounts a JOIN staff_assignments s ON s.seat_id=a.id JOIN memberships m ON m.account_id=s.account_id WHERE a.id='J01' AND a.enabled=1 AND s.ended_utc IS NULL AND m.state='bound' AND m.local_id=a.id AND m.epoch=a.version",
           ),
           'STAFF_REQUIRED',
-          '发布前需要三个独立裁判岗位。',
+          '发布前需要一名已任职的总裁判。',
         );
         requireThat(
           db.one<{ n: number }>('SELECT COUNT(*) AS n FROM players')!.n >= 2,

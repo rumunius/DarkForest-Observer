@@ -7,6 +7,7 @@ import { PlayerPages, Rules } from './pages/player';
 import { Display, ObserverPages, ResultsPages } from './pages/observe';
 import { JUDGE_NAV, JudgePages } from './pages/judge';
 import { Atmosphere } from './components/atmosphere';
+import { MatchContextProvider, MatchHeading, type MatchContext } from './components/match-context';
 
 function Stars() {
   return (
@@ -281,7 +282,7 @@ function Sidebar() {
   );
 }
 function Screen() {
-  const { data, route, loading, go } = useApp();
+  const { data, route, loading, go, base } = useApp();
   const main = useRef<HTMLElement>(null);
   const judge = data.session?.role === 'judge' && route.startsWith('/judge');
   const display = route === '/display';
@@ -300,6 +301,10 @@ function Screen() {
     if (data.session && (route === '/' || route === '/login'))
       go(data.session.role === 'judge' ? '/judge' : '/player', true);
   }, [data.session?.id, route, go, data.session]);
+  useEffect(() => {
+    if (base.startsWith('/m/') && !loading && !data.session)
+      location.replace(`/?audience=${route.startsWith('/judge') ? 'staff' : 'player'}`);
+  }, [base, loading, data.session, route]);
   const allowedGlobal = !!data.player?.observerAllowed || data.session?.role === 'judge';
   let content: ReactNode;
   if (route === '/rules') content = <Rules />;
@@ -312,6 +317,8 @@ function Screen() {
         </p>
       </>
     );
+  else if (!data.session && base.startsWith('/m/'))
+    content = <p role="status">正在返回账号登录页</p>;
   else if (!data.session)
     content =
       route === '/' ? (
@@ -384,6 +391,7 @@ function Screen() {
         </aside>
       )}
       <main ref={main} id="main-content" className="main-content">
+        {!display && <MatchHeading />}
         <Feedback />
         <div className="page-content" key={`${route}${location.search}`}>
           {content}
@@ -398,19 +406,23 @@ export function App({
   base = '',
   preview,
   epoch = 0,
+  matchContext,
 }: {
   source: DataSource;
   base?: string;
   preview?: ReactNode;
   epoch?: number;
+  matchContext?: MatchContext;
 }) {
   return (
-    <AppProvider source={source} base={base} epoch={epoch}>
-      <a className="skip-link" href="#main-content">
-        跳到主要内容
-      </a>
-      {preview}
-      <Screen />
-    </AppProvider>
+    <MatchContextProvider value={matchContext ?? null}>
+      <AppProvider source={source} base={base} epoch={epoch}>
+        <a className="skip-link" href="#main-content">
+          跳到主要内容
+        </a>
+        {preview}
+        <Screen />
+      </AppProvider>
+    </MatchContextProvider>
   );
 }

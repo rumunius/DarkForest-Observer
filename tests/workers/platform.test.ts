@@ -10,6 +10,7 @@ import { gateway } from '../../apps/web/functions/_lib/gateway';
 import { digest } from '../../apps/match-worker/src/security/crypto';
 import { stableJson } from '../../packages/contracts/src/backend';
 import { totp } from '../../apps/match-worker/src/platform/security';
+import { DarkForestPlatform } from '../../apps/match-worker/src/platform/platform';
 import {
   createCheckpoint,
   openCheckpoint,
@@ -85,13 +86,6 @@ async function invite(id: string, login: Login) {
 }
 async function bind(id: string, login: Login) {
   await invite(id, login);
-  const reply = await call(
-    `/matches/${id}/members/bind`,
-    { request_id: crypto.randomUUID(), reason: '本人绑定文明' },
-    login,
-  );
-  expect(reply.status).toBe(202);
-  await drain();
 }
 async function assign(id: string, login: Login, seat: string, expectedVersion = 0) {
   const body = {
@@ -215,7 +209,7 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     expect((await call(`/matches/${b}/manage`)).body.current.members[0].local_id).toBe('C01');
     expect((await call('/me/matches', undefined, player)).body).toHaveLength(2);
   });
-  it('发布需要三岗位；已发布玩家请求仍走本场状态，平台管理员不隐式执裁', async () => {
+  it('发布需要总裁判；已发布玩家请求仍走本场状态，平台管理员不隐式执裁', async () => {
     const empty = await match('无裁判草稿');
     const reply = await call(`/matches/${empty}/publish`, {
       request_id: 'bad-publish',
@@ -238,6 +232,98 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       );
     });
     expect((await call(`/matches/${id}/snapshot?route=/judge`, undefined, admin)).status).toBe(403);
+  });
+  it('玩家接受邀请即原子绑定文明，重复接受不新增文明；只有总裁判也可发布', async () => {
+    const id = await match('单裁判比赛'),
+      p1 = await account('接受邀请玩家一', 'player'),
+      p2 = await account('接受邀请玩家二', 'player');
+    const invitation = await call(`/matches/${id}/members/invite`, {
+      request_id: crypto.randomUUID(),
+      accountId: p1.session.account.id,
+      reason: '邀请参赛',
+    });
+    expect(invitation.status).toBe(202);
+    await drain();
+    expect((await call('/me/matches', undefined, p1)).body[0].membership.state).toBe('invited');
+    const rejected = await call(
+      `/matches/${id}/members/accept`,
+      {
+        request_id: crypto.randomUUID(),
+        consent: false,
+        reason: '未确认说明',
+      },
+      p1,
+    );
+    await drain();
+    expect(
+      (await call(`/me/operations/${rejected.body.operationId}`, undefined, p1)).body.status,
+    ).toBe('failed');
+    expect((await call('/me/matches', undefined, p1)).body[0].membership.state).toBe('invited');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const accepted = await call(
+        `/matches/${id}/members/accept`,
+        {
+          request_id: crypto.randomUUID(),
+          consent: true,
+          reason: '接受邀请',
+        },
+        p1,
+      );
+      await drain();
+      expect(
+        (await call(`/me/operations/${accepted.body.operationId}`, undefined, p1)).body.status,
+      ).toBe('succeeded');
+    }
+    expect((await call('/me/matches', undefined, p1)).body[0]).toMatchObject({
+      phase: 'setup',
+      membership: { state: 'bound', local_id: 'C01' },
+    });
+    await bind(id, p2);
+    await invite(id, owner);
+    await assign(id, owner, 'J01');
+    await publish(id);
+    const current = (await call(`/matches/${id}/manage`)).body.current;
+    expect(
+      current.members.filter((member: { kind: string }) => member.kind === 'player'),
+    ).toHaveLength(2);
+    expect(current.assignments).toHaveLength(1);
+    expect((await call(`/matches/${id}/snapshot?route=/player`, undefined, p1)).status).toBe(200);
+  });
+  it('生产环境所有者与新所有者均可不启用第二因素', async () => {
+    const successor = await account('自愿安全设置的新所有者');
+    const productionCall = (path: string, body?: unknown) =>
+      runInDurableObject(platform(), async (_instance, state) => {
+        const service = new DarkForestPlatform(state, { ...bindings, APP_ENV: 'preview' });
+        const reply = await service.call({
+          path,
+          method: body ? 'POST' : 'GET',
+          body,
+          token: owner.token,
+          csrf: owner.session.csrfToken,
+          edgeUtc: Date.now(),
+          clientKey: 'production-2fa-test',
+        });
+        return { ...reply, body: JSON.parse(reply.body) };
+      });
+    expect((await productionCall('/platform/accounts')).status).toBe(200);
+    const payload = {
+      accountId: successor.session.account.id,
+      expected_version: successor.session.account.version,
+      role: 'owner',
+      enabled: true,
+      reason: '交接给未启用第二因素的所有者',
+    };
+    const preview = await productionCall('/platform/preview', {
+      path: '/platform/roles/update',
+      payload,
+    });
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    const result = await productionCall('/platform/roles/update', {
+      ...payload,
+      request_id: crypto.randomUUID(),
+      preview_token: preview.body.previewToken,
+    });
+    expect(result.status, JSON.stringify(result.body)).toBe(200);
   });
   it('总裁判交接原子撤旧启新，原人不能继续使用旧会话', async () => {
     const { id } = await running(),
@@ -284,15 +370,21 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
   it('首次冻结后不能绑定新选手；不靠推荐入口修改场次', async () => {
     const a = await match('A'),
       player = await account('晚到玩家', 'player');
-    await invite(a, player);
+    const invitation = await call(`/matches/${a}/members/invite`, {
+      request_id: crypto.randomUUID(),
+      accountId: player.session.account.id,
+      reason: '冻结前邀请',
+    });
+    expect(invitation.status).toBe(202);
+    await drain();
     await runInDurableObject(bindings.MATCH_DO.getByName(`match:${a}`), (_instance, state) => {
       new Store(state.storage).exec(
         "INSERT INTO settings(key,value) VALUES('parameters_frozen','true')",
       );
     });
     const reply = await call(
-      `/matches/${a}/members/bind`,
-      { request_id: 'late-bind', reason: '尝试冻结后绑定' },
+      `/matches/${a}/members/accept`,
+      { request_id: 'late-bind', consent: true, reason: '尝试冻结后接受并绑定' },
       player,
     );
     await drain();
@@ -684,5 +776,21 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
         })
       ).status,
     ).toBe(401);
+  });
+  it('自愿启用第二因素后可以关闭，关闭后长期口令可以独立登录', async () => {
+    const setup = await call('/me/security/setup', {});
+    const code = await totp(setup.body.secret, Math.floor(Date.now() / 30000));
+    expect((await call('/me/security/confirm', { code })).status).toBe(200);
+    expect((await call('/auth/session')).body.secondFactorEnabled).toBe(true);
+    expect((await call('/me/security/disable', {})).status).toBe(200);
+    expect((await call('/auth/session')).body.secondFactorEnabled).toBe(false);
+    expect(
+      (await call('/auth/exchange', { credential: owner.credential, audience: 'staff' })).status,
+    ).toBe(200);
+    expect(
+      await runInDurableObject(platform(), (_instance, state) =>
+        new Store(state.storage).all('SELECT * FROM recovery_codes'),
+      ),
+    ).toEqual([]);
   });
 });

@@ -341,9 +341,11 @@ export class Engine {
     });
     for (const duty of ['head', 'communications', 'events'])
       requireThat(
-        accounts.filter((a) => a.duty === duty).length === 1,
+        duty === 'head'
+          ? accounts.filter((a) => a.duty === duty).length === 1
+          : accounts.filter((a) => a.duty === duty).length <= 1,
         'BAD_DUTY',
-        '每种裁判职责需要一个独立账号。',
+        '需要一名总裁判，每种裁判职责最多设置一个账号。',
         400,
       );
     requireThat(

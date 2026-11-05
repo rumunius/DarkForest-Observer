@@ -887,7 +887,29 @@ function leaf(c: Context, n: CommandNode): unknown {
           id,
         );
       else db.exec('UPDATE players SET broadcasts=? WHERE id=?', 2 - after, id);
-      e.notice(source, id, '资源调整', `裁判已调整资源：${key} ${before} → ${after}。`);
+      const resourceName = {
+        'tech-level': '文明技术等级',
+        photons: '光粒库存',
+        broadcasts: '剩余广播次数',
+      }[key]!;
+      const title = path === 'tech grant' ? '技术爆炸' : '资源调整';
+      const message =
+        path === 'tech grant'
+          ? `${e.identity(id)}获得一枚光粒，可在第一阶段正常出航时发射。`
+          : `${e.identity(id)}的${resourceName}由${before}调整为${after}。`;
+      logEvent(
+        e,
+        `${source}:resource:${id}`,
+        path === 'tech grant' ? 'tech' : 'notice',
+        title,
+        message,
+        'personal',
+        [id],
+        e.game(),
+        e.now(),
+        id,
+      );
+      e.notice(source, id, title, message);
     });
   }
   if (path.startsWith('penalty ')) {

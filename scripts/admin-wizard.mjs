@@ -234,7 +234,7 @@ async function installation() {
   const path = resolve(privateRoot, `owner-delivery-${Date.now()}.json`);
   await save(path, result);
   console.log(
-    `所有者邀请已保存到受限目录：${path}\n用浏览器打开 ${context.origin}/claim，将文件中的邀请通过领取页兑换，再设置第二因素。`,
+    `所有者邀请已保存到受限目录：${path}\n用浏览器打开 ${context.origin}/claim，将文件中的邀请通过领取页兑换。第二因素验证可在账号与安全页面自愿启用。`,
   );
 }
 async function release() {
@@ -274,7 +274,7 @@ async function rescue() {
   const path = resolve(privateRoot, `rescue-${operationId}.json`);
   await save(path, result);
   console.log(
-    `已撤销旧所有者角色及全部旧平台会话。新邀请保存于：${path}\n请在网站领取账号并设置第二因素。`,
+    `已撤销旧所有者角色及全部旧平台会话。新邀请保存于：${path}\n请在网站领取账号。第二因素验证可在账号与安全页面自愿启用。`,
   );
 }
 async function recover(existing) {

@@ -11,6 +11,7 @@ import {
 import { DEFAULT_SITE } from '../config';
 import { useApp } from '../state';
 import { judgeCan } from '../permissions';
+import { MatchLinks } from '../components/match-context';
 import {
   Button,
   CopyText,
@@ -118,9 +119,9 @@ export function ManagementForm({
           />
         </Field>
       )}
-      {usable && !currentPreview && (
+      {!currentPreview && (
         <Button
-          disabled={busy}
+          disabled={busy || !usable}
           onClick={async () => {
             const r = await operate('/judge/manage/preview', {
               path,
@@ -367,21 +368,19 @@ function HomeworldReview() {
                 <Field label="具体退回原因">
                   <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} />
                 </Field>
-                {reason.trim() && (
-                  <Button
-                    disabled={busy}
-                    onClick={() =>
-                      void operate(`/judge/homeworld/${c.id}/verify`, {
-                        expected_version: c.homeVersion,
-                        expected_code: c.homeworld,
-                        decision: 'reject',
-                        reason,
-                      })
-                    }
-                  >
-                    确认退回修改
-                  </Button>
-                )}
+                <Button
+                  disabled={busy || !reason.trim()}
+                  onClick={() =>
+                    void operate(`/judge/homeworld/${c.id}/verify`, {
+                      expected_version: c.homeVersion,
+                      expected_code: c.homeworld,
+                      decision: 'reject',
+                      reason,
+                    })
+                  }
+                >
+                  确认退回修改
+                </Button>
               </>
             )}
           </Frame>
@@ -601,19 +600,17 @@ function Notices() {
                     <Field label="异常原因">
                       <textarea value={reason} onChange={(e) => setReason(e.target.value)} />
                     </Field>
-                    {reason.trim() && (
-                      <Button
-                        disabled={busy}
-                        onClick={() =>
-                          void operate(`/judge/notices/${n.id}/error`, {
-                            expected_version: n.version,
-                            reason,
-                          })
-                        }
-                      >
-                        保存发送异常
-                      </Button>
-                    )}
+                    <Button
+                      disabled={busy || !reason.trim()}
+                      onClick={() =>
+                        void operate(`/judge/notices/${n.id}/error`, {
+                          expected_version: n.version,
+                          reason,
+                        })
+                      }
+                    >
+                      保存发送异常
+                    </Button>
                   </>
                 )}
               </>
@@ -1208,9 +1205,12 @@ function Settings() {
           }}
         />
       </Field>
-      {colorsValid && reason.trim() && site.title.trim() && (
-        <Button onClick={() => setPreview(true)}>预览并核对设置</Button>
-      )}
+      <Button
+        disabled={!colorsValid || !reason.trim() || !site.title.trim() || busy}
+        onClick={() => setPreview(true)}
+      >
+        预览并核对设置
+      </Button>
       {preview && (
         <Frame>
           <h2>设置变更预览</h2>
@@ -1351,6 +1351,7 @@ function JudgeAccount() {
   return (
     <>
       <PageTitle title="裁判账号" />
+      <MatchLinks />
       <AccountsManagement />
       <h2>{data.session!.name}</h2>
       <p className="secondary">当前账号可以使用以下功能。</p>

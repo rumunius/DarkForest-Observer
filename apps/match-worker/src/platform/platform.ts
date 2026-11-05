@@ -145,6 +145,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       csrfToken: s.csrf,
       recent: s.reauth_utc > this.now() - 600000,
       secondFactor: !!s.second_factor,
+      secondFactorEnabled: !!this.account(s.account_id).totp_ciphertext,
     };
   }
   admin(s: Login, roles: PlatformRole[] = ['owner', 'admin'], recent = false) {
@@ -160,13 +161,6 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         s.reauth_utc > this.now() - 600000,
         'REAUTH_REQUIRED',
         '请先在账号安全页重新认证。',
-        403,
-      );
-    if (this.env.APP_ENV !== 'local')
-      requireThat(
-        s.second_factor === 1 && this.account(s.account_id).totp_ciphertext,
-        'SECOND_FACTOR_REQUIRED',
-        '请先设置并验证第二因素。',
         403,
       );
   }
@@ -834,6 +828,29 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       );
       return { status: 200, body: this.view(this.login(hash)) };
     }
+    if (path === '/me/security/disable' && input.method === 'POST') {
+      requireThat(s.reauth_utc > this.now() - 600000, 'REAUTH_REQUIRED', '请先重新认证。', 403);
+      requireThat(
+        s.second_factor === 1,
+        'SECOND_FACTOR_REQUIRED',
+        '请先使用验证码或恢复码重新认证。',
+        403,
+      );
+      this.db.tx(() => {
+        this.db.exec(
+          'UPDATE platform_accounts SET totp_ciphertext=NULL,last_totp_step=-1 WHERE id=?',
+          s.account_id,
+        );
+        this.db.exec('DELETE FROM recovery_codes WHERE account_id=?', s.account_id);
+        this.db.exec('DELETE FROM platform_meta WHERE key=?', `totp:${hash}`);
+        this.db.exec(
+          'UPDATE platform_sessions SET second_factor=0 WHERE account_id=?',
+          s.account_id,
+        );
+        this.audit(s.account_id, 'second_factor_disabled', s.account_id, '本人关闭第二因素验证');
+      });
+      return { status: 200, body: this.view(this.login(hash)) };
+    }
     if (path === '/me/security/setup' && input.method === 'POST') {
       requireThat(s.reauth_utc > this.now() - 600000, 'REAUTH_REQUIRED', '请先重新认证。', 403);
       requireThat(
@@ -941,14 +958,28 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         body: { id, status: 'unknown', message: '尚未取得提交收据，可确认未接收并阻止迟到请求。' },
       };
     }
-    if (path === '/me/matches' && input.method === 'GET')
+    if (path === '/me/matches' && input.method === 'GET') {
+      const entries = this.db.all<MatchEntry & Record<string, SqlStorageValue>>(
+        'SELECT d.id,d.name,d.kind,d.state,d.version,d.created_utc,d.summary,d.synced_utc,d.recommended,d.retention_days,d.audit_days FROM match_directory d JOIN account_match_index i ON i.match_id=d.id WHERE i.account_id=? ORDER BY d.created_utc DESC LIMIT 200',
+        s.account_id,
+      );
       return {
         status: 200,
-        body: this.db.all(
-          'SELECT d.id,d.name,d.kind,d.state,d.version,d.created_utc,d.summary,d.synced_utc,d.recommended,d.retention_days,d.audit_days FROM match_directory d JOIN account_match_index i ON i.match_id=d.id WHERE i.account_id=? ORDER BY d.created_utc DESC LIMIT 200',
-          s.account_id,
+        body: await Promise.all(
+          entries.map(async (entry) => {
+            if (['provisioning', 'purged', 'imported_archive'].includes(entry.state)) return entry;
+            const current = await this.summary(this.directory(entry.id), s.account_id);
+            return {
+              ...entry,
+              phase: current.phase,
+              membership: (current.members as MatchMember[]).find(
+                (member) => member.account_id === s.account_id,
+              ),
+            };
+          }),
         ),
       };
+    }
     if (path.startsWith('/matches/')) return this.matchRequest(input, s);
     this.admin(s, ['owner', 'admin', 'archivist']);
     if (input.method === 'GET') return this.readPlatform(path, input, s);
@@ -1104,12 +1135,6 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         '角色无效。',
         400,
       );
-      if (p.role === 'owner' && p.enabled === true && this.env.APP_ENV !== 'local')
-        requireThat(
-          account.totp_ciphertext,
-          'RECOVERY_REQUIRED',
-          '新所有者需先设置第二因素和恢复方式。',
-        );
       const grantMatch =
         p.role === 'archivist' && p.enabled !== false ? this.directory(text(p.matchId, 100)) : null;
       this.db.tx(() => {

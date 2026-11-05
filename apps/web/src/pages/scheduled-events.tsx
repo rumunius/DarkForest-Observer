@@ -8,6 +8,7 @@ const names: Record<string, string> = {
   song_visit: '歌者清理',
   tech_burst: '技术爆炸',
   judge_delayed_command: '延迟公告',
+  judge_command_task: '裁判定时任务',
   code_release: '统一发码',
   match_start: '统一开赛',
   respawn_timeout: '重生到期',
@@ -41,13 +42,13 @@ export function ScheduledEvents() {
         <select value={event?.id ?? ''} onChange={(e) => setSelected(e.target.value)}>
           {events.map((event) => (
             <option key={event.id} value={event.id}>
-              {names[event.kind] ?? event.kind} ·{' '}
+              {names[event.kind] ?? event.kind}，
               {event.status === 'pending'
                 ? '待执行'
                 : event.status === 'settled'
                   ? '已结算'
                   : '已取消'}{' '}
-              · {event.id}
+              ，编号 {event.id}
             </option>
           ))}
         </select>
