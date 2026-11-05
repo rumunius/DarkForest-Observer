@@ -17,6 +17,7 @@ import {
   type GameEvent,
 } from '@darkforest/contracts';
 import { useApp, useClock } from './state';
+import { attackWarning } from './rule-text';
 import { moveBracelet } from './bracelets';
 
 const paths: Record<string, ReactNode> = {
@@ -593,7 +594,7 @@ export function CopyText({
   );
 }
 export function Events({ events, detailsPrefix }: { events: GameEvent[]; detailsPrefix?: string }) {
-  const { data } = useApp();
+  const { data, loadEarlierEvents } = useApp();
   return events.length ? (
     <div className="event-list">
       {events.map((event) => (
@@ -634,6 +635,9 @@ export function Events({ events, detailsPrefix }: { events: GameEvent[]; details
           </time>
         </article>
       ))}
+      {data.eventCursor && events.length >= 50 && (
+        <Button onClick={() => void loadEarlierEvents()}>加载更早记录</Button>
+      )}
     </div>
   ) : (
     <p className="empty-inline">还没有新的赛事事件。</p>
@@ -871,13 +875,7 @@ export function ColorEditor() {
           <p className="secondary">
             提交错误目击码的次数 <strong className="numeric">{wrong}</strong>
           </p>
-          <p>
-            {wrong === 0
-              ? '提交错误的目击码，将禁止目击攻击5分钟。'
-              : wrong === 1
-                ? '再次提交错误的目击码，有50%的概率永久淘汰，有50%的概率禁止目击攻击15分钟。'
-                : '再次提交错误的目击码，将永久淘汰。'}
-          </p>
+          <p>{attackWarning(wrong, data.parameters)}</p>
         </div>
         {valid && !locked ? (
           <Button
@@ -974,13 +972,7 @@ function AttackConfirmation({
           </div>
         ))}
         <p className="secondary">请确认这是你在现场亲眼观察到的完整配置。提交后由服务器结算。</p>
-        <p className="attention">
-          {wrong === 0
-            ? '提交错误的目击码，将禁止目击攻击5分钟。'
-            : wrong === 1
-              ? '再次提交错误的目击码，有50%的概率永久淘汰，有50%的概率禁止目击攻击15分钟。'
-              : '再次提交错误的目击码，将永久淘汰。'}
-        </p>
+        <p className="attention">{attackWarning(wrong, data.parameters)}</p>
         <div className="confirmation-actions">
           <Button autoFocus onClick={onCancel}>
             返回检查

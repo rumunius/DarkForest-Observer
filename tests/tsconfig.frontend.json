@@ -1,0 +1,4 @@
+{
+  "extends": "../apps/web/tsconfig.app.json",
+  "include": ["unit/**/*.tsx"]
+}

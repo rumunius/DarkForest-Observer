@@ -8,6 +8,7 @@ import {
   type Action,
 } from '@darkforest/contracts';
 import { useApp } from '../state';
+import { DEFAULT_PARAMETERS, duration } from '../rule-text';
 import { canAct } from '../permissions';
 import {
   ArmsView,
@@ -86,7 +87,7 @@ function Current() {
         <Timer
           label="距离开放宇宙观测"
           clock="utc"
-          deadline={me.eliminatedAt + RULES.observerWaitMs}
+          deadline={me.eliminatedAt + (data.parameters?.observerWaitSeconds ?? 180) * 1000}
           large
         />
       ) : null;
@@ -290,8 +291,7 @@ function Homeworld() {
               onClick={async () => {
                 const r = await operate('/action/homeworld-submit', {
                   code: value,
-                  expected_version: me.homeVersion,
-                });
+                } satisfies import('@darkforest/contracts').HomeworldSubmission);
                 if (r?.status === 'complete') setEditing(false);
               }}
             >
@@ -752,7 +752,7 @@ function Eliminated() {
           <Timer
             label="距离开放宇宙观测"
             clock="utc"
-            deadline={me.eliminatedAt + RULES.observerWaitMs}
+            deadline={me.eliminatedAt + (data.parameters?.observerWaitSeconds ?? 180) * 1000}
             large
           />
         )
@@ -1079,6 +1079,7 @@ export function PlayerPages() {
 
 export function Rules() {
   const { data } = useApp();
+  const parameters = data.parameters ?? DEFAULT_PARAMETERS;
   useEffect(() => {
     const topic = new URLSearchParams(location.search).get('topic');
     const id =
@@ -1125,7 +1126,10 @@ export function Rules() {
             在开赛后亲眼辨认目标两臂的当前完整颜色分组，再提交目击。七种颜色各最多使用一次。合法分组为两条与一条、两条与两条、三条与一条；同侧顺序不限，两侧交换等价。
           </p>
           <p>
-            第一次提交错误的目击码，禁止目击攻击5分钟；第二次有50%的概率永久淘汰，有50%的概率禁止目击攻击15分钟；第三次永久淘汰。错误次数整场累计，重生不清零。暂时禁止目击攻击时仍可被其他人击毁。
+            第一次提交错误的目击码，禁止目击攻击{duration(parameters.firstLockSeconds)}；第二次有
+            {parameters.secondOutPercent}%的概率永久淘汰，有{100 - parameters.secondOutPercent}
+            %的概率禁止目击攻击{duration(parameters.secondLockSeconds)}
+            ；第三次永久淘汰。错误次数整场累计，重生不清零。暂时禁止目击攻击时仍可被其他人击毁。
           </p>
           <p>
             历史退役码、本人码和服务器可证实的并发抢先击毁不增加错误次数，以服务器结算为准。成功击毁后取得目标已审核母星口令。不得传播当前有效手环码、远程猜码、偷拍或放大照片录像读码。
@@ -1137,7 +1141,8 @@ export function Rules() {
             第一阶段被正常目击击毁且母星尚存时，可以重生。立即摘下全部比赛手环，正常步行返航，拍摄时间水印照片并发给裁判，再离开母星至少50米、领取新配置、佩戴并确认完成出航。
           </p>
           <p>
-            返航至出航全部步骤共用被击毁后15分钟与比赛65:00中更早的截止，必须严格早于截止完成。次数不限，旧配置永久失效。返航途中母星毁灭或截止时未完成出航则永久淘汰。错误攻击导致的直接出局不能重生。
+            返航至出航全部步骤共用被击毁后{duration(parameters.respawnSeconds)}
+            与比赛65:00中更早的截止，必须严格早于截止完成。次数不限，旧配置永久失效。返航途中母星毁灭或截止时未完成出航则永久淘汰。错误攻击导致的直接出局不能重生。
           </p>
           <p>
             母星毁灭时若飞船正常出航，继续最后一命。65:00所有母星毁灭，未正常出航的文明同时淘汰。
@@ -1149,7 +1154,8 @@ export function Rules() {
             第一阶段正常出航时，每个文明最多正式广播两次，可输入任意尚未正式广播的六位数字。广播消耗一次次数并公开口令；若对应某文明的登记母星，该文明私下获得广播者的母星口令。广播发布后，不会告知这组六位口令是否对应母星。
           </p>
           <p>
-            每个正式广播的口令每满60秒独立接受5%的歌者首次清理检定，最多清理一次。未来清理时间不公开。
+            每个正式广播的口令每满60秒独立接受{parameters.singerPercent}
+            %的歌者首次清理检定，最多清理一次。未来清理时间不公开。
           </p>
           <p>
             技术爆炸获得者秘密得到一枚光粒，正常出航时可以消耗它清理任意六位口令。获得者正在返航时不能发射。65:00起广播和光粒停止，未使用光粒失效。
@@ -1168,10 +1174,12 @@ export function Rules() {
         <section id="rules-5">
           <h2>淘汰后观战</h2>
           <p>
-            永久淘汰后摘下全部手环，步行返回裁判室，停止攻防、侦察和向活人传递情报。自淘汰生效真实时间起满180秒，经服务器确认后可查看宇宙观测。比赛暂停不会冻结这段等待。
+            永久淘汰后摘下全部手环，步行返回裁判室，停止攻防、侦察和向活人传递情报。自淘汰生效真实时间起满
+            {parameters.observerWaitSeconds}
+            秒，经服务器确认后可查看宇宙观测。比赛暂停不会冻结这段等待。
           </p>
           <p>
-            观战可以查看当前完整战况和已经发生的赛事信息，只能与已淘汰玩家交流。提案在线下交给裁判决定，不获得任何裁判操作权限。比赛结束后全部本场参赛者可以查看完整复盘，无需继续等待180秒。
+            观战可以查看当前完整战况和已经发生的赛事信息，只能与已淘汰玩家交流。提案在线下交给裁判决定，不获得任何裁判操作权限。比赛结束后全部本场参赛者可以立即查看完整复盘。
           </p>
         </section>
         <section id="rules-6">

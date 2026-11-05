@@ -334,7 +334,9 @@ function Screen() {
     content = allowedGlobal ? (
       <ObserverPages />
     ) : (
-      <Empty title="当前账号尚无宇宙观测权限">永久淘汰满180秒后，请等待服务器确认资格。</Empty>
+      <Empty title="当前账号尚无宇宙观测权限">
+        永久淘汰满{data.parameters?.observerWaitSeconds ?? 180}秒后，请等待服务器确认资格。
+      </Empty>
     );
   else if (results)
     content =
