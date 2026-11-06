@@ -172,7 +172,7 @@ export class Store {
 
   /** 执行固定SQL及绑定参数，不拼接调用方输入为SQL结构。 */
   exec(query: string, ...values: SqlStorageValue[]): void {
-    this.storage.sql.exec(query, ...values);
+    this.storage.sql.exec<Record<string, SqlStorageValue>>(query, ...values);
   }
 
   /** 使用Durable Object同步事务包裹整个业务结算，回调中不能等待网络。 */

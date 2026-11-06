@@ -111,7 +111,7 @@ describe('操作在当前页面反馈实际结果', () => {
     ]) {
       sessionStorage.setItem(client.pendingKey, JSON.stringify(stored));
       await expect(
-        client.mutate('/matches/feedback-match/publish', {}),
+        client.mutate<unknown>('/matches/feedback-match/publish', {}),
       ).resolves.toEqual({saved: true});
       expect(client.pending()).toBeNull();
     }
@@ -127,7 +127,7 @@ describe('操作在当前页面反馈实际结果', () => {
     vi.stubGlobal('fetch', fetcher);
     expect(client.pending()).toEqual(stored);
     await expect(
-      client.mutate('/matches/feedback-match/publish', {}),
+      client.mutate<unknown>('/matches/feedback-match/publish', {}),
     ).rejects.toThrow('请先查询上一次操作结果。');
     await expect(client.resolvePending()).rejects.toThrow(
       '待确认操作属于另一账号，请切回原账号。',
@@ -229,7 +229,7 @@ describe('操作在当前页面反馈实际结果', () => {
         expect(button(`确认交接 ${entry.name}，J01`)).toBeUndefined();
         expect(button('预览影响').closest('fieldset')?.disabled).toBe(false);
         expect(
-          document.querySelector('.feedback-stack')?.textContent,
+          document.querySelector<Element>('.feedback-stack')?.textContent,
         ).toContain(
           status === 'succeeded' ? '操作已完成。' : '本场总裁判已变化。',
         );
@@ -276,7 +276,7 @@ describe('操作在当前页面反馈实际结果', () => {
     await waiting;
     expect(client.pending()?.id).toBe('slow-task');
     await expect(
-      client.mutate('/matches/feedback-match/publish', {}),
+      client.mutate<unknown>('/matches/feedback-match/publish', {}),
     ).rejects.toThrow('请先查询上一次操作结果。');
     fetcher.mockImplementation(
       promiseStub(() => Response.json({id: 'slow-task', status: 'succeeded'})),
@@ -317,7 +317,8 @@ describe('操作在当前页面反馈实际结果', () => {
         }),
       );
       expect(
-        document.querySelector('.feedback-stack [role="status"]')?.textContent,
+        document.querySelector<Element>('.feedback-stack [role="status"]')
+          ?.textContent,
       ).toContain('操作正在处理中');
       expect(publish.closest('fieldset')?.disabled).toBe(true);
       expect(
@@ -334,9 +335,11 @@ describe('操作在当前页面反馈实际结果', () => {
           ),
         ),
       );
-      const alert = document.querySelector('.feedback-stack [role="alert"]')!;
+      const alert = document.querySelector<Element>(
+        '.feedback-stack [role="alert"]',
+      )!;
       expect(alert.textContent).toContain('发布准备入口前至少绑定两名玩家。');
-      expect(alert.closest('.feedback-stack')?.parentElement).toBe(
+      expect(alert.closest<Element>('.feedback-stack')?.parentElement).toBe(
         document.body,
       );
       expect(document.body.textContent).not.toContain('操作已完成');
@@ -362,7 +365,8 @@ describe('操作在当前页面反馈实际结果', () => {
     await mountManagement(route);
     await act(promiseStub(() => button('发布准备入口').click()));
     expect(
-      document.querySelector('.feedback-stack [role="alert"]')?.textContent,
+      document.querySelector<Element>('.feedback-stack [role="alert"]')
+        ?.textContent,
     ).toContain('当前账号没有平台管理权限。');
     expect(document.body.textContent).not.toContain('操作已完成');
   });
@@ -397,9 +401,9 @@ describe('操作在当前页面反馈实际结果', () => {
       vi.stubGlobal('fetch', fetcher);
       await mountManagement(route);
       await act(promiseStub(() => button('发布准备入口').click()));
-      expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-        '暂时无法查询操作结果',
-      );
+      expect(
+        document.querySelector<Element>('[role="alert"]')?.textContent,
+      ).toContain('暂时无法查询操作结果');
       expect(
         jsonObject(
           parseJson(
@@ -411,9 +415,9 @@ describe('操作在当前页面反馈实际结果', () => {
       ).toBe('original-task');
       connected = true;
       await act(promiseStub(() => button('查询原操作结果').click()));
-      expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-        '需要先安排有效总裁判。',
-      );
+      expect(
+        document.querySelector<Element>('[role="alert"]')?.textContent,
+      ).toContain('需要先安排有效总裁判。');
       expect(
         fetcher.mock.calls.filter(([url]) => url.endsWith('/publish')),
       ).toHaveLength(1);
@@ -471,7 +475,8 @@ describe('操作在当前页面反馈实际结果', () => {
       await mount(<PlatformApp />);
       await act(promiseStub(() => button('接受邀请').click()));
       expect(
-        document.querySelector('.feedback-stack [role="alert"]')?.textContent,
+        document.querySelector<Element>('.feedback-stack [role="alert"]')
+          ?.textContent,
       ).toContain('本场邀请已撤销，请联系主办方。');
       expect(button('接受邀请')?.disabled).toBe(false);
       expect(document.body.textContent).not.toContain('操作已完成');
@@ -500,12 +505,13 @@ describe('操作在当前页面反馈实际结果', () => {
     ).length;
     await act(promiseStub(() => button('发布准备入口').click()));
     expect(
-      document.querySelector('.feedback-stack [role="status"]')?.textContent,
+      document.querySelector<Element>('.feedback-stack [role="status"]')
+        ?.textContent,
     ).toContain('操作已完成。');
     expect(
       fetcher.mock.calls.filter(([url]) => url.endsWith('/manage')).length,
     ).toBeGreaterThan(before);
-    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(document.querySelector<Element>('[role="alert"]')).toBeNull();
     await act(
       promiseStub(() =>
         document
@@ -513,7 +519,7 @@ describe('操作在当前页面反馈实际结果', () => {
           .click(),
       ),
     );
-    expect(document.querySelector('.feedback-stack')).toBeNull();
+    expect(document.querySelector<Element>('.feedback-stack')).toBeNull();
   });
 
   it.each(['CANCELLED', 'CANCELLED_BY_RECOVERY', '938472'])(
@@ -540,7 +546,7 @@ describe('操作在当前页面反馈实际结果', () => {
       });
       await mount(<App source={source} />);
       await act(promiseStub(() => button('查询原操作结果').click()));
-      const feedback = document.querySelector('.feedback-stack')!;
+      const feedback = document.querySelector<Element>('.feedback-stack')!;
       expect(feedback.textContent).toContain('请查看当前状态。');
       if (code === '938472') {
         expect(feedback.textContent).toContain(code);
@@ -557,11 +563,15 @@ describe('操作在当前页面反馈实际结果', () => {
       new Error('比赛状态暂时无法读取。'),
     );
     await mount(<App source={source} />);
-    const alert = document.querySelector(
+    const alert = document.querySelector<Element>(
       '.feedback-stack .error-feedback[role="alert"]',
     )!;
     expect(alert.textContent).toContain('比赛状态暂时无法读取。');
-    expect(alert.closest('.feedback-stack')?.parentElement).toBe(document.body);
-    expect(document.querySelector('#main-content .global-feedback')).toBeNull();
+    expect(alert.closest<Element>('.feedback-stack')?.parentElement).toBe(
+      document.body,
+    );
+    expect(
+      document.querySelector<Element>('#main-content .global-feedback'),
+    ).toBeNull();
   });
 });

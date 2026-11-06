@@ -84,7 +84,7 @@ export function ColorEditor() {
   useEffect(() => {
     const settle = () => {
       root.current
-        ?.querySelectorAll('[data-swatch], .palette-color')
+        ?.querySelectorAll<Element>('[data-swatch], .palette-color')
         .forEach(element => {
           element.getAnimations().forEach(animation => animation.cancel());
         });

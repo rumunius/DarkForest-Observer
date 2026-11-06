@@ -7,6 +7,42 @@ import {validSourceName} from '../../scripts/check_source_names.mjs';
 const root = resolve(import.meta.dirname, '../..');
 const eslint = new ESLint({cwd: root});
 
+test('return-only generic contracts require explicit arguments while input inference and overloads remain available', async () => {
+  const source = [
+    'declare function read<T = unknown>(): T;',
+    'declare function identity<T>(value: T): T;',
+    'declare function overloaded<T>(): T;',
+    'declare function overloaded(value: string): string;',
+    'read();',
+    'read<unknown>();',
+    "identity('value');",
+    "overloaded('value');",
+    'overloaded();',
+    'const alias = read;',
+    'alias();',
+    "document.querySelector('button');",
+    "document.querySelector('.button');",
+    "document.querySelector<Element>('.button');",
+    'declare function shadowed<T>(callback: <T>(value: T) => T): T;',
+    'shadowed(value => value);',
+    'shadowed<unknown>(value => value);',
+    'declare function paired<T, U = unknown>(value: T): U;',
+    "paired('value');",
+    "paired<string, unknown>('value');",
+  ].join('\n');
+  const [result] = await eslint.lintText(source, {
+    filePath: 'apps/web/src/data/http.ts',
+  });
+  const reports = result.messages.filter(
+    message => message.ruleId === 'project/explicit-return-generics',
+  );
+  assert.deepEqual(
+    reports.map(message => message.line),
+    [5, 9, 11, 13, 16, 19],
+  );
+  assert.ok(reports.every(message => message.fix === undefined));
+});
+
 test('module layout rejects late imports without reordering side effects automatically', async () => {
   const [result] = await eslint.lintText(
     "import console from 'node:console';\nconsole.log('ready');\nimport 'node:fs';\n",

@@ -84,12 +84,18 @@ describe('跨比赛前端请求与中文信息', () => {
       vi.fn().mockRejectedValue(new Error('test disconnect')),
     );
     await expect(
-      client.mutate('/platform/matches/create', {name: 'A', reason: '创建'}),
+      client.mutate<unknown>('/platform/matches/create', {
+        name: 'A',
+        reason: '创建',
+      }),
     ).rejects.toThrow('test disconnect');
     const pending = client.pending();
     expect(pending?.account).toBe('long-account');
     await expect(
-      client.mutate('/platform/matches/create', {name: 'B', reason: '创建'}),
+      client.mutate<unknown>('/platform/matches/create', {
+        name: 'B',
+        reason: '创建',
+      }),
     ).rejects.toThrow('请先查询');
     const fetcher = vi.fn(
       promiseStub((path: string) =>

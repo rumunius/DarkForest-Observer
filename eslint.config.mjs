@@ -7,6 +7,7 @@ import {
   spacedClassMethods,
   namedFunctions,
   moduleLayout,
+  explicitReturnGenerics,
 } from './scripts/eslint_rules.mjs';
 
 const restrictedTypeScriptSyntax = [
@@ -56,6 +57,7 @@ export default tseslint.config(
           'spaced-class-methods': spacedClassMethods,
           'named-functions': namedFunctions,
           'module-layout': moduleLayout,
+          'explicit-return-generics': explicitReturnGenerics,
         },
       },
     },
@@ -156,6 +158,7 @@ export default tseslint.config(
   {
     files: ['**/*.{ts,tsx,mts,cts}'],
     extends: [...tseslint.configs.recommendedTypeChecked],
+    rules: {'project/explicit-return-generics': 'error'},
     languageOptions: {
       parserOptions: {
         tsconfigRootDir: import.meta.dirname,

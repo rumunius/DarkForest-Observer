@@ -318,12 +318,20 @@ it('revokes sessions and old credentials, recovers the same reset result, and re
   await runInDurableObject(stub(), (_i, state) => {
     expect(
       JSON.stringify(
-        state.storage.sql.exec('SELECT * FROM request_journal').toArray(),
+        state.storage.sql
+          .exec<Record<string, SqlStorageValue>>(
+            'SELECT * FROM request_journal',
+          )
+          .toArray(),
       ),
     ).not.toContain(jsonObject(credential.body).credential);
     expect(
       JSON.stringify(
-        state.storage.sql.exec('SELECT * FROM credential_deliveries').toArray(),
+        state.storage.sql
+          .exec<Record<string, SqlStorageValue>>(
+            'SELECT * FROM credential_deliveries',
+          )
+          .toArray(),
       ),
     ).not.toContain(jsonObject(credential.body).credential);
   });
@@ -362,11 +370,13 @@ it('keeps report versions immutable while corrections recalculate rankings', asy
   await runInDurableObject(stub(), async (_i, state) => {
     const e = new Engine(new Store(state.storage), bindings);
     await e.keys();
-    state.storage.sql.exec(
+    state.storage.sql.exec<Record<string, SqlStorageValue>>(
       "UPDATE players SET nickname=CASE id WHEN 'C01' THEN '文明一' ELSE '文明二' END",
     );
-    state.storage.sql.exec("UPDATE flights SET status='active'");
-    state.storage.sql.exec(
+    state.storage.sql.exec<Record<string, SqlStorageValue>>(
+      "UPDATE flights SET status='active'",
+    );
+    state.storage.sql.exec<Record<string, SqlStorageValue>>(
       "UPDATE matches SET phase='forest',started_at=?,start_settled=?",
       Date.now(),
       Date.now(),

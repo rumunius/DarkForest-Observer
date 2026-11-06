@@ -188,7 +188,9 @@ describe('登录、邀请与场内体验', () => {
         expectedRevision: 7,
       });
       expect(
-        document.querySelector('button[aria-label="移除成员 已绑定玩家"]'),
+        document.querySelector<Element>(
+          'button[aria-label="移除成员 已绑定玩家"]',
+        ),
       ).toBeNull();
     },
   );
@@ -216,7 +218,9 @@ describe('登录、邀请与场内体验', () => {
       );
       await mount(<PlatformApp />);
       expect(document.body.textContent).not.toContain('重新认证');
-      expect(document.querySelector('input[type="password"]')).toBeNull();
+      expect(
+        document.querySelector<Element>('input[type="password"]'),
+      ).toBeNull();
       const control = [...document.querySelectorAll('button')].find(button =>
         button.textContent?.includes(
           verified ? '关闭第二因素验证' : '生成认证器密钥',
@@ -249,7 +253,9 @@ describe('登录、邀请与场内体验', () => {
     await mount(<PlatformApp />);
     expect(document.body.textContent).toContain('验证第二因素');
     expect(document.body.textContent).not.toContain('有效10分钟');
-    expect(document.querySelector('input[type="password"]')).not.toBeNull();
+    expect(
+      document.querySelector<Element>('input[type="password"]'),
+    ).not.toBeNull();
     const disable = [...document.querySelectorAll('button')].find(button =>
       button.textContent?.includes('关闭第二因素验证'),
     );
@@ -325,7 +331,7 @@ describe('登录、邀请与场内体验', () => {
   it('访客不显示我的比赛与账号安全导航', async () => {
     vi.stubGlobal('fetch', vi.fn(promiseStub(() => Response.json(null))));
     await mount(<PlatformApp />);
-    const nav = document.querySelector('[aria-label="赛事中心导航"]')!;
+    const nav = document.querySelector<Element>('[aria-label="赛事中心导航"]')!;
     expect(nav.textContent).not.toContain('我的比赛');
     expect(nav.textContent).not.toContain('账号与安全');
     expect(document.body.textContent).toContain('长期口令');
@@ -372,7 +378,8 @@ describe('登录、邀请与场内体验', () => {
       ),
     ).toBe(false);
     expect(
-      document.querySelector('a[href="/m/match-a/player"]')?.textContent,
+      document.querySelector<Element>('a[href="/m/match-a/player"]')
+        ?.textContent,
     ).toBe('进入比赛');
     expect(document.body.textContent).toContain('已加入本场');
     expect(
@@ -468,7 +475,7 @@ describe('登录、邀请与场内体验', () => {
       vi.stubGlobal('fetch', fetcher);
       await mount(<MatchApp id="match-a" />);
       const sections = [
-        ...document.querySelectorAll('section.platform-detail'),
+        ...document.querySelectorAll<Element>('section.platform-detail'),
       ];
       const invitation = sections.find(
         s => s.querySelector('h2')?.textContent === '邀请账号',
@@ -551,7 +558,9 @@ describe('登录、邀请与场内体验', () => {
     vi.stubGlobal('fetch', vi.fn(promiseStub(() => Response.json(null))));
     await mount(<MatchApp id="match-a" />);
     expect(replace).toHaveBeenCalledWith('/?audience=player');
-    expect(document.querySelector('input[type="password"]')).toBeNull();
+    expect(
+      document.querySelector<Element>('input[type="password"]'),
+    ).toBeNull();
     expect(document.body.textContent).not.toContain('参赛口令');
   });
   it('比赛信息位于场内，账号操作放入我的页面，比赛中无赛后资料按钮', async () => {
@@ -565,14 +574,14 @@ describe('登录、邀请与场内体验', () => {
       <App source={source} matchContext={{entry, audience: 'player'}} />,
     );
     expect(
-      document.querySelector('main .match-heading')?.textContent,
+      document.querySelector<Element>('main .match-heading')?.textContent,
     ).toContain('秋季比赛');
-    expect(document.querySelector('.match-context-banner')).toBeNull();
+    expect(document.querySelector<Element>('.match-context-banner')).toBeNull();
     expect(
-      document.querySelector('main a[href="/matches?audience=player"]')
+      document.querySelector<Element>('main a[href="/matches?audience=player"]')
         ?.textContent,
     ).toBe('切换比赛');
-    expect(document.querySelector('a[href*="/history"]')).toBeNull();
+    expect(document.querySelector<Element>('a[href*="/history"]')).toBeNull();
   });
   it('裁判尚未填原因时保留禁用的预览按钮，填写后可预览', async () => {
     const source = new MockSource();

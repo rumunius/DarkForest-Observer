@@ -48,14 +48,14 @@ it('reports invitation copy success only after writing the exact claim link', as
   writeText.mockResolvedValue(undefined);
   vi.stubGlobal('navigator', {clipboard: {writeText}});
   await render('invitation-one');
-  expect(document.querySelector('[role="status"]')).toBeNull();
+  expect(document.querySelector<Element>('[role="status"]')).toBeNull();
   await act(promiseStub(() => button().click()));
   expect(writeText).toHaveBeenCalledExactlyOnceWith(
     `${location.origin}/claim#invitation-one`,
   );
-  expect(document.querySelector('[role="status"]')?.textContent).toContain(
-    '已复制',
-  );
+  expect(
+    document.querySelector<Element>('[role="status"]')?.textContent,
+  ).toContain('已复制');
   expect(button().disabled).toBe(false);
 });
 
@@ -69,9 +69,9 @@ it('keeps the claim link selectable and explains a denied clipboard request', as
   });
   await render('invitation-denied');
   await act(promiseStub(() => button().click()));
-  expect(document.querySelector('[role="status"]')?.textContent).toContain(
-    '手动复制',
-  );
+  expect(
+    document.querySelector<Element>('[role="status"]')?.textContent,
+  ).toContain('手动复制');
   expect(document.querySelector('code')?.textContent).toBe(
     `${location.origin}/claim#invitation-denied`,
   );
@@ -82,9 +82,9 @@ it('handles browsers without the clipboard API through the same manual copy feed
   vi.stubGlobal('navigator', {});
   await render('invitation-no-api');
   await act(promiseStub(() => button().click()));
-  expect(document.querySelector('[role="status"]')?.textContent).toContain(
-    '手动复制',
-  );
+  expect(
+    document.querySelector<Element>('[role="status"]')?.textContent,
+  ).toContain('手动复制');
   expect(button().disabled).toBe(false);
 });
 
@@ -105,14 +105,14 @@ it('isolates feedback and pending state when the delivered invitation changes', 
     throw new Error('Deferred clipboard resolver is missing');
   }
   await act(promiseStub(completeCopy));
-  expect(document.querySelector('[role="status"]')).toBeNull();
+  expect(document.querySelector<Element>('[role="status"]')).toBeNull();
   expect(document.querySelector('code')?.textContent).toBe(
     `${location.origin}/claim#new-invitation`,
   );
   await act(promiseStub(() => button().click()));
-  expect(document.querySelector('[role="status"]')?.textContent).toContain(
-    '已复制',
-  );
+  expect(
+    document.querySelector<Element>('[role="status"]')?.textContent,
+  ).toContain('已复制');
   await render(null);
   expect(document.querySelector('code')).toBeNull();
 });

@@ -868,22 +868,30 @@ describe('real Workers SQLite and RPC', () => {
     await seed();
     await runInDurableObject(stub(), (_instance, state) => {
       expect(() =>
-        state.storage.sql.exec("INSERT INTO players(id) VALUES('missing')"),
+        state.storage.sql.exec<Record<string, SqlStorageValue>>(
+          "INSERT INTO players(id) VALUES('missing')",
+        ),
       ).toThrow();
       expect(() =>
-        state.storage.sql.exec("UPDATE players SET photons=2 WHERE id='C01'"),
+        state.storage.sql.exec<Record<string, SqlStorageValue>>(
+          "UPDATE players SET photons=2 WHERE id='C01'",
+        ),
       ).toThrow();
       expect(() =>
         state.storage.transactionSync(() => {
-          state.storage.sql.exec(
+          state.storage.sql.exec<Record<string, SqlStorageValue>>(
             "UPDATE players SET nickname='临时昵称' WHERE id='C01'",
           );
-          state.storage.sql.exec("UPDATE players SET photons=2 WHERE id='C02'");
+          state.storage.sql.exec<Record<string, SqlStorageValue>>(
+            "UPDATE players SET photons=2 WHERE id='C02'",
+          );
         }),
       ).toThrow();
       expect(
         state.storage.sql
-          .exec("SELECT nickname FROM players WHERE id='C01'")
+          .exec<Record<string, SqlStorageValue>>(
+            "SELECT nickname FROM players WHERE id='C01'",
+          )
           .one().nickname,
       ).toBeNull();
     });
@@ -1054,12 +1062,16 @@ describe('real Workers SQLite and RPC', () => {
     await runInDurableObject(stub(), (_instance, state) => {
       expect(
         state.storage.sql
-          .exec("SELECT * FROM scheduled_events WHERE kind='tech_burst'")
+          .exec<Record<string, SqlStorageValue>>(
+            "SELECT * FROM scheduled_events WHERE kind='tech_burst'",
+          )
           .toArray(),
       ).toHaveLength(0);
       expect(
         state.storage.sql
-          .exec("SELECT * FROM sighting_codes WHERE status='active'")
+          .exec<Record<string, SqlStorageValue>>(
+            "SELECT * FROM sighting_codes WHERE status='active'",
+          )
           .toArray(),
       ).toHaveLength(2);
     });
@@ -1105,12 +1117,16 @@ describe('real Workers SQLite and RPC', () => {
     await runInDurableObject(stub(), (_instance, state) => {
       expect(
         state.storage.sql
-          .exec("SELECT * FROM scheduled_events WHERE kind='tech_burst'")
+          .exec<Record<string, SqlStorageValue>>(
+            "SELECT * FROM scheduled_events WHERE kind='tech_burst'",
+          )
           .toArray(),
       ).toHaveLength(8);
       expect(
         state.storage.sql
-          .exec('SELECT DISTINCT mac FROM sighting_codes')
+          .exec<Record<string, SqlStorageValue>>(
+            'SELECT DISTINCT mac FROM sighting_codes',
+          )
           .toArray(),
       ).toHaveLength(24);
     });
@@ -1224,7 +1240,9 @@ describe('real Workers SQLite and RPC', () => {
     expect(report.standings.every(p => p.rank === 1 && p.tied)).toBe(true);
     await runInDurableObject(stub(), (_instance, state) => {
       const rows = state.storage.sql
-        .exec('SELECT utc_ms,game_ms FROM eliminations WHERE valid=1')
+        .exec<Record<string, SqlStorageValue>>(
+          'SELECT utc_ms,game_ms FROM eliminations WHERE valid=1',
+        )
         .toArray();
       expect(
         rows.every(
@@ -1243,11 +1261,13 @@ describe('real Workers SQLite and RPC', () => {
         const keys = await engine.keys();
         const used = new Set(
           state.storage.sql
-            .exec('SELECT mac FROM sighting_codes')
+            .exec<Record<string, SqlStorageValue>>(
+              'SELECT mac FROM sighting_codes',
+            )
             .toArray()
             .map(r => r.mac),
         );
-        state.storage.sql.exec(
+        state.storage.sql.exec<Record<string, SqlStorageValue>>(
           "UPDATE settings SET value=json_set(value,'$.secondOutPercent',0) WHERE key='parameters'",
         );
         return decodeArms(keys.codes.find(c => !used.has(c.mac))!.key);
@@ -1287,7 +1307,7 @@ describe('real Workers SQLite and RPC', () => {
     });
     await runInDurableObject(stub(), (_instance, state) => {
       const rows = state.storage.sql
-        .exec(
+        .exec<Record<string, SqlStorageValue>>(
           'SELECT wrong_index,roll FROM attacks WHERE actor=? ORDER BY committed_utc',
           'C01',
         )
@@ -1298,7 +1318,9 @@ describe('real Workers SQLite and RPC', () => {
       expect(rows[2]!.roll).toBeNull();
       expect(
         state.storage.sql
-          .exec("SELECT destroyed_game FROM homeworlds WHERE player_id='C01'")
+          .exec<Record<string, SqlStorageValue>>(
+            "SELECT destroyed_game FROM homeworlds WHERE player_id='C01'",
+          )
           .one().destroyed_game,
       ).not.toBeNull();
     });
@@ -1307,7 +1329,7 @@ describe('real Workers SQLite and RPC', () => {
     const {players, arms} = await start();
     const p = players[0]!;
     await runInDurableObject(stub(), (_instance, state) => {
-      state.storage.sql.exec(
+      state.storage.sql.exec<Record<string, SqlStorageValue>>(
         "UPDATE attack_controls SET attempts=120 WHERE player_id='C01'",
       );
     });
@@ -1318,7 +1340,7 @@ describe('real Workers SQLite and RPC', () => {
     await runInDurableObject(stub(), (_instance, state) => {
       expect(
         state.storage.sql
-          .exec(
+          .exec<Record<string, SqlStorageValue>>(
             "SELECT * FROM notice_queue WHERE dedup_key LIKE 'sighting-threshold:%'",
           )
           .toArray(),
@@ -1364,11 +1386,11 @@ describe('real Workers SQLite and RPC', () => {
     await seed();
     await runInDurableObject(stub(), async (_instance, state) => {
       const due = Date.now() - 1000;
-      state.storage.sql.exec(
+      state.storage.sql.exec<Record<string, SqlStorageValue>>(
         "UPDATE matches SET phase='armed',release_at=?",
         due,
       );
-      state.storage.sql.exec(
+      state.storage.sql.exec<Record<string, SqlStorageValue>>(
         "INSERT INTO scheduled_events(id,kind,clock,due,priority,payload) VALUES('code_release','code_release','utc',?,0,'{}')",
         due,
       );
@@ -1377,11 +1399,15 @@ describe('real Workers SQLite and RPC', () => {
     expect(await runDurableObjectAlarm(stub())).toBe(true);
     await runInDurableObject(stub(), (_instance, state) => {
       expect(
-        state.storage.sql.exec('SELECT phase FROM matches').one().phase,
+        state.storage.sql
+          .exec<Record<string, SqlStorageValue>>('SELECT phase FROM matches')
+          .one().phase,
       ).toBe('outfitting');
       expect(
         state.storage.sql
-          .exec("SELECT * FROM event_log WHERE id='code_release'")
+          .exec<Record<string, SqlStorageValue>>(
+            "SELECT * FROM event_log WHERE id='code_release'",
+          )
           .toArray(),
       ).toHaveLength(1);
     });
@@ -1509,10 +1535,10 @@ describe('real Workers SQLite and RPC', () => {
   it('retains all broadcast and photon privacy rules with configurable singer probability', async () => {
     const {players} = await start();
     await runInDurableObject(stub(), (_instance, state) => {
-      state.storage.sql.exec(
+      state.storage.sql.exec<Record<string, SqlStorageValue>>(
         "UPDATE settings SET value=json_set(value,'$.singerPercent',100) WHERE key='parameters'",
       );
-      state.storage.sql.exec(
+      state.storage.sql.exec<Record<string, SqlStorageValue>>(
         "UPDATE players SET tech=1,photons=1 WHERE id='C01'",
       );
     });
@@ -1663,7 +1689,7 @@ describe('real Workers SQLite and RPC', () => {
     const {head, players} = await start();
     await runInDurableObject(stub(), (_instance, state) => {
       for (let i = 0; i < 510; i++) {
-        state.storage.sql.exec(
+        state.storage.sql.exec<Record<string, SqlStorageValue>>(
           "INSERT INTO event_log(id,kind,title,body,audience,owner,civilization_ids,game_ms,utc_ms,committed_utc) VALUES(?,'notice','消息','正文','personal','C01','[]',0,?,?)",
           `page-${i}`,
           Date.now(),
@@ -1879,7 +1905,7 @@ describe('real Workers SQLite and RPC', () => {
       e.now = () => testUtc!;
       const original = state.storage.setAlarm.bind(state.storage);
       state.storage.setAlarm = () =>
-        Promise.reject(new Error('injected alarm registration failure'));
+        Promise.reject<never>(new Error('injected alarm registration failure'));
       try {
         return await e.call({
           method: 'POST',
@@ -1897,12 +1923,17 @@ describe('real Workers SQLite and RPC', () => {
     expect(reply.status).toBe(200);
     await runInDurableObject(stub(), (_instance, state) => {
       expect(
-        state.storage.sql.exec('SELECT error FROM scheduler_health').one()
-          .error,
+        state.storage.sql
+          .exec<Record<string, SqlStorageValue>>(
+            'SELECT error FROM scheduler_health',
+          )
+          .one().error,
       ).toContain('登记失败');
       expect(
         state.storage.sql
-          .exec("SELECT * FROM broadcasts WHERE code='999999'")
+          .exec<Record<string, SqlStorageValue>>(
+            "SELECT * FROM broadcasts WHERE code='999999'",
+          )
           .toArray(),
       ).toHaveLength(1);
     });
@@ -1919,8 +1950,11 @@ describe('real Workers SQLite and RPC', () => {
     await call('/public/match');
     await runInDurableObject(stub(), (_instance, state) => {
       expect(
-        state.storage.sql.exec('SELECT error FROM scheduler_health').one()
-          .error,
+        state.storage.sql
+          .exec<Record<string, SqlStorageValue>>(
+            'SELECT error FROM scheduler_health',
+          )
+          .one().error,
       ).toBe('');
     });
   });

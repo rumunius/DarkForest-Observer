@@ -48,8 +48,8 @@ INSERT INTO settings(key,value) VALUES('parameters','{}');
 export function migrate(storage: DurableObjectStorage): void {
   storage.transactionSync(() => {
     const sql = storage.sql;
-    sql.exec('PRAGMA foreign_keys = ON');
-    sql.exec(
+    sql.exec<Record<string, SqlStorageValue>>('PRAGMA foreign_keys = ON');
+    sql.exec<Record<string, SqlStorageValue>>(
       'CREATE TABLE IF NOT EXISTS schema_meta (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)',
     );
     const version = sql
@@ -61,122 +61,170 @@ export function migrate(storage: DurableObjectStorage): void {
       throw new Error('SCHEMA_NEWER_THAN_CODE');
     }
     if (version === 0) {
-      sql.exec(migration1);
-      sql.exec('INSERT INTO schema_meta VALUES (?, ?)', 1, Date.now());
+      sql.exec<Record<string, SqlStorageValue>>(migration1);
+      sql.exec<Record<string, SqlStorageValue>>(
+        'INSERT INTO schema_meta VALUES (?, ?)',
+        1,
+        Date.now(),
+      );
     }
     if (version < 2) {
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'ALTER TABLE matches ADD COLUMN participant_count INTEGER NOT NULL DEFAULT 2 CHECK(participant_count BETWEEN 2 AND 350)',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         "UPDATE matches SET participant_count=MAX(2,(SELECT COUNT(*) FROM players WHERE entry_status='registered'))",
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE TABLE roster_members (player_id TEXT PRIMARY KEY REFERENCES players(id))',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         "INSERT INTO roster_members SELECT id FROM players WHERE entry_status='registered'",
       );
-      sql.exec('INSERT INTO schema_meta VALUES(2,?)', Date.now());
+      sql.exec<Record<string, SqlStorageValue>>(
+        'INSERT INTO schema_meta VALUES(2,?)',
+        Date.now(),
+      );
     }
     if (version < 3) {
-      sql.exec('ALTER TABLE matches DROP COLUMN participant_count');
-      sql.exec('INSERT INTO schema_meta VALUES(3,?)', Date.now());
+      sql.exec<Record<string, SqlStorageValue>>(
+        'ALTER TABLE matches DROP COLUMN participant_count',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
+        'INSERT INTO schema_meta VALUES(3,?)',
+        Date.now(),
+      );
     }
     if (version < 4) {
-      sql.exec('ALTER TABLE attacks ADD COLUMN before_json TEXT');
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
+        'ALTER TABLE attacks ADD COLUMN before_json TEXT',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE TABLE attack_corrections (id TEXT PRIMARY KEY, attack_id TEXT NOT NULL UNIQUE REFERENCES attacks(id), actor TEXT NOT NULL REFERENCES accounts(id), reason TEXT NOT NULL, utc_ms INTEGER NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL)',
       );
-      sql.exec('INSERT INTO schema_meta VALUES(4,?)', Date.now());
+      sql.exec<Record<string, SqlStorageValue>>(
+        'INSERT INTO schema_meta VALUES(4,?)',
+        Date.now(),
+      );
     }
     if (version < 5) {
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         "ALTER TABLE matches ADD COLUMN recovery_state TEXT NOT NULL DEFAULT ''",
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'ALTER TABLE accounts ADD COLUMN version INTEGER NOT NULL DEFAULT 1',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         "ALTER TABLE result_reports ADD COLUMN correction_reason TEXT NOT NULL DEFAULT ''",
       );
-      sql.exec('ALTER TABLE result_reports ADD COLUMN snapshot_json TEXT');
-      sql.exec('ALTER TABLE notice_queue ADD COLUMN ordering_seq INTEGER');
-      sql.exec('UPDATE notice_queue SET ordering_seq=rowid');
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
+        'ALTER TABLE result_reports ADD COLUMN snapshot_json TEXT',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
+        'ALTER TABLE notice_queue ADD COLUMN ordering_seq INTEGER',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
+        'UPDATE notice_queue SET ordering_seq=rowid',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE UNIQUE INDEX notice_order ON notice_queue(ordering_seq)',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE TABLE recovery_log(id TEXT PRIMARY KEY, state TEXT NOT NULL, created_utc INTEGER NOT NULL, detail TEXT NOT NULL)',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE TABLE credential_deliveries(id TEXT PRIMARY KEY, actor TEXT NOT NULL REFERENCES accounts(id), account_id TEXT NOT NULL REFERENCES accounts(id), ciphertext TEXT NOT NULL, created_utc INTEGER NOT NULL)',
       );
-      sql.exec('INSERT INTO schema_meta VALUES(5,?)', Date.now());
+      sql.exec<Record<string, SqlStorageValue>>(
+        'INSERT INTO schema_meta VALUES(5,?)',
+        Date.now(),
+      );
     }
     if (version < 6) {
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'ALTER TABLE scheduled_events ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'ALTER TABLE scheduled_events ADD COLUMN last_attempt_utc INTEGER',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         "ALTER TABLE scheduled_events ADD COLUMN last_error TEXT NOT NULL DEFAULT ''",
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'ALTER TABLE scheduled_events ADD COLUMN last_error_utc INTEGER',
       );
-      sql.exec('ALTER TABLE notice_queue ADD COLUMN copied_by TEXT');
-      sql.exec('ALTER TABLE notice_queue ADD COLUMN copied_utc INTEGER');
-      sql.exec('ALTER TABLE notice_queue ADD COLUMN sent_by TEXT');
-      sql.exec('ALTER TABLE notice_queue ADD COLUMN sent_utc INTEGER');
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
+        'ALTER TABLE notice_queue ADD COLUMN copied_by TEXT',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
+        'ALTER TABLE notice_queue ADD COLUMN copied_utc INTEGER',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
+        'ALTER TABLE notice_queue ADD COLUMN sent_by TEXT',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
+        'ALTER TABLE notice_queue ADD COLUMN sent_utc INTEGER',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
         'ALTER TABLE notice_queue ADD COLUMN priority INTEGER NOT NULL DEFAULT 0',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         "UPDATE notice_queue SET priority=CASE title WHEN '永久淘汰' THEN 100 WHEN '飞船被击毁' THEN 90 WHEN '母星毁灭' THEN 80 ELSE 0 END",
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE INDEX notice_pending ON notice_queue(status,priority,ordering_seq)',
       );
-      sql.exec('ALTER TABLE audit_logs ADD COLUMN game_ms INTEGER');
-      sql.exec('ALTER TABLE previews ADD COLUMN impact TEXT');
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
+        'ALTER TABLE audit_logs ADD COLUMN game_ms INTEGER',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
+        'ALTER TABLE previews ADD COLUMN impact TEXT',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE TABLE notice_actions (id TEXT PRIMARY KEY, notice_id TEXT NOT NULL REFERENCES notice_queue(id), actor TEXT NOT NULL, action TEXT NOT NULL, utc_ms INTEGER NOT NULL, detail TEXT NOT NULL)',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE TABLE judge_eliminations (source TEXT NOT NULL, player_id TEXT NOT NULL REFERENCES players(id), before_json TEXT NOT NULL, PRIMARY KEY(source,player_id))',
       );
-      sql.exec('INSERT INTO schema_meta VALUES(6,?)', Date.now());
+      sql.exec<Record<string, SqlStorageValue>>(
+        'INSERT INTO schema_meta VALUES(6,?)',
+        Date.now(),
+      );
     }
     if (version < 7) {
       // Active restoration makes fourth and later mismatches representable; the >=3 penalty is unchanged.
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE TABLE attack_controls_v7 (player_id TEXT PRIMARY KEY REFERENCES players(id),wrong INTEGER NOT NULL DEFAULT 0 CHECK(wrong BETWEEN 0 AND 9007199254740990),locked_until INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,last_at INTEGER)',
       );
-      sql.exec('INSERT INTO attack_controls_v7 SELECT * FROM attack_controls');
-      sql.exec('DROP TABLE attack_controls');
-      sql.exec('ALTER TABLE attack_controls_v7 RENAME TO attack_controls');
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
+        'INSERT INTO attack_controls_v7 SELECT * FROM attack_controls',
+      );
+      sql.exec<Record<string, SqlStorageValue>>('DROP TABLE attack_controls');
+      sql.exec<Record<string, SqlStorageValue>>(
+        'ALTER TABLE attack_controls_v7 RENAME TO attack_controls',
+      );
+      sql.exec<Record<string, SqlStorageValue>>(
         `CREATE TABLE IF NOT EXISTS command_objects (id TEXT PRIMARY KEY, kind TEXT NOT NULL, actor TEXT NOT NULL REFERENCES accounts(id), status TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_utc INTEGER NOT NULL, data TEXT NOT NULL)`,
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE INDEX IF NOT EXISTS command_objects_kind ON command_objects(kind,created_utc,id)',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE TABLE IF NOT EXISTS command_tags(player_id TEXT NOT NULL REFERENCES players(id),tag TEXT NOT NULL,PRIMARY KEY(player_id,tag))',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE TABLE IF NOT EXISTS judge_command_log(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,actor TEXT NOT NULL REFERENCES accounts(id),request_id TEXT NOT NULL,status TEXT NOT NULL,path TEXT NOT NULL,created_utc INTEGER NOT NULL,game_ms INTEGER NOT NULL,detail TEXT NOT NULL,ciphertext TEXT)',
       );
-      sql.exec(
+      sql.exec<Record<string, SqlStorageValue>>(
         'CREATE INDEX IF NOT EXISTS command_log_order ON judge_command_log(actor,seq)',
       );
-      sql.exec('INSERT INTO schema_meta VALUES(7,?)', Date.now());
+      sql.exec<Record<string, SqlStorageValue>>(
+        'INSERT INTO schema_meta VALUES(7,?)',
+        Date.now(),
+      );
     }
     if (version < 8) {
-      sql.exec(`
+      sql.exec<Record<string, SqlStorageValue>>(`
         CREATE TABLE match_identity(id TEXT PRIMARY KEY,kind TEXT NOT NULL,creation_id TEXT NOT NULL UNIQUE,body_hash TEXT NOT NULL,key_version INTEGER NOT NULL DEFAULT 2,recovery_generation INTEGER NOT NULL DEFAULT 0,erasure_generation INTEGER NOT NULL DEFAULT 0,management_state TEXT NOT NULL DEFAULT 'draft');
         CREATE TABLE memberships(account_id TEXT PRIMARY KEY,kind TEXT NOT NULL,name TEXT NOT NULL,local_id TEXT UNIQUE REFERENCES accounts(id),state TEXT NOT NULL,epoch INTEGER NOT NULL DEFAULT 1,assignment_id TEXT);
         CREATE TABLE staff_assignments(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,seat_id TEXT NOT NULL,started_utc INTEGER NOT NULL,ended_utc INTEGER,epoch INTEGER NOT NULL);
@@ -188,9 +236,14 @@ export function migrate(storage: DurableObjectStorage): void {
         CREATE TABLE audit_identities(seq INTEGER PRIMARY KEY,account_id TEXT NOT NULL,assignment_id TEXT,display_name TEXT NOT NULL);
         CREATE TABLE participation_history(account_id TEXT PRIMARY KEY,local_id TEXT NOT NULL,confirmed_utc INTEGER NOT NULL);
       `);
-      sql.exec('INSERT INTO schema_meta VALUES(8,?)', Date.now());
+      sql.exec<Record<string, SqlStorageValue>>(
+        'INSERT INTO schema_meta VALUES(8,?)',
+        Date.now(),
+      );
     }
-    sql.exec('DROP TABLE IF EXISTS archive_parts');
+    sql.exec<Record<string, SqlStorageValue>>(
+      'DROP TABLE IF EXISTS archive_parts',
+    );
     if (
       sql.exec<{foreign_keys: number}>('PRAGMA foreign_keys').one()
         .foreign_keys !== 1

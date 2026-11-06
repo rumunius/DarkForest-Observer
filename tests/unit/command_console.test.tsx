@@ -62,9 +62,9 @@ async function key(input: HTMLTextAreaElement, value: string) {
 }
 it('completes prefixes with Tab, clicks a child and restores focus and caret', async () => {
   const input = await mount();
-  expect(document.querySelector('[role=listbox]')).toBeNull();
+  expect(document.querySelector<Element>('[role=listbox]')).toBeNull();
   await type(input, '/pl');
-  expect(document.querySelectorAll('[role=option]')).toHaveLength(2);
+  expect(document.querySelectorAll<Element>('[role=option]')).toHaveLength(2);
   await key(input, 'Tab');
   expect(input.value).toBe('/player ');
   const option = [
@@ -98,5 +98,5 @@ it('does not consume Tab during IME composition, and Escape dismisses the panel'
     ),
   );
   await key(input, 'Escape');
-  expect(document.querySelector('[role=listbox]')).toBeNull();
+  expect(document.querySelector<Element>('[role=listbox]')).toBeNull();
 });

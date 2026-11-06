@@ -54,7 +54,7 @@ it('bridges a rejected async event to UI feedback without returning a promise to
   let submitted = '';
   const listener = handleAsync((id: string) => {
     submitted = id;
-    return Promise.reject(error);
+    return Promise.reject<never>(error);
   }, report);
   expect(listener('request-1')).toBeUndefined();
   expect(submitted).toBe('request-1');

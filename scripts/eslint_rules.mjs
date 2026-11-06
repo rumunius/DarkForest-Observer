@@ -1,3 +1,60 @@
+import ts from 'typescript';
+
+/** Require callers to name generic contracts that cannot be inferred from inputs. */
+export const explicitReturnGenerics = {
+  meta: {
+    type: 'suggestion',
+    schema: [],
+    messages: {
+      missing:
+        'Specify type arguments explicitly when the generic contract has no input type to infer from.',
+    },
+  },
+  create(context) {
+    const services = context.sourceCode.parserServices;
+    if (!services.program || !services.esTreeNodeToTSNodeMap) {
+      throw new Error('explicit-return-generics requires type-aware parsing.');
+    }
+    const checker = services.program.getTypeChecker();
+    return {
+      CallExpression(node) {
+        if (node.typeArguments?.params.length) {
+          return;
+        }
+        const call = services.esTreeNodeToTSNodeMap.get(node);
+        const declaration = checker.getResolvedSignature(call)?.declaration;
+        if (!declaration?.typeParameters?.length) {
+          return;
+        }
+        const typeParameters = new Set(
+          declaration.typeParameters.map(parameter =>
+            checker.getSymbolAtLocation(parameter.name),
+          ),
+        );
+        const inferable = new Set();
+        const visit = child => {
+          if (ts.isIdentifier(child)) {
+            const symbol = checker.getSymbolAtLocation(child);
+            if (symbol && typeParameters.has(symbol)) {
+              inferable.add(symbol);
+            }
+          }
+          ts.forEachChild(child, visit);
+        };
+        for (const parameter of declaration.parameters) {
+          if (parameter.type) {
+            visit(parameter.type);
+          }
+        }
+        if (inferable.size < typeParameters.size) {
+          // Choosing a type changes the contract, so this rule must not guess a fix.
+          context.report({node, messageId: 'missing'});
+        }
+      },
+    };
+  },
+};
+
 /** Require public contracts to explain intent, rather than relying on names alone. */
 export const documentedExports = {
   meta: {
