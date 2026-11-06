@@ -16,6 +16,177 @@ import {
   recordTableDependency,
 } from './command_context';
 
+/** Recheck every formal player's staged or reserved-ready state before locking a node. */
+function readyMatchRoster(
+  commandContext: CommandContext,
+  release: boolean,
+): string[] {
+  const engine = commandContext.engine;
+  const db = engine.db;
+
+  const roster = db.roster();
+  requireCommandArgument(roster.length >= 2, '至少需要两名正式玩家');
+  for (const id of roster) {
+    selectTargets(commandContext, id);
+    const flight = db.flight(id);
+    const homeworld = db.home(id);
+    requireCommandArgument(
+      release
+        ? flight.status === 'staged' &&
+            flight.departed !== null &&
+            flight.staged !== null &&
+            !flight.code_id &&
+            homeworld?.status === 'verified'
+        : flight.status === 'ready' &&
+            flight.ready !== null &&
+            !!flight.code_id &&
+            !!db.one<Record<string, SqlStorageValue>>(
+              "SELECT id FROM sighting_codes WHERE id=? AND player_id=? AND status='reserved'",
+              flight.code_id,
+              id,
+            ),
+      '正式玩家尚未完成准备：' + id,
+    );
+  }
+  if (release) {
+    requireCommandArgument(
+      db.one<{n: number}>('SELECT COUNT(*) n FROM sighting_codes')!.n +
+        roster.length <=
+        350,
+      '首航码容量不足',
+    );
+  }
+  return roster;
+}
+
+/** Reuse the secret plan for an unchanged roster or preserve and replace its prior version. */
+function prepareMatchStartPlan(
+  commandContext: CommandContext,
+  roster: string[],
+): void {
+  const engine = commandContext.engine;
+  const db = engine.db;
+
+  const oldPlan = db.one<SavedCommandObject>(
+    "SELECT * FROM command_objects WHERE kind='start-plan' AND status='active' ORDER BY created_utc DESC LIMIT 1",
+  );
+  const existing = oldPlan
+    ? (parseJson(oldPlan.data) as {roster: string[]; times: number[]})
+    : null;
+  let times: number[];
+  if (existing && stableJson(existing.roster) === stableJson(roster)) {
+    times = existing.times;
+  } else if (
+    !oldPlan &&
+    db.one<Record<string, SqlStorageValue>>(
+      "SELECT id FROM scheduled_events WHERE kind='tech_burst' AND id LIKE 'tech:%'",
+    )
+  ) {
+    times = db
+      .all<{due: number}>(
+        "SELECT due FROM scheduled_events WHERE kind='tech_burst' AND id LIKE 'tech:%' ORDER BY due",
+      )
+      .map(r => r.due);
+  } else {
+    times = commandContext.preview
+      ? techSchedulePreview(roster.length)
+      : techSchedule(roster.length);
+    if (oldPlan) {
+      db.exec(
+        "UPDATE command_objects SET status='superseded' WHERE id=?",
+        oldPlan.id,
+      );
+    }
+    db.exec(
+      "UPDATE scheduled_events SET status='cancelled' WHERE kind='tech_burst' AND status='pending' AND (id LIKE 'tech:%' OR id LIKE 'plan-tech:%')",
+    );
+  }
+  const planId =
+    oldPlan && existing && stableJson(existing.roster) === stableJson(roster)
+      ? oldPlan.id
+      : saveCommandObject(
+          commandContext,
+          'start-plan',
+          {roster, times},
+          'START',
+        );
+  for (const [kind, due] of [
+    ['apocalypse', TIMES.apocalypse],
+    ['transfer_start', TIMES.transfer],
+    ['hunt_cutoff', TIMES.cutoff],
+    ['regulation_end', TIMES.end],
+  ] as const) {
+    if (
+      !db.one<Record<string, SqlStorageValue>>(
+        'SELECT id FROM scheduled_events WHERE id=?',
+        kind,
+      )
+    ) {
+      engine.schedule(kind, kind, 'game', due, 0);
+    }
+  }
+  if (!existing || stableJson(existing.roster) !== stableJson(roster)) {
+    if (
+      !db.one<Record<string, SqlStorageValue>>(
+        "SELECT id FROM scheduled_events WHERE kind='tech_burst' AND status='pending' AND id LIKE 'tech:%'",
+      )
+    ) {
+      for (const [index, due] of times.entries()) {
+        engine.schedule(
+          `plan-tech:${planId}:${index}`,
+          'tech_burst',
+          'game',
+          due,
+          2,
+        );
+      }
+    }
+  }
+  commandContext.notes.push(
+    `技术爆炸${times.length}次；相同名单重新锁定保留原计划，名单变化生成新版本并保全旧版。UTC管理任务不会自动顺延。`,
+  );
+}
+
+/** Supersede unsent timing notices while retaining copied/sent evidence and the original change. */
+function publishMatchTimeChange(
+  commandContext: CommandContext,
+  release: boolean,
+  time: number | null,
+  old: number | null,
+): void {
+  const engine = commandContext.engine;
+  const db = engine.db;
+
+  const title = release ? '统一发码时间' : '统一开赛时间';
+  const pending = db.all<{id: string}>(
+    "SELECT id FROM notice_queue WHERE title=? AND status<>'sent'",
+    title,
+  );
+  for (const row of pending) {
+    db.exec(
+      "UPDATE notice_queue SET error='安排已被替代，请使用最新通知',status='error',version=version+1 WHERE id=?",
+      row.id,
+    );
+  }
+  engine.notice(
+    `judge:${commandContext.id}:${commandContext.work}`,
+    'group',
+    title,
+    time === null
+      ? `${title}已取消，新的时间将另行通知。`
+      : `${title}：${new Date(time).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}（北京时间）。${release ? '' : `\n${START_COUNTDOWN_COPY}`}`,
+  );
+  recordChange(
+    commandContext,
+    title,
+    old === null ? '未锁定' : new Date(old).toISOString(),
+    time === null ? '已撤销，冻结仍有效' : new Date(time).toISOString(),
+  );
+  commandContext.notes.push(
+    '节点到达后不可修改；已复制和已发送事实保留，请人工更正QQ公告。提交后重排Alarm。',
+  );
+}
+
 /** 处理尚未到达的赛程锁定与撤销，保留首次冻结及未来计划的校验边界。 */
 export function matchTime(
   commandContext: CommandContext,
@@ -87,38 +258,7 @@ export function matchTime(
         : matchState.phase === 'outfitting' && matchState.started_at === null,
       '当前不能锁定此节点',
     );
-    const roster = db.roster();
-    requireCommandArgument(roster.length >= 2, '至少需要两名正式玩家');
-    for (const id of roster) {
-      selectTargets(commandContext, id);
-      const flight = db.flight(id);
-      const homeworld = db.home(id);
-      requireCommandArgument(
-        release
-          ? flight.status === 'staged' &&
-              flight.departed !== null &&
-              flight.staged !== null &&
-              !flight.code_id &&
-              homeworld?.status === 'verified'
-          : flight.status === 'ready' &&
-              flight.ready !== null &&
-              !!flight.code_id &&
-              !!db.one<Record<string, SqlStorageValue>>(
-                "SELECT id FROM sighting_codes WHERE id=? AND player_id=? AND status='reserved'",
-                flight.code_id,
-                id,
-              ),
-        '正式玩家尚未完成准备：' + id,
-      );
-    }
-    if (release) {
-      requireCommandArgument(
-        db.one<{n: number}>('SELECT COUNT(*) n FROM sighting_codes')!.n +
-          roster.length <=
-          350,
-        '首航码容量不足',
-      );
-    }
+    const roster = readyMatchRoster(commandContext, release);
     if (release) {
       db.exec(
         "INSERT OR IGNORE INTO settings(key,value) VALUES('parameters_frozen','true')",
@@ -150,116 +290,10 @@ export function matchTime(
       engine.schedule(node, node, 'utc', time, 0);
     }
     if (!release) {
-      const oldPlan = db.one<SavedCommandObject>(
-        "SELECT * FROM command_objects WHERE kind='start-plan' AND status='active' ORDER BY created_utc DESC LIMIT 1",
-      );
-      const existing = oldPlan
-        ? (parseJson(oldPlan.data) as {roster: string[]; times: number[]})
-        : null;
-      let times: number[];
-      if (existing && stableJson(existing.roster) === stableJson(roster)) {
-        times = existing.times;
-      } else if (
-        !oldPlan &&
-        db.one<Record<string, SqlStorageValue>>(
-          "SELECT id FROM scheduled_events WHERE kind='tech_burst' AND id LIKE 'tech:%'",
-        )
-      ) {
-        times = db
-          .all<{due: number}>(
-            "SELECT due FROM scheduled_events WHERE kind='tech_burst' AND id LIKE 'tech:%' ORDER BY due",
-          )
-          .map(r => r.due);
-      } else {
-        times = commandContext.preview
-          ? techSchedulePreview(roster.length)
-          : techSchedule(roster.length);
-        if (oldPlan) {
-          db.exec(
-            "UPDATE command_objects SET status='superseded' WHERE id=?",
-            oldPlan.id,
-          );
-        }
-        db.exec(
-          "UPDATE scheduled_events SET status='cancelled' WHERE kind='tech_burst' AND status='pending' AND (id LIKE 'tech:%' OR id LIKE 'plan-tech:%')",
-        );
-      }
-      const planId =
-        oldPlan &&
-        existing &&
-        stableJson(existing.roster) === stableJson(roster)
-          ? oldPlan.id
-          : saveCommandObject(
-              commandContext,
-              'start-plan',
-              {roster, times},
-              'START',
-            );
-      for (const [kind, due] of [
-        ['apocalypse', TIMES.apocalypse],
-        ['transfer_start', TIMES.transfer],
-        ['hunt_cutoff', TIMES.cutoff],
-        ['regulation_end', TIMES.end],
-      ] as const) {
-        if (
-          !db.one<Record<string, SqlStorageValue>>(
-            'SELECT id FROM scheduled_events WHERE id=?',
-            kind,
-          )
-        ) {
-          engine.schedule(kind, kind, 'game', due, 0);
-        }
-      }
-      if (!existing || stableJson(existing.roster) !== stableJson(roster)) {
-        if (
-          !db.one<Record<string, SqlStorageValue>>(
-            "SELECT id FROM scheduled_events WHERE kind='tech_burst' AND status='pending' AND id LIKE 'tech:%'",
-          )
-        ) {
-          for (const [index, due] of times.entries()) {
-            engine.schedule(
-              `plan-tech:${planId}:${index}`,
-              'tech_burst',
-              'game',
-              due,
-              2,
-            );
-          }
-        }
-      }
-      commandContext.notes.push(
-        `技术爆炸${times.length}次；相同名单重新锁定保留原计划，名单变化生成新版本并保全旧版。UTC管理任务不会自动顺延。`,
-      );
+      prepareMatchStartPlan(commandContext, roster);
     }
   }
-  const title = release ? '统一发码时间' : '统一开赛时间';
-  const pending = db.all<{id: string}>(
-    "SELECT id FROM notice_queue WHERE title=? AND status<>'sent'",
-    title,
-  );
-  for (const row of pending) {
-    db.exec(
-      "UPDATE notice_queue SET error='安排已被替代，请使用最新通知',status='error',version=version+1 WHERE id=?",
-      row.id,
-    );
-  }
-  engine.notice(
-    `judge:${commandContext.id}:${commandContext.work}`,
-    'group',
-    title,
-    time === null
-      ? `${title}已取消，新的时间将另行通知。`
-      : `${title}：${new Date(time).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}（北京时间）。${release ? '' : `\n${START_COUNTDOWN_COPY}`}`,
-  );
-  recordChange(
-    commandContext,
-    title,
-    old === null ? '未锁定' : new Date(old).toISOString(),
-    time === null ? '已撤销，冻结仍有效' : new Date(time).toISOString(),
-  );
-  commandContext.notes.push(
-    '节点到达后不可修改；已复制和已发送事实保留，请人工更正QQ公告。提交后重排Alarm。',
-  );
+  publishMatchTimeChange(commandContext, release, time, old);
 }
 
 function techSchedulePreview(n: number): number[] {

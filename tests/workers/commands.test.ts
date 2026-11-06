@@ -128,6 +128,62 @@ beforeEach(async () => {
   communications = await login('J02');
   player = await login('C01');
 });
+it('preserves the original secret schedule and reserved codes when relocking the same roster', async () => {
+  await runInDurableObject(stub(), async (_instance, state) => {
+    const engine = new Engine(new Store(state.storage), bindings);
+    engine.now = () => now;
+    const prepared = await engine.prepareCode();
+    engine.db.tx(() => {
+      for (const id of ['C01', 'C02', 'C03', 'C04']) {
+        engine.issue(id, `prepare-${id}`, prepared);
+      }
+      engine.db.exec("UPDATE flights SET status='ready',ready=?", now);
+      engine.db.exec(
+        "UPDATE matches SET phase='outfitting',release_at=?",
+        now - 1000,
+      );
+    });
+  });
+  const original = await plan(
+    `/match arm-start at ${new Date(now + 60_000).toISOString()}`,
+  );
+  expect((await confirm(original.token)).status).toBe(200);
+  const schedule = await sql(
+    "SELECT * FROM command_objects WHERE kind='start-plan' ORDER BY id",
+  );
+  const events = await sql(
+    "SELECT id,kind,clock,due,status FROM scheduled_events WHERE clock='game' ORDER BY id",
+  );
+  const codes = await sql('SELECT * FROM sighting_codes ORDER BY id');
+  expect(schedule).toHaveLength(1);
+  expect(events.some(event => event.kind === 'tech_burst')).toBe(true);
+  expect(
+    (await confirm((await plan('/match cancel-start')).token)).status,
+  ).toBe(200);
+  expect(await sql('SELECT phase,started_at FROM matches')).toEqual([
+    {phase: 'outfitting', started_at: null},
+  ]);
+  now += 1000;
+  const relocked = await plan(
+    `/match arm-start at ${new Date(now + 120_000).toISOString()}`,
+  );
+  expect((await confirm(relocked.token)).status).toBe(200);
+  expect(
+    await sql(
+      "SELECT * FROM command_objects WHERE kind='start-plan' ORDER BY id",
+    ),
+  ).toEqual(schedule);
+  expect(
+    await sql(
+      "SELECT id,kind,clock,due,status FROM scheduled_events WHERE clock='game' ORDER BY id",
+    ),
+  ).toEqual(events);
+  expect(await sql('SELECT * FROM sighting_codes ORDER BY id')).toEqual(codes);
+  expect(await sql('SELECT status,ready FROM flights')).toEqual(
+    Array.from({length: 4}, () => ({status: 'ready', ready: now - 1000})),
+  );
+});
+
 it('rejects players and checks expanded permissions; communications can query and send', async () => {
   expect(
     (await call('/snapshot?route=/judge/commands', undefined, communications))
