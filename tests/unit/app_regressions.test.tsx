@@ -8,7 +8,7 @@ import type {DataSource, Snapshot} from '@darkforest/contracts';
 import {homeworldSubmission} from '../../packages/contracts/src/backend';
 import {AppProvider, useApp} from '../../apps/web/src/state';
 import {PlayerPages} from '../../apps/web/src/pages/player';
-import {HttpSource} from '../../apps/web/src/data/http';
+import {ApiError, HttpSource} from '../../apps/web/src/data/http';
 import {MockSource} from '../../apps/web/src/dev/mock_source';
 
 let root: Root | undefined;
@@ -36,6 +36,19 @@ async function mount(source: DataSource, page = false) {
         }),
       );
     }),
+  );
+}
+async function changeEpoch(source: DataSource, epoch: number) {
+  await act(
+    promiseStub(() =>
+      root!.render(
+        createElement(AppProvider, {
+          source,
+          epoch,
+          children: createElement(Probe),
+        }),
+      ),
+    ),
   );
 }
 beforeEach(() => {
@@ -336,6 +349,94 @@ describe('actual React state and forms', () => {
     ]);
     expect(latest.data.eventCursor).toBe('second-page');
   });
+
+  it.each(['complete', 'rejected'] as const)(
+    'discards a %s operation after its follow-up refresh crosses an authorization epoch',
+    async outcome => {
+      const source = new MockSource();
+      const fixture = await source.read('/player');
+      const read = vi
+        .spyOn(source, 'read')
+        .mockImplementation(promiseStub(() => structuredClone(fixture)));
+      vi.spyOn(source, 'submit').mockImplementation(
+        promiseStub(operation => {
+          if (outcome === 'rejected') {
+            throw new ApiError('旧账号的操作被拒绝', 409);
+          }
+          return {
+            requestId: operation.requestId,
+            status: 'complete',
+            title: '旧账号的操作结果',
+            message: '',
+          };
+        }),
+      );
+      await mount(source);
+      let finishRefresh!: (value: Snapshot) => void;
+      read.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishRefresh = resolve;
+          }),
+      );
+      let operation!: ReturnType<typeof latest.operate>;
+      await act(
+        promiseStub(() => {
+          operation = latest.operate('/player/nickname', {nickname: '原草稿'});
+        }),
+      );
+      expect(latest.busy).toBe(true);
+      await changeEpoch(source, 1);
+      let response: Awaited<typeof operation>;
+      await act(async () => {
+        finishRefresh(structuredClone(fixture));
+        response = await operation;
+      });
+      expect(response).toBeUndefined();
+      expect(latest.error).toBe('');
+      expect(latest.result).toBeNull();
+      expect(latest.busy).toBe(false);
+    },
+  );
+
+  it.each(['complete', 'rejected'] as const)(
+    'ignores a delayed %s logout after an authorization epoch change',
+    async outcome => {
+      const source = new MockSource();
+      const fixture = await source.read('/player');
+      vi.spyOn(source, 'read').mockImplementation(
+        promiseStub(() => structuredClone(fixture)),
+      );
+      let finish!: () => void;
+      let fail!: (error: Error) => void;
+      vi.spyOn(source, 'logout').mockImplementation(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            finish = resolve;
+            fail = reject;
+          }),
+      );
+      await mount(source);
+      let logout!: Promise<void>;
+      await act(
+        promiseStub(() => {
+          logout = latest.logout();
+        }),
+      );
+      await changeEpoch(source, 1);
+      await act(async () => {
+        if (outcome === 'complete') {
+          finish();
+        } else {
+          fail(new Error('旧账号退出失败'));
+        }
+        await logout;
+      });
+      expect(latest.route).toBe('/player/homeworld');
+      expect(latest.data.session?.id).toBe(fixture.session!.id);
+      expect(latest.error).toBe('');
+    },
+  );
 
   it('ignores an operation response after the provider authorization epoch changes', async () => {
     const source = new MockSource();

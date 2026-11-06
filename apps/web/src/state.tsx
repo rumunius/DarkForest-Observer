@@ -282,6 +282,9 @@ export function AppProvider({
           setPending(null);
           timelineKey.current = '';
           await refresh();
+          if (mine !== generation.current) {
+            return;
+          }
         }
         return response;
       } catch (error) {
@@ -293,6 +296,9 @@ export function AppProvider({
           persistPending(null);
           setPending(null);
           await refresh();
+          if (mine !== generation.current) {
+            return;
+          }
         }
         setError(
           error instanceof Error
@@ -309,8 +315,12 @@ export function AppProvider({
     [source, refresh, persistPending, storageKey],
   );
   const logout = async () => {
+    const mine = generation.current;
     try {
       await source.logout();
+      if (mine !== generation.current) {
+        return;
+      }
       generation.current++;
       timelineKey.current = '';
       sequence.current++;
@@ -320,6 +330,9 @@ export function AppProvider({
       persistPending(null);
       navigate('/');
     } catch (e) {
+      if (mine !== generation.current) {
+        return;
+      }
       setError(e instanceof Error ? e.message : '退出登录未完成，请重试。');
     }
   };
