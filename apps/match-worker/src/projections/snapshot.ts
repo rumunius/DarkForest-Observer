@@ -31,6 +31,7 @@ import {
   judgeRecords,
   noticeProjection,
   type JudgeCollection,
+  type NoticeRow,
 } from './judge_records';
 import {TIMES} from '../domain/rules';
 import {readCommandHistory} from '../services/commands';
@@ -305,7 +306,7 @@ function judgeProjection(engine: Engine, actor: Actor): JudgeState {
             "SELECT COUNT(*) AS count FROM notice_queue WHERE status!='sent'",
           )!.count,
           noticeTasks: db
-            .all<Record<string, SqlStorageValue>>(
+            .all<NoticeRow>(
               "SELECT * FROM notice_queue WHERE status!='sent' ORDER BY priority DESC,ordering_seq ASC LIMIT 100",
             )
             .map(noticeProjection),
