@@ -264,4 +264,123 @@ describe('actual React state and forms', () => {
     expect(latest.route).toBe('/player/messages');
     expect(latest.data.match!.revision).toBe(20);
   });
+
+  it('discards history pages belonging to a route that is no longer active', async () => {
+    const source = new MockSource();
+    const fixture = await source.read('/player');
+    const event = fixture.events[0]!;
+    fixture.events = [{...event, id: 'current'}];
+    fixture.eventCursor = 'older-page';
+    vi.spyOn(source, 'read').mockImplementation(
+      promiseStub(() => structuredClone(fixture)),
+    );
+    let finish!: (page: {
+      items: Snapshot['events'];
+      nextCursor: string | null;
+    }) => void;
+    const page = new Promise<{
+      items: Snapshot['events'];
+      nextCursor: string | null;
+    }>(resolve => {
+      finish = resolve;
+    });
+    Object.assign(source, {eventsPage: vi.fn(() => page)});
+    await mount(source);
+    let loading!: Promise<void>;
+    await act(
+      promiseStub(() => {
+        loading = latest.loadEarlierEvents();
+      }),
+    );
+    await act(promiseStub(() => latest.go('/player/messages')));
+    await act(async () => {
+      finish({items: [{...event, id: 'stale-history'}], nextCursor: null});
+      await loading;
+    });
+    expect(latest.data.events.map(item => item.id)).toEqual(['current']);
+    expect(latest.data.eventCursor).toBe('older-page');
+  });
+
+  it('preserves already loaded history and deduplicates it on snapshot refresh', async () => {
+    const source = new MockSource();
+    const fixture = await source.read('/player');
+    const event = fixture.events[0]!;
+    fixture.events = [{...event, id: 'current'}];
+    fixture.eventCursor = 'first-page';
+    vi.spyOn(source, 'read').mockImplementation(
+      promiseStub(() => structuredClone(fixture)),
+    );
+    Object.assign(source, {
+      eventsPage: vi.fn(
+        promiseStub(() => ({
+          items: [
+            {...event, id: 'current'},
+            {...event, id: 'older'},
+          ],
+          nextCursor: 'second-page',
+        })),
+      ),
+    });
+    await mount(source);
+    await act(async () => latest.loadEarlierEvents());
+    fixture.events = [
+      {...event, id: 'newest'},
+      {...event, id: 'current'},
+    ];
+    fixture.match!.revision++;
+    await act(async () => latest.refresh());
+    expect(latest.data.events.map(item => item.id)).toEqual([
+      'newest',
+      'current',
+      'older',
+    ]);
+    expect(latest.data.eventCursor).toBe('second-page');
+  });
+
+  it('ignores an operation response after the provider authorization epoch changes', async () => {
+    const source = new MockSource();
+    const fixture = await source.read('/player');
+    vi.spyOn(source, 'read').mockImplementation(
+      promiseStub(() => structuredClone(fixture)),
+    );
+    let finish!: (result: Awaited<ReturnType<DataSource['submit']>>) => void;
+    vi.spyOn(source, 'submit').mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    await mount(source);
+    let operation!: ReturnType<typeof latest.operate>;
+    await act(
+      promiseStub(() => {
+        operation = latest.operate('/player/nickname', {nickname: '原草稿'});
+      }),
+    );
+    expect(latest.busy).toBe(true);
+    await act(
+      promiseStub(() =>
+        root!.render(
+          createElement(AppProvider, {
+            source,
+            epoch: 1,
+            children: createElement(Probe),
+          }),
+        ),
+      ),
+    );
+    await act(async () => {
+      finish({
+        requestId: 'old-request',
+        status: 'complete',
+        title: '旧操作',
+        message: '',
+      });
+      await operation;
+    });
+    expect(latest.result).toBeNull();
+    expect(latest.pending).toBeNull();
+    expect(latest.busy).toBe(false);
+    expect(sessionStorage.getItem('darkforest.pending-operation')).toBeNull();
+  });
 });
