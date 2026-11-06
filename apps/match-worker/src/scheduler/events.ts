@@ -8,7 +8,13 @@ import {
   clearingCopy,
   techBurstCopy,
 } from '../../../../packages/contracts/src/message_copy';
-import {Fault, requireThat, type Scheduled} from '../storage/store';
+import {
+  Fault,
+  requireThat,
+  type Match,
+  type Scheduled,
+  type Store,
+} from '../storage/store';
 import type {Engine} from '../services/engine';
 import {
   autoFinish,
@@ -142,6 +148,17 @@ export function settleDue(engine: Engine): void {
   }
   throw new Fault(503, 'EVENT_BACKLOG', '正在处理到期赛事事件，请稍后再试。');
 }
+// Capture the authoritative state and clocks once for the synchronous settlement handlers.
+interface EventSettlement {
+  engine: Engine;
+  db: Store;
+  event: Scheduled;
+  matchState: Match;
+  payload: Record<string, unknown>;
+  game: number;
+  utc: number;
+}
+
 function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
   const db = engine.db;
   const matchState = db.match();
@@ -152,6 +169,15 @@ function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
       : event.kind === 'match_start'
         ? 0
         : engine.game(utc);
+  const settlement: EventSettlement = {
+    engine,
+    db,
+    event,
+    matchState,
+    payload,
+    game,
+    utc,
+  };
   switch (event.kind) {
     case 'judge_command_task':
     case 'judge_command_job':
@@ -177,62 +203,9 @@ function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
       );
       engine.notice(event.id, 'group', '做好准备', PREPARE_COPY, game);
       break;
-    case 'match_start': {
-      db.exec(
-        "INSERT OR IGNORE INTO participation_history SELECT m.account_id,m.local_id,? FROM memberships m JOIN roster_members r ON r.player_id=m.local_id WHERE m.kind='player' AND m.state='bound'",
-        engine.now(),
-      );
-      const roster = db.all<{id: string}>(
-        "SELECT id FROM players WHERE entry_status='registered' AND id IN (SELECT player_id FROM roster_members)",
-      );
-      requireThat(
-        matchState.phase === 'start_countdown' && roster.length >= 2,
-        'START_STATE_CONFLICT',
-        '开赛状态需要裁判核查。',
-      );
-      for (const rosterPlayer of roster) {
-        const flight = db.flight(rosterPlayer.id);
-        requireThat(
-          flight.status === 'ready' && flight.code_id && flight.ready !== null,
-          'ROSTER_NOT_READY',
-          '仍有玩家未完成穿戴。',
-        );
-        requireThat(
-          db.all<Record<string, SqlStorageValue>>(
-            "UPDATE sighting_codes SET status='active',activated_utc=?,activated_game=0 WHERE id=? AND player_id=? AND status='reserved' RETURNING id",
-            utc,
-            flight.code_id,
-            rosterPlayer.id,
-          ).length === 1,
-          'CODE_STATE_CONFLICT',
-          '手环配置需要裁判核查。',
-        );
-        db.exec(
-          "UPDATE flights SET status='active' WHERE player_id=?",
-          rosterPlayer.id,
-        );
-      }
-      db.exec("UPDATE matches SET phase='forest',start_settled=?", utc);
-      logEvent(
-        engine,
-        event.id,
-        'stage',
-        '比赛开始',
-        '全部文明统一出航，比赛计时开始。',
-        'public',
-        roster.map(p => p.id),
-        0,
-        utc,
-      );
-      engine.notice(
-        event.id,
-        'group',
-        '比赛开始',
-        '全部文明统一出航，比赛计时开始。',
-        0,
-      );
+    case 'match_start':
+      settleMatchStart(settlement);
       break;
-    }
     case 'respawn_timeout': {
       const player = text(payload.player, 16);
       const flight = db.flight(player);
@@ -246,107 +219,15 @@ function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
       autoFinish(engine, game, utc, event.id);
       break;
     }
-    case 'tech_burst': {
-      const candidates = db.all<{id: string}>(
-        "SELECT p.id FROM players p JOIN flights f ON f.player_id=p.id JOIN homeworlds h ON h.player_id=p.id WHERE p.entry_status='registered' AND p.id IN (SELECT player_id FROM roster_members) AND f.status!='eliminated' AND p.tech=0 AND h.status='verified' AND h.destroyed_game IS NULL ORDER BY p.id",
-      );
-      const target = candidates.length
-        ? candidates[uniformInt(candidates.length)]!.id
-        : null;
-      if (target) {
-        db.exec('UPDATE players SET tech=1,photons=1 WHERE id=?', target);
-        logEvent(
-          engine,
-          event.id,
-          'tech',
-          '技术爆炸',
-          techBurstCopy(engine.identity(target)),
-          'personal',
-          [target],
-          game,
-          utc,
-          target,
-          null,
-          target,
-        );
-        engine.notice(
-          event.id,
-          target,
-          '技术爆炸',
-          techBurstCopy(engine.identity(target)),
-          game,
-        );
-      } else {
-        engine.audit(
-          'system',
-          'tech_burst_empty',
-          event.id,
-          '没有符合条件的文明',
-        );
-      }
+    case 'tech_burst':
+      settleTechBurst(settlement);
       break;
-    }
-    case 'song_visit': {
-      const code = coordinate(payload.code);
-      const target = db.officialHome(code, true);
-      const hit = target
-        ? destroyHome(engine, target.player_id, event.id, game, utc)
-        : false;
-      const body = clearingCopy(
-        'singer',
-        code,
-        hit ? engine.identity(target!.player_id) : undefined,
-      );
-      logEvent(
-        engine,
-        event.id,
-        'singer',
-        '歌者清理',
-        body,
-        'public',
-        hit ? [target!.player_id] : [],
-        game,
-        utc,
-        null,
-        code,
-      );
-      db.exec(
-        "UPDATE broadcasts SET singer_status='settled' WHERE id=?",
-        String(payload.broadcast),
-      );
-      engine.notice(event.id, 'group', '歌者清理', body, game);
-      autoFinish(engine, game, utc, event.id);
+    case 'song_visit':
+      settleSongVisit(settlement);
       break;
-    }
-    case 'apocalypse': {
-      db.exec("UPDATE matches SET phase='apocalypse'");
-      const homes = db.all<{player_id: string}>(
-        "SELECT player_id FROM homeworlds WHERE status='verified' AND destroyed_game IS NULL AND player_id IN (SELECT player_id FROM roster_members)",
-      );
-      for (const h of homes) {
-        destroyHome(engine, h.player_id, event.id, game, utc);
-      }
-      const inactive = db.all<{id: string}>(
-        "SELECT p.id FROM players p JOIN flights f ON f.player_id=p.id WHERE p.entry_status='registered' AND p.id IN (SELECT player_id FROM roster_members) AND f.status NOT IN ('active','eliminated')",
-      );
-      for (const p of inactive) {
-        eliminate(engine, p.id, 'apocalypse', event.id, game, utc);
-      }
-      logEvent(
-        engine,
-        event.id,
-        'stage',
-        '宇宙末日',
-        APOCALYPSE_COPY,
-        'public',
-        [],
-        game,
-        utc,
-      );
-      engine.notice(event.id, 'group', '宇宙末日', APOCALYPSE_COPY, game);
-      autoFinish(engine, game, utc, event.id);
+    case 'apocalypse':
+      settleApocalypse(settlement);
       break;
-    }
     case 'transfer_start':
       db.exec("UPDATE matches SET phase='transfer'");
       logEvent(
@@ -363,32 +244,7 @@ function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
       engine.notice(event.id, 'group', '前往终局圈', TRANSFER_COPY, game);
       break;
     case 'hunt_cutoff':
-      db.exec(
-        "UPDATE matches SET phase='hunt',paused_at=?,pause_reason='hunt_review'",
-        utc,
-      );
-      db.exec(
-        "INSERT INTO clock_pauses(opened,reason,actor) VALUES(?,'hunt_review','system')",
-        utc,
-      );
-      logEvent(
-        engine,
-        event.id,
-        'stage',
-        '终局资格确认中',
-        HUNT_REVIEW_COPY,
-        'public',
-        [],
-        game,
-        utc,
-      );
-      engine.notice(
-        event.id,
-        'group',
-        '终局资格确认中',
-        HUNT_REVIEW_COPY,
-        game,
-      );
+      settleHuntCutoff(settlement);
       break;
     case 'regulation_end':
       finish(engine, 'regulation', game, utc, event.id);
@@ -413,6 +269,187 @@ function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
       throw new Error('UNKNOWN_SCHEDULED_EVENT');
   }
 }
+
+function settleMatchStart(settlement: EventSettlement): void {
+  const {db, engine, event, utc, matchState} = settlement;
+  db.exec(
+    "INSERT OR IGNORE INTO participation_history SELECT m.account_id,m.local_id,? FROM memberships m JOIN roster_members r ON r.player_id=m.local_id WHERE m.kind='player' AND m.state='bound'",
+    engine.now(),
+  );
+  const roster = db.all<{id: string}>(
+    "SELECT id FROM players WHERE entry_status='registered' AND id IN (SELECT player_id FROM roster_members)",
+  );
+  requireThat(
+    matchState.phase === 'start_countdown' && roster.length >= 2,
+    'START_STATE_CONFLICT',
+    '开赛状态需要裁判核查。',
+  );
+  for (const rosterPlayer of roster) {
+    const flight = db.flight(rosterPlayer.id);
+    requireThat(
+      flight.status === 'ready' && flight.code_id && flight.ready !== null,
+      'ROSTER_NOT_READY',
+      '仍有玩家未完成穿戴。',
+    );
+    requireThat(
+      db.all<Record<string, SqlStorageValue>>(
+        "UPDATE sighting_codes SET status='active',activated_utc=?,activated_game=0 WHERE id=? AND player_id=? AND status='reserved' RETURNING id",
+        utc,
+        flight.code_id,
+        rosterPlayer.id,
+      ).length === 1,
+      'CODE_STATE_CONFLICT',
+      '手环配置需要裁判核查。',
+    );
+    db.exec(
+      "UPDATE flights SET status='active' WHERE player_id=?",
+      rosterPlayer.id,
+    );
+  }
+  db.exec("UPDATE matches SET phase='forest',start_settled=?", utc);
+  logEvent(
+    engine,
+    event.id,
+    'stage',
+    '比赛开始',
+    '全部文明统一出航，比赛计时开始。',
+    'public',
+    roster.map(p => p.id),
+    0,
+    utc,
+  );
+  engine.notice(
+    event.id,
+    'group',
+    '比赛开始',
+    '全部文明统一出航，比赛计时开始。',
+    0,
+  );
+}
+
+function settleTechBurst(settlement: EventSettlement): void {
+  const {db, engine, event, game, utc} = settlement;
+  const candidates = db.all<{id: string}>(
+    "SELECT p.id FROM players p JOIN flights f ON f.player_id=p.id JOIN homeworlds h ON h.player_id=p.id WHERE p.entry_status='registered' AND p.id IN (SELECT player_id FROM roster_members) AND f.status!='eliminated' AND p.tech=0 AND h.status='verified' AND h.destroyed_game IS NULL ORDER BY p.id",
+  );
+  const target = candidates.length
+    ? candidates[uniformInt(candidates.length)]!.id
+    : null;
+  if (target) {
+    db.exec('UPDATE players SET tech=1,photons=1 WHERE id=?', target);
+    logEvent(
+      engine,
+      event.id,
+      'tech',
+      '技术爆炸',
+      techBurstCopy(engine.identity(target)),
+      'personal',
+      [target],
+      game,
+      utc,
+      target,
+      null,
+      target,
+    );
+    engine.notice(
+      event.id,
+      target,
+      '技术爆炸',
+      techBurstCopy(engine.identity(target)),
+      game,
+    );
+  } else {
+    engine.audit('system', 'tech_burst_empty', event.id, '没有符合条件的文明');
+  }
+}
+
+function settleSongVisit(settlement: EventSettlement): void {
+  const {db, engine, event, game, utc, payload} = settlement;
+  const code = coordinate(payload.code);
+  const target = db.officialHome(code, true);
+  const hit = target
+    ? destroyHome(engine, target.player_id, event.id, game, utc)
+    : false;
+  const body = clearingCopy(
+    'singer',
+    code,
+    hit ? engine.identity(target!.player_id) : undefined,
+  );
+  logEvent(
+    engine,
+    event.id,
+    'singer',
+    '歌者清理',
+    body,
+    'public',
+    hit ? [target!.player_id] : [],
+    game,
+    utc,
+    null,
+    code,
+  );
+  db.exec(
+    "UPDATE broadcasts SET singer_status='settled' WHERE id=?",
+    String(payload.broadcast),
+  );
+  engine.notice(event.id, 'group', '歌者清理', body, game);
+  autoFinish(engine, game, utc, event.id);
+}
+
+function settleApocalypse(settlement: EventSettlement): void {
+  const {db, engine, event, game, utc} = settlement;
+  db.exec("UPDATE matches SET phase='apocalypse'");
+  const homes = db.all<{player_id: string}>(
+    "SELECT player_id FROM homeworlds WHERE status='verified' AND destroyed_game IS NULL AND player_id IN (SELECT player_id FROM roster_members)",
+  );
+  for (const h of homes) {
+    destroyHome(engine, h.player_id, event.id, game, utc);
+  }
+  const inactive = db.all<{id: string}>(
+    "SELECT p.id FROM players p JOIN flights f ON f.player_id=p.id WHERE p.entry_status='registered' AND p.id IN (SELECT player_id FROM roster_members) AND f.status NOT IN ('active','eliminated')",
+  );
+  for (const p of inactive) {
+    eliminate(engine, p.id, 'apocalypse', event.id, game, utc);
+  }
+  logEvent(
+    engine,
+    event.id,
+    'stage',
+    '宇宙末日',
+    APOCALYPSE_COPY,
+    'public',
+    [],
+    game,
+    utc,
+  );
+  engine.notice(event.id, 'group', '宇宙末日', APOCALYPSE_COPY, game);
+  autoFinish(engine, game, utc, event.id);
+}
+
+function settleHuntCutoff(settlement: EventSettlement): void {
+  const {db, engine, event, game, utc} = settlement;
+  db.exec(
+    "UPDATE matches SET phase='hunt',paused_at=?,pause_reason='hunt_review'",
+    utc,
+  );
+  db.exec(
+    "INSERT INTO clock_pauses(opened,reason,actor) VALUES(?,'hunt_review','system')",
+    utc,
+  );
+  logEvent(
+    engine,
+    event.id,
+    'stage',
+    '终局资格确认中',
+    HUNT_REVIEW_COPY,
+    'public',
+    [],
+    game,
+    utc,
+  );
+  engine.notice(event.id, 'group', '终局资格确认中', HUNT_REVIEW_COPY, game);
+}
+
 /** 依据持久事件队列重新登记最近Alarm，不改变事件ID或重新抽取随机计划。 */
 export async function rearm(engine: Engine): Promise<void> {
   const db = engine.db;
