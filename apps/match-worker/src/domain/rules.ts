@@ -16,18 +16,14 @@ export const TIMES = {
 };
 /** 校验合法手环分组并归一化两臂顺序；同臂排列不影响码身份。 */
 export function normalizeArms(leftArm: unknown, rightArm: unknown): string {
-  if (
-    !Array.isArray(leftArm) ||
-    !Array.isArray(rightArm) ||
-    !validArms([leftArm, rightArm] as Arms)
-  ) {
+  const arms = [leftArm, rightArm];
+  if (!validArms(arms)) {
     throw new ContractError('手环分组不合法。');
   }
-  const masks = [leftArm, rightArm]
+  const masks = arms
     .map(arm =>
       arm.reduce(
-        (mask: number, color: unknown) =>
-          mask | (1 << COLORS.findIndex(c => c.id === color)),
+        (mask, color) => mask | (1 << COLORS.findIndex(c => c.id === color)),
         0,
       ),
     )

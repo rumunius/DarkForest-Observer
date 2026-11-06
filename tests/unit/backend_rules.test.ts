@@ -15,6 +15,12 @@ import {
 } from '../../packages/contracts/src/backend';
 
 describe('backend contracts and rules', () => {
+  it('rejects missing bracelets in sparse groups instead of normalizing them to a smaller code', () => {
+    const leftArm = ['BK', 'WH'];
+    Reflect.deleteProperty(leftArm, 1);
+    expect(() => normalizeArms(leftArm, ['GY'])).toThrow();
+  });
+
   it('rejects malformed mask pairs instead of silently coercing them to colors', () => {
     for (const key of [
       '',

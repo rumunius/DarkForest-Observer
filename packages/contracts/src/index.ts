@@ -400,13 +400,21 @@ export const RULES = {
   cutoffMs: 98 * 60000,
   observerWaitMs: 180000,
 } as const;
-/** 检查颜色唯一性及合法分组数量，不推断目标文明或攻击结果。 */
-export function validArms(arms: Arms): boolean {
-  const all = arms.flat();
-  const shape = arms
-    .map(a => a.length)
-    .sort()
-    .join('+');
+/** 验证未知输入的双臂结构、颜色与数量；合法时收窄类型，不推断攻击结果。 */
+export function validArms(arms: unknown): arms is Arms {
+  if (!Array.isArray(arms) || arms.length !== 2) {
+    return false;
+  }
+  const pair: unknown[] = arms;
+  const [leftArm, rightArm] = pair;
+  if (!Array.isArray(leftArm) || !Array.isArray(rightArm)) {
+    return false;
+  }
+  const shape = [leftArm.length, rightArm.length].sort().join('+');
+  // Array.from retains missing elements as undefined so sparse groups cannot lose bracelets.
+  const all = Array.from<unknown>(leftArm).concat(
+    Array.from<unknown>(rightArm),
+  );
   return (
     ['1+2', '2+2', '1+3'].includes(shape) &&
     new Set(all).size === all.length &&

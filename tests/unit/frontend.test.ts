@@ -124,6 +124,30 @@ describe('frontend input and authorized disclosure', () => {
     expect(validArms([a, b])).toBe(true);
     expect(validArms([b, [...a].reverse()])).toBe(true);
   });
+  it('rejects malformed unknown bracelet groups without throwing', () => {
+    const sparseArm = ['BK', 'WH'];
+    Reflect.deleteProperty(sparseArm, 1);
+    const malformed: unknown[] = [
+      null,
+      undefined,
+      false,
+      7,
+      'BK',
+      {left: ['BK'], right: ['WH', 'GY']},
+      [],
+      [['BK']],
+      [['BK'], ['WH', 'GY'], []],
+      [['BK'], null],
+      ['BK', ['WH', 'GY']],
+      [['BK'], ['WH', 7]],
+      [['BK'], ['WH', ['GY']]],
+      [sparseArm, ['GY']],
+    ];
+    for (const value of malformed) {
+      expect(validArms(value)).toBe(false);
+    }
+  });
+
   it('rejects duplicate colors and incomplete drafts without submitting', () => {
     expect(validArms([['BK', 'WH'], ['BK']])).toBe(false);
     expect(validArms([['BK'], ['WH']])).toBe(false);
