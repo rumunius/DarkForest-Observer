@@ -920,6 +920,50 @@ it('preserves authorized tasks through checkpoint rollback and waits for recover
     await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
   ).toEqual([{status: 'complete'}]);
 });
+it('rolls back a failed snapshot task and clears its shared execution state', async () => {
+  await forest();
+  await command('/tag add C01 "原范围"');
+  const preview = await plan(
+    '/schedule create utc in 1m run { photon grant @alive[tag="原范围"]; resource add C02 photons 1 } --targets snapshot --late run',
+  );
+  expect((await confirm(preview.token)).status).toBe(200);
+  // This changes an execution-time resource dependency after the task is saved.
+  await sql("UPDATE players SET photons=1,tech=1 WHERE id='C02'");
+  now += 60001;
+  const execution = await runInDurableObject(
+    stub(),
+    async (_instance, state) => {
+      const engine = new Engine(new Store(state.storage), bindings);
+      engine.now = () => now;
+      const reply = await engine.call({
+        method: 'GET',
+        path: '/public/match',
+        clientKey: 'commands',
+        edgeUtc: now,
+      });
+      return {
+        status: reply.status,
+        snapshot: engine.commandSnapshot,
+        batch: engine.commandBatch,
+      };
+    },
+  );
+  expect(execution).toEqual({status: 200, snapshot: {}, batch: false});
+  expect(
+    await sql('SELECT id FROM players WHERE photons=1 ORDER BY id'),
+  ).toEqual([{id: 'C02'}]);
+  expect(await sql('SELECT COUNT(*) AS count FROM notice_queue')).toEqual([
+    {count: 0},
+  ]);
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
+  ).toEqual([{status: 'failed'}]);
+  expect(
+    await sql(
+      "SELECT status,ciphertext FROM judge_command_log WHERE path='schedule due'",
+    ),
+  ).toEqual([{status: 'failed', ciphertext: null}]);
+});
 it('keeps snapshot target scope while live tasks see later eligible players', async () => {
   await forest();
   await command('/tag add C01 "范围"');
