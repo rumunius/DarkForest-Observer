@@ -162,7 +162,7 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
           engine.taskAuthorization.add(row.actor);
         }
       } catch {
-        /* Natural events continue; management jobs require a fresh authorization. */
+        // Natural events continue; management jobs require a fresh authorization.
       }
     }
   }

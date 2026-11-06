@@ -23,7 +23,7 @@ const preferences = (() => {
       ...(typeof value.scenario === 'string' ? {scenario: value.scenario} : {}),
     };
   } catch {
-    /* Defaults remain usable. */
+    // Defaults remain usable.
   }
   const role = params.get('role') ?? saved.role ?? 'player';
   const scenario = params.get('scene') ?? saved.scenario ?? 'active';
@@ -53,7 +53,7 @@ function Controls({onReset}: {onReset: () => void}) {
         JSON.stringify({role: nextRole, scenario: nextScenario}),
       );
     } catch {
-      /* Optional display preference only. */
+      // Optional display preference only.
     }
     const destination =
       nextRole === 'display'

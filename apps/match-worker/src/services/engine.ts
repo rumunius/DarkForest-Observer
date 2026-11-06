@@ -638,7 +638,7 @@ export class Engine {
                 commandSpec(parseCommandTree(String(body.command)))?.path ??
                 rejectedPath;
             } catch {
-              /* Syntax rejection remains unparsed. */
+              // Syntax rejection remains unparsed.
             }
             recordCommand(
               this,
@@ -661,7 +661,7 @@ export class Engine {
             );
           }
         } catch {
-          /* Preserve the original authentication or command error. */
+          // Preserve the original authentication or command error.
         }
       }
       if (
@@ -702,7 +702,7 @@ export class Engine {
             );
           }
         } catch {
-          /* A failed authentication must not expose or overwrite the original error. */
+          // A failed authentication must not expose or overwrite the original error.
         }
       }
       if (error instanceof Fault) {

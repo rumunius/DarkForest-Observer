@@ -20,7 +20,7 @@ export function useMessageReadState(data: Snapshot, base: string) {
         try {
           localStorage.setItem(accountKey, JSON.stringify(next));
         } catch {
-          /* Reading preferences can stay in memory. */
+          // Reading preferences can stay in memory.
         }
         return next;
       });

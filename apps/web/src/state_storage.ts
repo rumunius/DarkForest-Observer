@@ -46,7 +46,7 @@ export function savePending(
       sessionStorage.removeItem(key);
     }
   } catch {
-    /* Memory state remains authoritative for this page. */
+    // Memory state remains authoritative for this page.
   }
 }
 
