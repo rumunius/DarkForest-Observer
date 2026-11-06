@@ -15,23 +15,23 @@ const accountsPath = option(
   '.private/local-rehearsal/accounts.json',
 );
 const seconds = Number(option('--seconds', '60'));
-const n = Number(option('--players', '24'));
+const playerCount = Number(option('--players', '24'));
 if (
   !Number.isInteger(seconds) ||
   seconds < 10 ||
   seconds > 900 ||
-  !Number.isInteger(n) ||
-  n < 2 ||
-  n > 350
+  !Number.isInteger(playerCount) ||
+  playerCount < 2 ||
+  playerCount > 350
 ) {
   throw new Error('负载测试时长为10—900秒，玩家数为2—350。');
 }
 const accounts = JSON.parse(
   await readFile(resolve(accountsPath), 'utf8'),
 ).accounts;
-const players = accounts.filter(a => a.role === 'player').slice(0, n);
+const players = accounts.filter(a => a.role === 'player').slice(0, playerCount);
 const judges = accounts.filter(a => a.role === 'judge');
-if (players.length !== n || judges.length !== 3) {
+if (players.length !== playerCount || judges.length !== 3) {
   throw new Error('账号文件没有足够的玩家及3名独立裁判。');
 }
 const samples = [];
@@ -108,7 +108,7 @@ const result = {
   origin,
   startedUtc: new Date(started).toISOString(),
   finishedUtc: new Date().toISOString(),
-  players: n,
+  players: playerCount,
   judges: 3,
   displays: 1,
   durationSeconds: seconds,

@@ -89,7 +89,7 @@ export function CivilizationList({
 }
 /** 展示获授权的文明详情与历史，不推测或补齐不可见秘密。 */
 export function CivilizationDetail({
-  civilization: c,
+  civilization: civilization,
   back,
   title = '文明详情',
 }: {
@@ -102,14 +102,14 @@ export function CivilizationDetail({
   return (
     <>
       <PageTitle title={title} back={back} />
-      {!c ? (
+      {!civilization ? (
         <Empty title="文明不存在或无查看权限" to={back} />
       ) : (
         <>
           <div className="profile-heading">
-            <Identity id={c.id} nickname={c.nickname} />
-            <Status tone={c.flight === 'eliminated' ? 'danger' : ''}>
-              {FLIGHT_NAMES[c.flight]}
+            <Identity id={civilization.id} nickname={civilization.nickname} />
+            <Status tone={civilization.flight === 'eliminated' ? 'danger' : ''}>
+              {FLIGHT_NAMES[civilization.flight]}
             </Status>
           </div>
           <Tabs
@@ -126,29 +126,36 @@ export function CivilizationDetail({
               <div className="detail-stats">
                 <div>
                   <span>已审核母星口令</span>
-                  <strong className="numeric">{c.homeworld ?? '未登记'}</strong>
-                  <small>母星{c.homeAlive ? '尚存' : '已毁灭'}</small>
+                  <strong className="numeric">
+                    {civilization.homeworld ?? '未登记'}
+                  </strong>
+                  <small>
+                    母星{civilization.homeAlive ? '尚存' : '已毁灭'}
+                  </small>
                 </div>
                 <div>
                   <span>已击毁的不同文明数</span>
-                  <strong className="numeric">{c.kills}</strong>
+                  <strong className="numeric">{civilization.kills}</strong>
                 </div>
                 <div>
                   <span>剩余广播次数</span>
-                  <strong className="numeric">{c.broadcasts}</strong>
+                  <strong className="numeric">{civilization.broadcasts}</strong>
                 </div>
                 <div>
                   <span>光粒库存</span>
-                  <strong className="numeric">{c.photons}</strong>
+                  <strong className="numeric">{civilization.photons}</strong>
                 </div>
               </div>
-              {c.respawnDeadline && (
-                <Timer label="距离重生截止" deadline={c.respawnDeadline} />
+              {civilization.respawnDeadline && (
+                <Timer
+                  label="距离重生截止"
+                  deadline={civilization.respawnDeadline}
+                />
               )}
-              {c.arms ? (
+              {civilization.arms ? (
                 <>
                   <h2>本航次手环</h2>
-                  <ArmsView arms={c.arms} />
+                  <ArmsView arms={civilization.arms} />
                 </>
               ) : (
                 <p className="secondary">当前没有可用的手环配置。</p>
@@ -156,7 +163,7 @@ export function CivilizationDetail({
             </>
           ) : tab === 'voyages' ? (
             <div className="voyage-list">
-              {c.voyages.map(voyage => (
+              {civilization.voyages.map(voyage => (
                 <Frame key={voyage.number}>
                   <div className="heading-row">
                     <h2>第{voyage.number}航次</h2>
@@ -176,7 +183,7 @@ export function CivilizationDetail({
           ) : (
             <Events
               events={data.events
-                .filter(e => e.civilizationIds.includes(c.id))
+                .filter(e => e.civilizationIds.includes(civilization.id))
                 .map(e =>
                   e.actor ? {...e, body: `${e.body} 发起者：${e.actor}`} : e,
                 )}

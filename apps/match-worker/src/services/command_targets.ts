@@ -245,13 +245,15 @@ export function targets(
       }
       const fields = new Set<string>();
       for (const f of splitFilters(val.slice(1, -1))) {
-        const [k, r] = f.split('=');
-        if (!k || !r || fields.has(k)) {
+        const [fieldName, rangeText] = f.split('=');
+        if (!fieldName || !rangeText || fields.has(fieldName)) {
           throw new CommandSyntaxError('重复或缺少战绩范围');
         }
-        fields.add(k);
-        inRange(0, r);
-        ids = ids.filter(id => inRange(score(engine, id, k), r));
+        fields.add(fieldName);
+        inRange(0, rangeText);
+        ids = ids.filter(id =>
+          inRange(score(engine, id, fieldName), rangeText),
+        );
       }
     } else if (key === 'sort') {
       if (!['id', 'random'].includes(val)) {

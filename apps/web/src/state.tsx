@@ -198,7 +198,7 @@ export function AppProvider({
     },
     [accountKey],
   );
-  const go = useCallback(
+  const navigate = useCallback(
     (path: string, replace = false) => {
       positions.set(location.pathname, scrollY);
       const next = `${base}${path === '/' ? '/' : path}`;
@@ -509,7 +509,7 @@ export function AppProvider({
       setDraft([[], []]);
       setPending(null);
       persistPending(null);
-      go('/');
+      navigate('/');
     } catch (e) {
       setError(e instanceof Error ? e.message : '退出登录未完成，请重试。');
     }
@@ -590,7 +590,7 @@ export function AppProvider({
         data,
         route,
         base,
-        go,
+        go: navigate,
         refresh,
         loadEarlierEvents,
         loadJudgeRecords,

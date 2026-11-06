@@ -174,14 +174,14 @@ export function run(
         const start = index;
         let depth = 0;
         while (index < commandNode.words.length - 1) {
-          const w = commandNode.words[index]!;
-          if (w === '(') {
+          const currentWord = commandNode.words[index]!;
+          if (currentWord === '(') {
             depth++;
           }
-          if (w === ')') {
+          if (currentWord === ')') {
             depth--;
           }
-          if (!depth && ['if', 'unless'].includes(w)) {
+          if (!depth && ['if', 'unless'].includes(currentWord)) {
             break;
           }
           index++;
@@ -318,19 +318,19 @@ export function run(
       );
       commandContext.bindings = {...commandContext.bindings};
       commandContext.scalars = {...commandContext.scalars};
-      for (const [i, p] of data.params.entries()) {
-        const arg = commandValue(args[i], commandContext);
-        const key = '$' + p.name;
-        if (p.type === 'target') {
+      for (const [parameterIndex, parameter] of data.params.entries()) {
+        const arg = commandValue(args[parameterIndex], commandContext);
+        const key = '$' + parameter.name;
+        if (parameter.type === 'target') {
           commandContext.bindings[key] = selectTargets(commandContext, arg);
         } else {
-          if (p.type === 'int') {
+          if (parameter.type === 'int') {
             integer(Number(arg), Number.MIN_SAFE_INTEGER);
           }
-          if (p.type === 'duration') {
+          if (parameter.type === 'duration') {
             durationMs(arg);
           }
-          if (p.type === 'bool') {
+          if (parameter.type === 'bool') {
             requireCommandArgument(
               ['true', 'false'].includes(arg),
               '宏布尔参数须为true/false',

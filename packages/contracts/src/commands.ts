@@ -437,8 +437,8 @@ const values: Record<string, Array<[string, string]>> = {
     'observer-wait',
     'sighting-min-interval',
     'sighting-per-minute',
-  ].map((v, index) => [
-    v,
+  ].map((candidateValue, index) => [
+    candidateValue,
     [
       '歌者概率',
       '首次禁止目击攻击秒数',

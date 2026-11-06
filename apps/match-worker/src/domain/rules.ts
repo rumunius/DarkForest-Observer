@@ -10,11 +10,15 @@ export const TIMES = {
   respawn: 900_000,
 };
 /** 校验合法手环分组并归一化两臂顺序；同臂排列不影响码身份。 */
-export function normalizeArms(a: unknown, b: unknown): string {
-  if (!Array.isArray(a) || !Array.isArray(b) || !validArms([a, b] as Arms)) {
+export function normalizeArms(leftArm: unknown, rightArm: unknown): string {
+  if (
+    !Array.isArray(leftArm) ||
+    !Array.isArray(rightArm) ||
+    !validArms([leftArm, rightArm] as Arms)
+  ) {
     throw new ContractError('手环分组不合法。');
   }
-  const masks = [a, b]
+  const masks = [leftArm, rightArm]
     .map(arm =>
       arm.reduce(
         (mask: number, color: unknown) =>

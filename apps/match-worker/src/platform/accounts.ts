@@ -103,9 +103,9 @@ export async function importAccounts(
     '每批须为1—100行，请分批导入。',
     400,
   );
-  const rows = payload.rows.map((r, index) => {
+  const rows = payload.rows.map((rawRow, index) => {
     try {
-      const row = object(r);
+      const row = object(rawRow);
       requireThat(
         row.kind === 'player' || row.kind === 'staff',
         'BAD_KIND',

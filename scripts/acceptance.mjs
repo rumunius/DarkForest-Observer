@@ -122,17 +122,19 @@ try {
   });
   step(`正式名单选为${count}人，歌者概率保存为10%`);
   const players = await Promise.all(members.map(login));
-  for (const [i, p] of players.entries()) {
-    await action('/player/nickname', p, {nickname: `行星${i + 1}`});
-    const code = String(600001 + i);
-    await action('/action/homeworld-submit', p, {code});
-    await action(`/judge/homeworld/${p.id}/verify`, head, {
+  for (const [index, playerSession] of players.entries()) {
+    await action('/player/nickname', playerSession, {
+      nickname: `行星${index + 1}`,
+    });
+    const code = String(600001 + index);
+    await action('/action/homeworld-submit', playerSession, {code});
+    await action(`/judge/homeworld/${playerSession.id}/verify`, head, {
       expected_version: 1,
       expected_code: code,
       decision: 'approve',
     });
-    await action('/action/preflight-depart', p);
-    await action('/action/preflight-stage', p);
+    await action('/action/preflight-depart', playerSession);
+    await action('/action/preflight-stage', playerSession);
   }
   step(`${count}名玩家分别完成登录、昵称、母星审核与首航准备`);
   const roster = {expected_roster: players.map(p => p.id)};

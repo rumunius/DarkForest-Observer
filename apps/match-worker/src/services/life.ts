@@ -245,13 +245,15 @@ export function archiveReport(engine: Engine, correctionReason: string): void {
         Number(b.alive) - Number(a.alive) ||
         (a.alive ? b.kills - a.kills : b.utc - a.utc || b.seq - a.seq),
     );
-  const ranked = standings.map((p, index) => {
-    const equal = (q: typeof p) =>
-      p.alive === q.alive &&
-      (p.alive ? p.kills === q.kills : !!p.group && p.group === q.group);
+  const ranked = standings.map((standing, index) => {
+    const equal = (q: typeof standing) =>
+      standing.alive === q.alive &&
+      (standing.alive
+        ? standing.kills === q.kills
+        : !!standing.group && standing.group === q.group);
     const first = standings.findIndex(equal);
     return {
-      ...p,
+      ...standing,
       rank: first + 1,
       tied: standings.filter(equal).length > 1,
       index: index,

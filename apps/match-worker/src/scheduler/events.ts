@@ -190,8 +190,8 @@ function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
         'START_STATE_CONFLICT',
         '开赛状态需要裁判核查。',
       );
-      for (const p of roster) {
-        const flight = db.flight(p.id);
+      for (const rosterPlayer of roster) {
+        const flight = db.flight(rosterPlayer.id);
         requireThat(
           flight.status === 'ready' && flight.code_id && flight.ready !== null,
           'ROSTER_NOT_READY',
@@ -202,12 +202,15 @@ function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
             "UPDATE sighting_codes SET status='active',activated_utc=?,activated_game=0 WHERE id=? AND player_id=? AND status='reserved' RETURNING id",
             utc,
             flight.code_id,
-            p.id,
+            rosterPlayer.id,
           ).length === 1,
           'CODE_STATE_CONFLICT',
           '手环配置需要裁判核查。',
         );
-        db.exec("UPDATE flights SET status='active' WHERE player_id=?", p.id);
+        db.exec(
+          "UPDATE flights SET status='active' WHERE player_id=?",
+          rosterPlayer.id,
+        );
       }
       db.exec("UPDATE matches SET phase='forest',start_settled=?", utc);
       logEvent(

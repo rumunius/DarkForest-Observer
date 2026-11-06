@@ -23,7 +23,7 @@ export function Current() {
   const match = data.match!;
   let title = '飞船保持正常出航';
   let body = '亲眼观察其他飞船两臂的完整颜色分组，提交目击攻击。';
-  let to = '/player/actions';
+  let primaryPath = '/player/actions';
   let action = '前往行动';
   let countdown: ReactNode = (
     <Timer label="距离宇宙末日" deadline={RULES.apocalypseMs} large />
@@ -31,14 +31,16 @@ export function Current() {
   if (match.stage === 'ended') {
     title = '本场比赛已经结束';
     body = '正式结果与完整战报已开放，所有本场参赛者均可复盘。';
-    to = '/results';
+    primaryPath = '/results';
     action = '查看比赛结果';
     countdown = null;
   } else if (playerState.flight === 'eliminated') {
     title = '你已永久淘汰';
     body =
       '你的三维文明已经永久毁灭，但意识仍残留在更高的维度。请在安全位置摘下全部比赛手环，尽快步行返回中控室。';
-    to = playerState.observerAllowed ? '/observer' : '/player/eliminated';
+    primaryPath = playerState.observerAllowed
+      ? '/observer'
+      : '/player/eliminated';
     action = playerState.observerAllowed ? '进入宇宙观测' : '查看淘汰后安排';
     countdown =
       !playerState.observerAllowed && playerState.eliminatedAt ? (
@@ -58,7 +60,7 @@ export function Current() {
   ) {
     title = '飞船已被击毁';
     body = '请在安全位置摘下全部比赛手环，正常步行返回母星，在截止前完成重生。';
-    to = '/player/respawn';
+    primaryPath = '/player/respawn';
     action = '继续重生';
     countdown = (
       <Timer
@@ -84,7 +86,7 @@ export function Current() {
       playerState.flight === 'pending'
         ? `裁判正在审核第${playerState.homeVersion}次提交的母星登记。请将登记消息和现场时间水印照片发给裁判。`
         : '完成当前登记步骤后，再进入首航准备。';
-    to =
+    primaryPath =
       playerState.flight === 'nickname'
         ? '/player/identity'
         : '/player/homeworld';
@@ -105,7 +107,7 @@ export function Current() {
       playerState.flight === 'ready'
         ? '全体文明穿戴就绪后统一开赛，请等待倒计时。'
         : '完成首航准备，等待统一开赛。';
-    to = '/player/preflight';
+    primaryPath = '/player/preflight';
     action = playerState.flight === 'ready' ? '查看准备情况' : '继续首航准备';
     countdown =
       playerState.flight === 'ready' && match.startAt ? (
@@ -121,20 +123,20 @@ export function Current() {
   } else if (match.verification) {
     title = '终局资格确认中';
     body = '比赛计时已暂停。请持续共享位置，等待裁判完成终局资格核验。';
-    to = '/player/endgame';
+    primaryPath = '/player/endgame';
     action = '查看终局说明';
     countdown = null;
   } else if (match.paused) {
     title = '比赛已暂停';
     body = match.pauseReason || '比赛和重生倒计时已暂停，请等待裁判通知。';
-    to = '/player/messages';
+    primaryPath = '/player/messages';
     action = '查看赛事消息';
     countdown = null;
   } else if (match.stage === 'transfer') {
     title = '步行前往终局圈';
     body =
       '加入比赛QQ群的实时位置共享。查看QQ群文件中的终局圈图片，使用手机高德地图前往。';
-    to = '/player/endgame';
+    primaryPath = '/player/endgame';
     action = '查看终局要求';
     countdown = (
       <Timer label="距离终局资格截止" deadline={RULES.cutoffMs} large />
@@ -166,7 +168,7 @@ export function Current() {
   } else if (playerState.flight === 'absent') {
     title = '本场参赛安排已调整';
     body = '请联系裁判了解安排。';
-    to = '/player/help';
+    primaryPath = '/player/help';
     action = '联系裁判';
     countdown = null;
   }
@@ -181,7 +183,7 @@ export function Current() {
         <h2>{title}</h2>
         <p>{body}</p>
         {countdown}
-        <TaskButton to={to}>{action}</TaskButton>
+        <TaskButton to={primaryPath}>{action}</TaskButton>
       </section>
       <div className="related-links">
         <Link to="/player/messages">

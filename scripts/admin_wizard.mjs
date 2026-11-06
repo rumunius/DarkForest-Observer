@@ -155,20 +155,20 @@ async function prompt(label, {secret = false, defaultValue = ''} = {}) {
   const recent = (await readdir(privateRoot).catch(() => [])).map(name =>
     resolve(privateRoot, name),
   );
-  const rl = createInterface({
+  const readlineInterface = createInterface({
     input: stdin,
     output: stdout,
     completer: line => [recent.filter(file => file.startsWith(line)), line],
   });
   try {
     return await new Promise(resolveValue =>
-      rl.question(
+      readlineInterface.question(
         `${label}${defaultValue ? ` [${defaultValue}]` : ''}：`,
         value => resolveValue(value.trim() || defaultValue),
       ),
     );
   } finally {
-    rl.close();
+    readlineInterface.close();
   }
 }
 async function confirm(text) {

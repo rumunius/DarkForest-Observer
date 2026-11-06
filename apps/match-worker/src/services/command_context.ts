@@ -57,18 +57,20 @@ export interface CommandContext {
 }
 
 /** 解码解析器已验证的引号参数，未提供参数时使用空文本。 */
-export function unquoteArgument(v: string | undefined) {
-  return v?.startsWith('"') ? (parseJson(v) as string) : (v ?? '');
+export function unquoteArgument(argument: string | undefined) {
+  return argument?.startsWith('"')
+    ? (parseJson(argument) as string)
+    : (argument ?? '');
 }
 
 /** 在当前命令标量绑定中解析参数，未绑定时按普通参数解码。 */
 export function commandValue(
-  v: string | undefined,
+  argument: string | undefined,
   commandContext: CommandContext,
 ) {
-  return v && v in commandContext.scalars
-    ? commandContext.scalars[v]!
-    : unquoteArgument(v);
+  return argument && argument in commandContext.scalars
+    ? commandContext.scalars[argument]!
+    : unquoteArgument(argument);
 }
 
 /** 将命令参数或条件失败转换为可展示的400错误，终止本次处理。 */
@@ -139,25 +141,25 @@ export function captureCommandDependencies(
   engine: Engine,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  for (const p of engine.db.all<{id: string}>(
+  for (const rosterPlayer of engine.db.all<{id: string}>(
     'SELECT id FROM players ORDER BY id',
   )) {
-    result['player:' + p.id] = {
-      player: engine.db.player(p.id),
-      flight: engine.db.flight(p.id),
-      home: engine.db.home(p.id) ?? null,
+    result['player:' + rosterPlayer.id] = {
+      player: engine.db.player(rosterPlayer.id),
+      flight: engine.db.flight(rosterPlayer.id),
+      home: engine.db.home(rosterPlayer.id) ?? null,
       control: engine.db.one<Record<string, SqlStorageValue>>(
         'SELECT * FROM attack_controls WHERE player_id=?',
-        p.id,
+        rosterPlayer.id,
       ),
       elimination:
         engine.db.one<Record<string, SqlStorageValue>>(
           'SELECT * FROM eliminations WHERE player_id=? AND valid=1',
-          p.id,
+          rosterPlayer.id,
         ) ?? null,
       tags: engine.db.all<Record<string, SqlStorageValue>>(
         'SELECT tag FROM command_tags WHERE player_id=? ORDER BY tag',
-        p.id,
+        rosterPlayer.id,
       ),
     };
   }
@@ -178,18 +180,18 @@ export function recordDependency(
 /** 解析目标集合并登记选择器依赖；随机候选的预览示例不代表最终抽签。 */
 export function selectTargets(
   commandContext: CommandContext,
-  v: string,
+  targetSelector: string,
   allowPool = false,
 ): string[] {
   if (!allowPool) {
     requireCommandArgument(
-      !v.startsWith('@pool'),
+      !targetSelector.startsWith('@pool'),
       '本操作不接受候选账号池，请选择正式文明。',
     );
   }
   const set = targets(
     commandContext.engine,
-    v,
+    targetSelector,
     commandContext.self,
     commandContext.preview,
     commandContext.bindings,
@@ -201,7 +203,7 @@ export function selectTargets(
       commandContext.initial['player:' + id],
     );
   }
-  if (v.startsWith('@') && v !== '@s') {
+  if (targetSelector.startsWith('@') && targetSelector !== '@s') {
     recordDependency(
       commandContext,
       'roster',
@@ -226,9 +228,9 @@ export function selectTargets(
 /** 要求选择器恰好产生一个目标；多目标应通过组合命令明确执行。 */
 export function singleTarget(
   commandContext: CommandContext,
-  v: string,
+  targetSelector: string,
 ): string {
-  const ids = selectTargets(commandContext, v);
+  const ids = selectTargets(commandContext, targetSelector);
   requireCommandArgument(
     ids.length === 1,
     '本操作需要唯一文明；集合请使用execute as。',

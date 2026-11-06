@@ -60,7 +60,7 @@ export function handlePlayerAction(
   const chosen = (index = 0, pool = false) =>
     selectTargets(commandContext, commandArguments[index]!, pool);
 
-  const each = (fn: (id: string) => void, pool = false) => {
+  const each = (action: (id: string) => void, pool = false) => {
     const ids = chosen(0, pool);
     for (const id of ids) {
       if (++commandContext.work > COMMAND_LIMITS.work) {
@@ -75,7 +75,7 @@ export function handlePlayerAction(
         flight: db.flight(id),
         home: db.home(id) ?? null,
       };
-      fn(id);
+      action(id);
       recordChange(commandContext, id, before, {
         player: db.player(id),
         flight: db.flight(id),

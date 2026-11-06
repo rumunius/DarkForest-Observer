@@ -183,9 +183,9 @@ export function validate(
       'ROSTER_TOO_SMALL',
       '至少需要两名正式玩家。',
     );
-    for (const p of roster) {
-      const flight = db.flight(p.id);
-      const homeworld = db.home(p.id);
+    for (const rosterPlayer of roster) {
+      const flight = db.flight(rosterPlayer.id);
+      const homeworld = db.home(rosterPlayer.id);
       if (path.endsWith('release')) {
         requireThat(
           flight.status === 'staged' &&
@@ -204,7 +204,7 @@ export function validate(
             db.one<Record<string, SqlStorageValue>>(
               "SELECT id FROM sighting_codes WHERE id=? AND player_id=? AND status='reserved'",
               flight.code_id,
-              p.id,
+              rosterPlayer.id,
             ),
           'ROSTER_NOT_READY',
           '仍有正式玩家未完成穿戴。',

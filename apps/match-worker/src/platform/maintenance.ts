@@ -311,26 +311,26 @@ export async function maintenance(
           `match:${matchId}`,
           host.now(),
         );
-        for (const a of mappings) {
+        for (const accountInput of mappings) {
           host.db.exec(
             "INSERT INTO platform_accounts(id,kind,name,status,created_utc) VALUES(?,?,?,'pending',?)",
-            a.accountId,
-            a.role === 'judge' ? 'staff' : 'player',
-            a.name,
+            accountInput.accountId,
+            accountInput.role === 'judge' ? 'staff' : 'player',
+            accountInput.name,
             host.now(),
           );
           host.db.exec(
             'INSERT INTO invitations VALUES(?,?,?,?,0,NULL,?,?)',
             crypto.randomUUID(),
-            a.accountId,
-            a.credential_hash,
+            accountInput.accountId,
+            accountInput.credential_hash,
             host.now() + 7 * 86400000,
             host.now(),
             'legacy-migration',
           );
           host.db.exec(
             'INSERT INTO account_match_index VALUES(?,?)',
-            a.accountId,
+            accountInput.accountId,
             matchId,
           );
         }

@@ -93,31 +93,31 @@ export function ArmsView({
           <div className="arm-figure">
             <Hand mirror={index === 1} />
             <div className="arm-bands">
-              {COLORS.filter(c => arm.includes(c.id)).map(c =>
+              {COLORS.filter(color => arm.includes(color.id)).map(color =>
                 editable ? (
                   <button
-                    key={c.id}
-                    data-color={c.id}
+                    key={color.id}
+                    data-color={color.id}
                     className="wrist-band"
-                    aria-label={`${c.name}，${index ? '另一侧手臂' : '一侧手臂'}，点击移除`}
-                    onClick={() => onRemove?.(c.id)}
+                    aria-label={`${color.name}，${index ? '另一侧手臂' : '一侧手臂'}，点击移除`}
+                    onClick={() => onRemove?.(color.id)}
                   >
                     <span
-                      data-swatch={c.id}
+                      data-swatch={color.id}
                       className="swatch"
-                      style={{backgroundColor: data.site.colors[c.id]}}
+                      style={{backgroundColor: data.site.colors[color.id]}}
                     />
-                    {names && <span className="band-name">{c.name}</span>}
+                    {names && <span className="band-name">{color.name}</span>}
                   </button>
                 ) : (
-                  <div key={c.id} className="wrist-band">
+                  <div key={color.id} className="wrist-band">
                     <span
                       className="swatch"
-                      style={{backgroundColor: data.site.colors[c.id]}}
+                      style={{backgroundColor: data.site.colors[color.id]}}
                       role="img"
-                      aria-label={c.name}
+                      aria-label={color.name}
                     />
-                    {names && <span className="band-name">{c.name}</span>}
+                    {names && <span className="band-name">{color.name}</span>}
                   </div>
                 ),
               )}

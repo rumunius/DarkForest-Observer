@@ -26,21 +26,24 @@ const edges = vertices.flatMap((_, i) =>
 
 function projectHypercube(time: number) {
   const points = vertices.map(vertex => {
-    const p: number[] = [...vertex];
+    const rotatedVertex: number[] = [...vertex];
     const rotations: Array<[number, number, number]> = [
       [0, 3, time * 0.12 + 0.4],
       [1, 2, time * 0.07 + 0.3],
       [0, 2, time * 0.04 + 0.45],
     ];
     for (const [a, b, angle] of rotations) {
-      const x = p[a]!;
-      const y = p[b]!;
-      p[a] = x * Math.cos(angle) - y * Math.sin(angle);
-      p[b] = x * Math.sin(angle) + y * Math.cos(angle);
+      const x = rotatedVertex[a]!;
+      const y = rotatedVertex[b]!;
+      rotatedVertex[a] = x * Math.cos(angle) - y * Math.sin(angle);
+      rotatedVertex[b] = x * Math.sin(angle) + y * Math.cos(angle);
     }
-    const w = 2.8 / (3.6 - p[3]!);
-    const depth = 3.6 / (4.5 - p[2]! * w);
-    return [p[0]! * w * depth * 112, p[1]! * w * depth * 112];
+    const w = 2.8 / (3.6 - rotatedVertex[3]!);
+    const depth = 3.6 / (4.5 - rotatedVertex[2]! * w);
+    return [
+      rotatedVertex[0]! * w * depth * 112,
+      rotatedVertex[1]! * w * depth * 112,
+    ];
   });
   // Perspective shifts the projected silhouette even when the SVG itself is centered.
   const center = [0, 1].map(axis => {

@@ -3,9 +3,12 @@ import {requireThat} from '../storage/store';
 
 // Match recovery never rewinds this database.
 /** 读取不可回退的资料清理世代，用于阻止恢复旧检查点重新暴露已清理信息。 */
-export function erasureFloor(p: DarkForestPlatform, matchId: string): number {
+export function erasureFloor(
+  platform: DarkForestPlatform,
+  matchId: string,
+): number {
   return (
-    p.db.one<{generation: number}>(
+    platform.db.one<{generation: number}>(
       "SELECT generation FROM erasure_ledger WHERE match_id=? AND status!='cancelled'",
       matchId,
     )?.generation ?? 0
@@ -15,10 +18,10 @@ export function erasureFloor(p: DarkForestPlatform, matchId: string): number {
 /** 执行有持久收据的清理协议；重试复用原操作并保留不可回退边界。 */
 export async function erasureOperation(
   platform: DarkForestPlatform,
-  op: {id: string; actor: string; target: string},
+  operation: {id: string; actor: string; target: string},
 ) {
-  const matchEntry = platform.directory(op.target);
-  const current = await platform.summary(matchEntry, op.actor);
+  const matchEntry = platform.directory(operation.target);
+  const current = await platform.summary(matchEntry, operation.actor);
   requireThat(
     current.phase === 'ended',
     'ENDED_REQUIRED',
@@ -46,7 +49,7 @@ export async function erasureOperation(
       '本场资料因申诉暂缓清理。',
     );
     requireThat(
-      platform.dataScope(op.actor, matchEntry.id),
+      platform.dataScope(operation.actor, matchEntry.id),
       'ARCHIVE_SCOPE_REQUIRED',
       '发起人已失去本场管理权限。',
       403,
@@ -80,9 +83,9 @@ export async function erasureOperation(
   });
   const online = await platform.control(
     matchEntry,
-    `${op.id}:online`,
+    `${operation.id}:online`,
     'erase',
-    op.actor,
+    operation.actor,
     '保留期限结束后的隐私清理',
     {generation},
   );

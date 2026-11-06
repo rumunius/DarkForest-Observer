@@ -110,31 +110,34 @@ export function page(
     kind: 'kind',
     status: 'status',
   };
-  for (const k of ['target', 'actor', 'kind', 'status']) {
-    if (opts[k]) {
-      if (table === 'judge_command_log' && k === 'target') {
+  for (const optionKey of ['target', 'actor', 'kind', 'status']) {
+    if (opts[optionKey]) {
+      if (table === 'judge_command_log' && optionKey === 'target') {
         conditions +=
           " AND EXISTS(SELECT 1 FROM json_each(detail,'$.targets') WHERE value=?)";
-        args.push(opts[k]);
+        args.push(opts[optionKey]);
         continue;
       }
-      if (table === 'judge_command_log' && k === 'kind') {
+      if (table === 'judge_command_log' && optionKey === 'kind') {
         conditions += ' AND path=?';
-        args.push(opts[k]);
+        args.push(opts[optionKey]);
         continue;
       }
       if (
         table === 'scheduled_events' &&
-        k === 'status' &&
-        opts[k] === 'failed'
+        optionKey === 'status' &&
+        opts[optionKey] === 'failed'
       ) {
         conditions += " AND status='pending' AND last_error<>''";
         continue;
       }
-      const col = mappings[k]!;
-      requireCommandArgument(fields.includes(col), '该列表不支持 --' + k);
+      const col = mappings[optionKey]!;
+      requireCommandArgument(
+        fields.includes(col),
+        '该列表不支持 --' + optionKey,
+      );
       conditions += ` AND ${col}=?`;
-      args.push(opts[k]);
+      args.push(opts[optionKey]);
     }
   }
   const timeCol = fields.find(f =>

@@ -118,21 +118,23 @@ export function RosterSettings() {
         {selectedCount >= 2 ? techCount : '待确认'}次。
       </p>
       <div className="permission-list">
-        {config.accounts.map(a => (
-          <label className="check-label" key={a.id}>
+        {config.accounts.map(account => (
+          <label className="check-label" key={account.id}>
             <input
               type="checkbox"
-              checked={selected.includes(a.id)}
-              disabled={config.locked || !a.eligible}
+              checked={selected.includes(account.id)}
+              disabled={config.locked || !account.eligible}
               onChange={event =>
                 setMembers(
                   event.target.checked
-                    ? [...selected, a.id].sort()
-                    : selected.filter(id => id !== a.id),
+                    ? [...selected, account.id].sort()
+                    : selected.filter(id => id !== account.id),
                 )
               }
             />
-            {a.nickname ? `${a.id}（${a.nickname}）` : a.id}
+            {account.nickname
+              ? `${account.id}（${account.nickname}）`
+              : account.id}
           </label>
         ))}
       </div>

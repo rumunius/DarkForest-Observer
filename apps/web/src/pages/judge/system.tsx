@@ -19,7 +19,7 @@ export function Commands() {
 /** 展示调度积压和故障证据，修复动作仍通过权威管理服务执行。 */
 export function SystemStatus() {
   const {data} = useApp();
-  const s = data.judge!.scheduler;
+  const scheduler = data.judge!.scheduler;
   return (
     <>
       <PageTitle title="系统状态" />
@@ -28,24 +28,24 @@ export function SystemStatus() {
         <div>
           <span>最近一次成功处理时间</span>
           <strong>
-            {new Date(s.lastSuccessUtcMs).toLocaleTimeString('zh-CN')}
+            {new Date(scheduler.lastSuccessUtcMs).toLocaleTimeString('zh-CN')}
           </strong>
         </div>
         <div>
           <span>下次自动处理时间</span>
           <strong>
-            {s.nextWakeUtcMs
-              ? new Date(s.nextWakeUtcMs).toLocaleTimeString('zh-CN')
+            {scheduler.nextWakeUtcMs
+              ? new Date(scheduler.nextWakeUtcMs).toLocaleTimeString('zh-CN')
               : '暂无待执行计划'}
           </strong>
         </div>
         <div>
           <span>已到期但尚未处理的事件</span>
-          <strong>{s.backlog}个事件</strong>
+          <strong>{scheduler.backlog}个事件</strong>
         </div>
         <div>
           <span>最近错误</span>
-          <strong>{s.error || '没有已记录错误'}</strong>
+          <strong>{scheduler.error || '没有已记录错误'}</strong>
         </div>
       </div>
       <ManagementForm
@@ -56,7 +56,7 @@ export function SystemStatus() {
       <ManagementForm
         title="结算到期事件"
         path="/judge/events/settle-due"
-        change={`重新核对并结算${s.backlog}个到期事件，保留原事件编号`}
+        change={`重新核对并结算${scheduler.backlog}个到期事件，保留原事件编号`}
       />
     </>
   );

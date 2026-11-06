@@ -235,24 +235,25 @@ export function events(
       : "SELECT l.*,NULL AS sighting_actor FROM event_log l WHERE l.seq<? AND (l.audience='public' OR l.owner=?) ORDER BY l.seq DESC LIMIT ?",
     ...(full ? [before, limit] : [before, actor.id, limit]),
   );
-  return rows.map(r => ({
-    id: r.id,
-    kind: r.kind,
-    title: r.title,
+  return rows.map(row => ({
+    id: row.id,
+    kind: row.kind,
+    title: row.title,
     body: eventBody(
-      r,
-      r.owner ? engine.identity(r.owner) : '',
-      actor.role === 'player' && r.owner === actor.id,
-      r.sighting_actor ? engine.identity(r.sighting_actor) : undefined,
+      row,
+      row.owner ? engine.identity(row.owner) : '',
+      actor.role === 'player' && row.owner === actor.id,
+      row.sighting_actor ? engine.identity(row.sighting_actor) : undefined,
     ),
-    audience: r.audience,
-    ...(r.owner ? {recipient: r.owner} : {}),
-    civilizationIds: parseJson(r.civilization_ids) as string[],
-    gameMs: r.game_ms,
-    utcMs: r.utc_ms,
-    ...(r.code ? {code: r.code} : {}),
-    ...(r.actor && (full || r.actor === actor.id || r.kind === 'broadcast')
-      ? {actor: r.actor}
+    audience: row.audience,
+    ...(row.owner ? {recipient: row.owner} : {}),
+    civilizationIds: parseJson(row.civilization_ids) as string[],
+    gameMs: row.game_ms,
+    utcMs: row.utc_ms,
+    ...(row.code ? {code: row.code} : {}),
+    ...(row.actor &&
+    (full || row.actor === actor.id || row.kind === 'broadcast')
+      ? {actor: row.actor}
       : {}),
   }));
 }
@@ -273,16 +274,16 @@ export function intel(engine: Engine, actor: Actor): Intel[] {
       "SELECT i.id,i.target,p.nickname,i.code,i.game_ms,COALESCE(l.kind,CASE WHEN a.id IS NOT NULL THEN 'sighting' END) AS source_kind FROM intel_grants i JOIN players p ON p.id=i.target LEFT JOIN event_log l ON l.id=i.source LEFT JOIN attacks a ON a.id=i.source||':attack' WHERE i.owner=? ORDER BY i.game_ms DESC",
       actor.id,
     )
-    .map(r => ({
-      id: r.id,
-      civilization: r.target,
-      nickname: r.nickname,
-      code: r.code,
-      gameMs: r.game_ms,
+    .map(row => ({
+      id: row.id,
+      civilization: row.target,
+      nickname: row.nickname,
+      code: row.code,
+      gameMs: row.game_ms,
       source:
-        r.source_kind === 'broadcast'
+        row.source_kind === 'broadcast'
           ? '反向监听'
-          : r.source_kind === 'sighting'
+          : row.source_kind === 'sighting'
             ? '击毁飞船'
             : '历史情报（来源未记录）',
     }));

@@ -56,35 +56,35 @@ export function Settings() {
             七个颜色身份及顺序固定，只调整全站显示色值。
           </p>
           <div className="color-settings">
-            {COLORS.map(c => (
-              <div className="color-setting" key={c.id}>
+            {COLORS.map(color => (
+              <div className="color-setting" key={color.id}>
                 <label>
                   <input
                     type="color"
-                    aria-label={`${c.name}取色`}
+                    aria-label={`${color.name}取色`}
                     value={
-                      /^#[0-9a-f]{6}$/i.test(site.colors[c.id])
-                        ? site.colors[c.id]
+                      /^#[0-9a-f]{6}$/i.test(site.colors[color.id])
+                        ? site.colors[color.id]
                         : '#000000'
                     }
                     onChange={e => {
                       setSite({
                         ...site,
-                        colors: {...site.colors, [c.id]: e.target.value},
+                        colors: {...site.colors, [color.id]: e.target.value},
                       });
                       setPreview(false);
                     }}
                   />
-                  <span>{c.name}</span>
+                  <span>{color.name}</span>
                 </label>
                 <input
-                  aria-label={`${c.name}十六进制色值`}
-                  value={site.colors[c.id]}
+                  aria-label={`${color.name}十六进制色值`}
+                  value={site.colors[color.id]}
                   maxLength={7}
                   onChange={e => {
                     setSite({
                       ...site,
-                      colors: {...site.colors, [c.id]: e.target.value},
+                      colors: {...site.colors, [color.id]: e.target.value},
                     });
                     setPreview(false);
                   }}

@@ -53,17 +53,20 @@ export function capture(engine: Engine): Tables {
 function aad(checkpoint: Omit<Checkpoint, 'ciphertext'>): string {
   return stableJson(checkpoint);
 }
-function safeState(m: {phase: unknown; paused_at: unknown}): void {
+function safeState(matchState: {phase: unknown; paused_at: unknown}): void {
   requireThat(
-    typeof m.phase === 'string' &&
-      (m.paused_at === null ||
-        (typeof m.paused_at === 'number' && Number.isSafeInteger(m.paused_at))),
+    typeof matchState.phase === 'string' &&
+      (matchState.paused_at === null ||
+        (typeof matchState.paused_at === 'number' &&
+          Number.isSafeInteger(matchState.paused_at))),
     'CHECKPOINT_MISMATCH',
     '恢复文件中的比赛状态不完整。',
     400,
   );
   requireThat(
-    m.phase === 'setup' || m.phase === 'ended' || m.paused_at !== null,
+    matchState.phase === 'setup' ||
+      matchState.phase === 'ended' ||
+      matchState.paused_at !== null,
     'PAUSE_REQUIRED',
     '请先暂停比赛。',
   );

@@ -190,24 +190,28 @@ export function ColorEditor() {
       {!locked && (
         <>
           <div className="palette" aria-label="共享七色盘">
-            {COLORS.map(c =>
-              draft.flat().includes(c.id) ? (
-                <span key={c.id} className="palette-space" aria-hidden="true" />
+            {COLORS.map(color =>
+              draft.flat().includes(color.id) ? (
+                <span
+                  key={color.id}
+                  className="palette-space"
+                  aria-hidden="true"
+                />
               ) : (
                 <button
-                  key={c.id}
+                  key={color.id}
                   type="button"
-                  data-color={c.id}
+                  data-color={color.id}
                   className="palette-color"
-                  aria-label={`${c.name}，色盘，点击移入所选手臂`}
-                  onClick={() => click(c.id)}
+                  aria-label={`${color.name}，色盘，点击移入所选手臂`}
+                  onClick={() => click(color.id)}
                 >
                   <span
                     className="swatch"
-                    data-swatch={c.id}
-                    style={{backgroundColor: data.site.colors[c.id]}}
+                    data-swatch={color.id}
+                    style={{backgroundColor: data.site.colors[color.id]}}
                   />
-                  {names && <span className="color-name">{c.name}</span>}
+                  {names && <span className="color-name">{color.name}</span>}
                 </button>
               ),
             )}

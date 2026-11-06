@@ -447,16 +447,18 @@ export function Tabs({
 }) {
   return (
     <div className="tabs" role="tablist">
-      {tabs.map(t => (
+      {tabs.map(tab => (
         <button
           type="button"
           role="tab"
-          aria-selected={active === t.id}
-          key={t.id}
-          onClick={() => onChange(t.id)}
+          aria-selected={active === tab.id}
+          key={tab.id}
+          onClick={() => onChange(tab.id)}
         >
-          {t.label}
-          {t.count !== undefined && <span className="numeric">{t.count}</span>}
+          {tab.label}
+          {tab.count !== undefined && (
+            <span className="numeric">{tab.count}</span>
+          )}
         </button>
       ))}
     </div>

@@ -16,14 +16,18 @@ import {RecordPagination} from '../record_pagination';
 import {ManagementForm} from './management_form';
 
 /** 展示指定文明的裁判管理操作，使用真实预览解释跨状态影响。 */
-export function PlayerManagement({c}: {c: Civilization}) {
+export function PlayerManagement({
+  civilization: civilization,
+}: {
+  civilization: Civilization;
+}) {
   const {data} = useApp();
   const [operation, setOperation] = useState('nickname');
   const [value, setValue] = useState('');
   return (
     <>
       <CivilizationDetail
-        civilization={c}
+        civilization={civilization}
         back="/judge/players"
         title="文明管理详情"
       />
@@ -54,7 +58,7 @@ export function PlayerManagement({c}: {c: Civilization}) {
             }
             path={
               operation === 'absence'
-                ? `/judge/roster/${c.id}/withdraw`
+                ? `/judge/roster/${civilization.id}/withdraw`
                 : operation === 'restore'
                   ? '/judge/player-restore'
                   : operation === 'eliminate'
@@ -63,14 +67,14 @@ export function PlayerManagement({c}: {c: Civilization}) {
             }
             payload={
               ['restore', 'eliminate'].includes(operation)
-                ? {target: c.id}
-                : {target: c.id, field: operation, value}
+                ? {target: civilization.id}
+                : {target: civilization.id, field: operation, value}
             }
             ready={
               ['restore', 'absence', 'eliminate'].includes(operation) ||
               !!value.trim()
             }
-            current={`${c.id}（${c.nickname}），${FLIGHT_NAMES[c.flight]}`}
+            current={`${civilization.id}（${civilization.nickname}），${FLIGHT_NAMES[civilization.flight]}`}
           >
             {!['restore', 'absence', 'eliminate'].includes(operation) && (
               <Field label="拟变更值">

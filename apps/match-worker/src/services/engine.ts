@@ -466,11 +466,17 @@ export class Engine {
       400,
     );
     const accounts = body.accounts.map(raw => {
-      const a = strict(raw, ['id', 'role', 'name', 'credential_hash', 'duty']);
-      const id = text(a.id, 16);
-      const role = text(a.role, 6);
-      const name = text(a.name, 64);
-      const hash = text(a.credential_hash, 44, 44);
+      const accountInput = strict(raw, [
+        'id',
+        'role',
+        'name',
+        'credential_hash',
+        'duty',
+      ]);
+      const id = text(accountInput.id, 16);
+      const role = text(accountInput.role, 6);
+      const name = text(accountInput.name, 64);
+      const hash = text(accountInput.credential_hash, 44, 44);
       requireThat(
         /^[A-Za-z0-9+/]{43}=$/.test(hash),
         'BAD_CREDENTIAL_HASH',
@@ -484,7 +490,7 @@ export class Engine {
         '账号格式不正确。',
         400,
       );
-      const duty = role === 'judge' ? text(a.duty, 20) : '';
+      const duty = role === 'judge' ? text(accountInput.duty, 20) : '';
       requireThat(
         role === 'player' ||
           ['head', 'communications', 'events'].includes(duty),
@@ -546,22 +552,25 @@ export class Engine {
         JSON.stringify(DEFAULT_SITE),
         this.now(),
       );
-      for (const a of accounts) {
+      for (const accountInput of accounts) {
         this.db.exec(
           'INSERT INTO accounts(id,match_id,role,name,credential_hash,permissions) VALUES(?,?,?,?,?,?)',
-          a.id,
+          accountInput.id,
           this.matchId,
-          a.role,
-          a.name,
-          a.hash,
-          JSON.stringify(a.permissions),
+          accountInput.role,
+          accountInput.name,
+          accountInput.hash,
+          JSON.stringify(accountInput.permissions),
         );
-        if (a.role === 'player') {
-          this.db.exec('INSERT INTO players(id) VALUES(?)', a.id);
-          this.db.exec('INSERT INTO flights(player_id) VALUES(?)', a.id);
+        if (accountInput.role === 'player') {
+          this.db.exec('INSERT INTO players(id) VALUES(?)', accountInput.id);
+          this.db.exec(
+            'INSERT INTO flights(player_id) VALUES(?)',
+            accountInput.id,
+          );
           this.db.exec(
             'INSERT INTO attack_controls(player_id) VALUES(?)',
-            a.id,
+            accountInput.id,
           );
         }
       }

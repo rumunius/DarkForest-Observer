@@ -29,10 +29,10 @@ export function JudgePages() {
     return (
       <>
         <PageTitle title="更多赛事管理" />
-        {JUDGE_NAV.map(g => (
-          <section key={g.group}>
-            <h2>{g.group}</h2>
-            {g.items
+        {JUDGE_NAV.map(navigationGroup => (
+          <section key={navigationGroup.group}>
+            <h2>{navigationGroup.group}</h2>
+            {navigationGroup.items
               .filter(([permission]) => judgeCan(data, permission!))
               .map(([, label, to]) => (
                 <Link className="row-link" key={to} to={to!}>
@@ -74,7 +74,7 @@ export function JudgePages() {
     const civilization = data.civilizations.find(c => c.id === id);
     return id ? (
       civilization ? (
-        <PlayerManagement c={civilization} />
+        <PlayerManagement civilization={civilization} />
       ) : (
         <Empty title="文明不存在" to="/judge/players" />
       )

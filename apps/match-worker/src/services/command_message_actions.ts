@@ -95,7 +95,11 @@ export function handleMessageAction(
 
   if (path === 'replay') {
     const ids = chosen();
-    for (const r of db.all<{title: string; body: string; code: string | null}>(
+    for (const eventRow of db.all<{
+      title: string;
+      body: string;
+      code: string | null;
+    }>(
       "SELECT title,body,code FROM event_log WHERE audience='public' ORDER BY seq DESC LIMIT ?",
       integer(Number(commandArguments[2]), 1, COMMAND_LIMITS.maxPage),
     )) {
@@ -103,7 +107,7 @@ export function handleMessageAction(
       emitCommandMessage(
         commandContext,
         ids,
-        `重播：${r.title}\n${r.body}${r.code ? '\n坐标：' + r.code : ''}`,
+        `重播：${eventRow.title}\n${eventRow.body}${eventRow.code ? '\n坐标：' + eventRow.code : ''}`,
         commandArguments[0] === '@a',
       );
     }

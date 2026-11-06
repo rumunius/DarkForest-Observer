@@ -264,20 +264,21 @@ export function ManageMatch({
       </section>
       <section className="platform-detail">
         <h2>本场成员</h2>
-        {data.current.members.map(m => (
-          <div key={m.account_id} className="platform-member-row">
+        {data.current.members.map(member => (
+          <div key={member.account_id} className="platform-member-row">
             <p>
-              <strong>{m.name}</strong>，{m.local_id ?? '尚未确认本场身份'}，
-              {membershipStates[m.state]}
+              <strong>{member.name}</strong>，
+              {member.local_id ?? '尚未确认本场身份'}，
+              {membershipStates[member.state]}
             </p>
             {matchEntry.state === 'draft' && (
               <button
                 type="button"
                 className="icon-button"
-                aria-label={`移除成员 ${m.name}`}
-                title={`移除成员 ${m.name}`}
+                aria-label={`移除成员 ${member.name}`}
+                title={`移除成员 ${member.name}`}
                 onClick={() =>
-                  setRemoval({member: m, revision: data.current.revision})
+                  setRemoval({member: member, revision: data.current.revision})
                 }
               >
                 <Icon name="close" size={20} />

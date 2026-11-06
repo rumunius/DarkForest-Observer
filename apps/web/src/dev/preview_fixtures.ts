@@ -122,10 +122,10 @@ const preflightFlights: Record<string, Civilization['flight']> = {
 };
 
 /** 为开发场景生成可重复的合法颜色分组，不参与正式发码。 */
-export function buildArms(i: number): Arms {
-  const a = i % 7;
+export function buildArms(index: number): Arms {
+  const a = index % 7;
   const b = (a + 1) % 7;
-  let c = (a + 2 + Math.floor(i / 7)) % 7;
+  let c = (a + 2 + Math.floor(index / 7)) % 7;
   while (c === a || c === b) {
     c = (c + 1) % 7;
   }

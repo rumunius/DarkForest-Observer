@@ -30,32 +30,35 @@ export function condition(
     }
     if (kind === 'match') {
       const key = take();
-      const v = take();
+      const token = take();
       const matchState = engine.db.match();
       if (key === 'phase') {
-        return matchState.phase === v;
+        return matchState.phase === token;
       }
       if (key === 'paused') {
-        requireCommandArgument(['true', 'false'].includes(v), 'paused为布尔值');
-        return (matchState.paused_at !== null) === (v === 'true');
+        requireCommandArgument(
+          ['true', 'false'].includes(token),
+          'paused为布尔值',
+        );
+        return (matchState.paused_at !== null) === (token === 'true');
       }
       requireCommandArgument(key === 'alive', '未知match条件');
       recordPopulationDependency(commandContext);
-      return inRange(survivors(engine).length, v);
+      return inRange(survivors(engine).length, token);
     }
     if (kind === 'player') {
       const id = single(take());
       const field = take();
-      const v = take();
+      const fieldValue = take();
       if (field === 'status') {
-        return engine.db.flight(id).status === v;
+        return engine.db.flight(id).status === fieldValue;
       }
       requireCommandArgument(field === 'homeworld', '未知player条件');
       const h = engine.db.home(id);
-      return v === 'pending'
+      return fieldValue === 'pending'
         ? h?.status === 'pending'
         : h?.status === 'verified' &&
-            (v === 'alive'
+            (fieldValue === 'alive'
               ? h.destroyed_game === null
               : h.destroyed_game !== null);
     }
@@ -89,7 +92,7 @@ export function condition(
     if (kind === 'event') {
       const id = take();
       requireCommandArgument(take() === 'status', 'event条件缺少status');
-      const v = take();
+      const eventStatus = take();
       const row = engine.db.one<Scheduled>(
         'SELECT * FROM scheduled_events WHERE id=?',
         id,
@@ -98,7 +101,7 @@ export function condition(
       return (
         (row?.status === 'pending' && row.last_error
           ? 'failed'
-          : row?.status) === v
+          : row?.status) === eventStatus
       );
     }
     throw new Fault(400, 'CONDITION_SYNTAX', '未知条件：' + kind);

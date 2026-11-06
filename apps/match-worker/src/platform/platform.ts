@@ -1121,15 +1121,15 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       return {status: 200, body: {status: 'succeeded', operationId: id}};
     }
     if (path === '/platform/data/purge') {
-      const d = this.directory(text(requestPayload.matchId, 100));
+      const retentionEntry = this.directory(text(requestPayload.matchId, 100));
       requireThat(
-        this.dataScope(session.account_id, d.id),
+        this.dataScope(session.account_id, retentionEntry.id),
         'ARCHIVE_SCOPE_REQUIRED',
         '当前账号未获本场数据管理权限。',
         403,
       );
-      this.assertVersion(d, requestPayload.expected_version);
-      const summary = await this.summary(d, session.account_id);
+      this.assertVersion(retentionEntry, requestPayload.expected_version);
+      const summary = await this.summary(retentionEntry, session.account_id);
       requireThat(
         summary.phase === 'ended',
         'ENDED_REQUIRED',
@@ -1142,7 +1142,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       );
       const ended = Number(summary.endedUtc);
       requireThat(
-        ended > 0 && this.now() >= ended + d.retention_days * 86400000,
+        ended > 0 &&
+          this.now() >= ended + retentionEntry.retention_days * 86400000,
         'RETENTION_ACTIVE',
         '完整复盘的保留期尚未结束。',
       );
@@ -1153,31 +1154,32 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       );
       this.db.tx(() => {
         this.assertVersion(
-          this.directory(d.id),
+          this.directory(retentionEntry.id),
           requestPayload.expected_version,
         );
         requireThat(
-          d.state !== 'purge_pending' && erasureFloor(this, d.id) === 0,
+          retentionEntry.state !== 'purge_pending' &&
+            erasureFloor(this, retentionEntry.id) === 0,
           'CLEANUP_ALREADY_REQUESTED',
           '本场已经安排清理或已经清理。请查看管理待办。',
         );
         requireThat(
           !this.db.one<Record<string, SqlStorageValue>>(
             'SELECT match_id FROM retention_holds WHERE match_id=?',
-            d.id,
+            retentionEntry.id,
           ),
           'RETENTION_HOLD',
           '本场资料因申诉暂缓清理。',
         );
         this.db.exec(
           "UPDATE match_directory SET state='purge_pending',version=version+1 WHERE id=?",
-          d.id,
+          retentionEntry.id,
         );
         this.insertOperation(
           id,
           session.account_id,
           'purge',
-          d.id,
+          retentionEntry.id,
           bodyHash,
           requestPayload,
           reason,

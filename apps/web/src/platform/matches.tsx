@@ -191,8 +191,8 @@ export function NewMatch({client, run}: {client: PlatformClient; run: Run}) {
   );
   const [created, setCreated] = useState<string | null>(null);
   const {data} = useRows<MatchEntry[]>(client, '/platform/matches', 0);
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
     if (stage === 0) {
       setStage(1);
       return;
