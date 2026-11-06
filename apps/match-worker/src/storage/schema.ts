@@ -1,3 +1,4 @@
+/** 本场持久Schema版本；升级必须通过显式迁移保留赛事事实。 */
 export const SCHEMA_VERSION = 8;
 /** All statements are static. Platform migration tags are independent of this version. */
 const migration1 = `
@@ -43,6 +44,7 @@ CREATE TABLE rate_limits (key TEXT PRIMARY KEY, bucket INTEGER NOT NULL, count I
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
 INSERT INTO settings(key,value) VALUES('parameters','{}');
 `;
+/** 按持久版本逐步升级本场SQLite，重复启动不能重复应用数据迁移。 */
 export function migrate(storage: DurableObjectStorage): void {
   storage.transactionSync(() => {
     const sql = storage.sql;

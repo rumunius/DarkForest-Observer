@@ -61,11 +61,13 @@ import {SCHEMA_VERSION} from '../storage/schema';
 import {exportData} from './export';
 import {prepareCredential} from './accounts';
 
+/** 事务外准备的手环密文及索引，只有权威发行事务能把它交付玩家。 */
 export interface PreparedCode {
   id: string;
   mac: string;
   ciphertext: string;
 }
+/** 本场码本的密码学材料，配合持久发行记录保障永久唯一。 */
 export interface Codebook {
   hmac: CryptoKey;
   encryption: CryptoKey;
@@ -91,15 +93,18 @@ const HEAD = [
   'settings',
   'account',
 ];
+/** 本场业务执行器，统一身份、到期屏障、事务、审计和可控时间来源。 */
 export class Engine {
   platformKeys = false;
-  taskAuthorization = new Set<string>();
+  readonly taskAuthorization = new Set<string>();
+
   get matchId(): string {
     return (
       this.db.one<{id: string}>('SELECT id FROM matches')?.id ??
       this.env.MATCH_ID
     );
   }
+
   /** Scoped to one synchronous command transaction; never persisted or exposed to players. */
   commandBatch = false;
   commandPrepared: PreparedCode[] = [];
@@ -117,23 +122,32 @@ export class Engine {
         codes: Array<{key: string; mac: string}>;
       }>
     | undefined;
+
   constructor(
-    public db: Store,
-    public env: BackendEnv,
-    public grant?: MatchGrant,
+    readonly db: Store,
+    readonly env: BackendEnv,
+    readonly grant?: MatchGrant,
   ) {}
+
+  /** 本场UTC来源；测试可替换此方法而无需真实等待赛程。 */
   now(): number {
     return Date.now();
   }
+
+  /** 根据当前比赛行把UTC转换为暂停时冻结的有效比赛时长。 */
   game(now = this.now()): number {
     return gameTime(this.db.match(), now);
   }
+
+  /** 按当前密钥世代延迟派生并缓存码本材料；失败清除缓存以允许修复后重试。 */
   async keys(): Promise<Codebook> {
     if (!this.materials) {
       this.materials = (async () => {
         const modern =
           this.platformKeys ||
-          !!this.db.one('SELECT id FROM match_identity WHERE key_version=2');
+          !!this.db.one<Record<string, SqlStorageValue>>(
+            'SELECT id FROM match_identity WHERE key_version=2',
+          );
         const [hmacRaw, encryptionRaw] = modern
           ? await Promise.all([
               derive(this.env, `match|${this.matchId}|bracelet`),
@@ -164,6 +178,8 @@ export class Engine {
     }
     return this.materials;
   }
+
+  /** 在同步事务外准备未发行候选的密文，真正发行时仍重新检查永久唯一性。 */
   async prepareCode(): Promise<PreparedCode[]> {
     const keys = await this.keys();
     const used = new Set(
@@ -188,6 +204,8 @@ export class Engine {
       }),
     );
   }
+
+  /** 从已验证码本解析授权记录的双臂配置，索引不匹配时拒绝显示错误码。 */
   arms(
     code: CodeRow | undefined,
     codebook: Awaited<ReturnType<Engine['keys']>>,
@@ -201,6 +219,8 @@ export class Engine {
     }
     return decodeArms(key);
   }
+
+  /** 用SQLite固定时间桶记录请求次数，超限作为明确的业务拒绝。 */
   limit(key: string, max: number, window = 60_000): void {
     const bucket = Math.floor(this.now() / window);
     const count = this.db.one<{count: number}>(
@@ -215,12 +235,16 @@ export class Engine {
       429,
     );
   }
+
+  /** 验证当前平台任职或旧本场会话，拒绝跨场身份和已撤销授权。 */
   actor(tokenHash: string): Actor {
     if (this.grant) {
       return membershipActor(this, this.grant);
     }
     requireThat(
-      !this.db.one('SELECT id FROM match_identity'),
+      !this.db.one<Record<string, SqlStorageValue>>(
+        'SELECT id FROM match_identity',
+      ),
       'PLATFORM_LOGIN_REQUIRED',
       '请从长期账号入口登录。',
       401,
@@ -238,6 +262,8 @@ export class Engine {
     );
     return actor;
   }
+
+  /** 生成页面所需的本场公开会话，不返回登录摘要或密钥。 */
   session(actor: Actor, tokenHash: string): Session {
     const csrf =
       this.grant?.csrf ??
@@ -257,6 +283,8 @@ export class Engine {
       csrfToken: csrf,
     };
   }
+
+  /** 按本人账号和请求ID读取确定结果；没有收据时返回待确认。 */
   result(actor: Actor, id: string): OperationResult {
     const row = this.db.one<{result_json: string}>(
       'SELECT result_json FROM request_journal WHERE actor=? AND request_id=?',
@@ -273,6 +301,8 @@ export class Engine {
           message: '正在确认上一次操作的结果。',
         };
   }
+
+  /** 重放原请求结果前核对路径与摘要，恢复取消记录保持原取消结论。 */
   replay(
     actor: Actor,
     id: string,
@@ -301,6 +331,8 @@ export class Engine {
     }
     return parseJson(row.result_json) as OperationResult;
   }
+
+  /** 在业务事务内保存确定结果，网络重试随后复用该收据。 */
   saveResult(
     actor: Actor,
     id: string,
@@ -319,6 +351,8 @@ export class Engine {
       cancelled,
     );
   }
+
+  /** 写入双时基审计，并在平台成员存在时绑定长期账号和岗位身份。 */
   audit(
     actor: string,
     action: string,
@@ -354,6 +388,8 @@ export class Engine {
       );
     }
   }
+
+  /** 按来源去重生成QQ待办，试玩标记与复制文案不代表实际发送。 */
   notice(
     source: string,
     target: string,
@@ -398,10 +434,14 @@ export class Engine {
             : 0,
     );
   }
+
+  /** 生成保留文明编号的可读身份，昵称为空时仍可定位文明。 */
   identity(id: string): string {
     const p = this.db.player(id);
     return p.nickname ? `${id}（${p.nickname}）` : id;
   }
+
+  /** 验证独立初始化秘密并原子建立旧单场夹具，禁止覆盖已存在比赛。 */
   async bootstrap(secret: string, raw: unknown): Promise<RpcReply> {
     requireThat(
       this.env.BOOTSTRAP_SECRET &&
@@ -495,7 +535,7 @@ export class Engine {
     const keys = await this.keys();
     this.db.tx(() => {
       requireThat(
-        !this.db.one('SELECT id FROM matches'),
+        !this.db.one<Record<string, SqlStorageValue>>('SELECT id FROM matches'),
         'ALREADY_INITIALIZED',
         '本场已初始化，禁止覆盖。',
       );
@@ -541,6 +581,8 @@ export class Engine {
       },
     };
   }
+
+  /** 执行内部请求并记录受限失败审计，错误响应不泄露密钥、SQL或堆栈。 */
   async call(input: RpcInput): Promise<RpcReply> {
     try {
       return await this.handle(input);
@@ -672,6 +714,8 @@ export class Engine {
       };
     }
   }
+
+  /** 先结算到期事件；持续故障时只允许明确列出的查询和救援操作。 */
   private settleForRequest(
     actor: Actor | null,
     path: string,
@@ -753,6 +797,8 @@ export class Engine {
       recordEventFailure(this, error);
     }
   }
+
+  /** 恢复准备时阻断普通入口，核对期间继续禁止玩家战局写入。 */
   private requireRecoveryAccess(path: string, write = false): void {
     const state = this.db.match().recovery_state;
     requireThat(
@@ -769,6 +815,8 @@ export class Engine {
       '裁判正在核对比赛恢复结果。',
     );
   }
+
+  /** 按认证、恢复门禁、到期屏障和事务顺序处理请求，异步准备后复核当前状态。 */
   private async handle(input: RpcInput): Promise<RpcReply> {
     const {path, method} = input;
     const db = this.db;
@@ -793,7 +841,9 @@ export class Engine {
     );
     if (path === '/auth/exchange' && method === 'POST') {
       requireThat(
-        !db.one('SELECT id FROM match_identity'),
+        !db.one<Record<string, SqlStorageValue>>(
+          'SELECT id FROM match_identity',
+        ),
         'PLATFORM_LOGIN_REQUIRED',
         '请从长期账号入口登录。',
         401,
@@ -1079,6 +1129,8 @@ export class Engine {
     await rearm(this);
     return {status: 200, body: result};
   }
+
+  /** 按稳定事件ID登记时基、优先级和负载，重试不创建另一份事件。 */
   schedule(
     id: string,
     kind: string,
@@ -1097,6 +1149,8 @@ export class Engine {
       JSON.stringify(payload),
     );
   }
+
+  /** 在当前事务中消费未发行候选并建立航次关联，耗尽时明确失败。 */
   issue(actor: string, id: string, prepared: PreparedCode[]): CodeRow {
     const used = new Set(
       this.db
@@ -1142,6 +1196,7 @@ export class Engine {
     )!;
   }
 }
+/** 构造已确定完成的操作结果，网络不确定状态不能伪装成此结果。 */
 export function completed(
   id: string,
   title: string,

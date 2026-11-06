@@ -59,7 +59,10 @@ async function login(id: string): Promise<Login> {
 }
 async function sql(query: string, ...args: SqlStorageValue[]) {
   return runInDurableObject(stub(), (_instance, state) =>
-    new Store(state.storage).all(query, ...args),
+    new Store(state.storage).all<Record<string, SqlStorageValue>>(
+      query,
+      ...args,
+    ),
   );
 }
 async function command(text: string, l = head, id = `cmd-${++sequence}`) {

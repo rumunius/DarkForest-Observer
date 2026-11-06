@@ -1,4 +1,5 @@
 import type {RuleParameters} from '@darkforest/contracts';
+/** 未提供可配置项时的默认规则参数，单位在字段名中明确。 */
 export const DEFAULT_PARAMETERS: RuleParameters = {
   singerPercent: 5,
   firstLockSeconds: 300,
@@ -9,9 +10,11 @@ export const DEFAULT_PARAMETERS: RuleParameters = {
   sightingIntervalMs: 4000,
   sightingsPerMinute: 10,
 };
+/** 把规则中的秒数格式化为用户可读时长，不参与截止时间判定。 */
 export function duration(seconds: number): string {
   return seconds % 60 === 0 ? `${seconds / 60}分钟` : `${seconds}秒`;
 }
+/** 按本场规则参数说明当前目击处罚风险，不在浏览器抽取判罚。 */
 export function attackWarning(
   wrongCount: number,
   parameters = DEFAULT_PARAMETERS,

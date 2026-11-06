@@ -1,82 +1,51 @@
-import {
-  parseJson,
-  scalarText,
-} from '../../../../packages/contracts/src/backend';
 import {DurableObject} from 'cloudflare:workers';
-import type {BackendEnv, MatchGrant, RpcInput, RpcReply} from '../rpc/types';
-import {Fault, requireThat, type Store} from '../storage/store';
-import {platformStore} from './schema';
-import {decrypt, digest, encrypt, token} from '../security/crypto';
-import {base32, controlSignature, platformKey, verifyTotp} from './security';
 import {
   ContractError,
   integer,
   object,
+  parseJson,
   requestId,
+  scalarText,
   stableJson,
   text,
 } from '../../../../packages/contracts/src/backend';
 import type {
   MatchEntry,
-  MatchHistory,
-  MatchDownload,
   MatchMember,
   PlatformAccount,
   PlatformRole,
   PlatformSession,
 } from '../../../../packages/contracts/src/platform';
+import type {BackendEnv, RpcInput, RpcReply} from '../rpc/types';
+import {decrypt, digest, encrypt, token} from '../security/crypto';
+import {Fault, requireThat, type Store} from '../storage/store';
+import {changeAccount, createAccount, importAccounts} from './accounts';
+import {previewDetails, readPlatform} from './directory';
+import {bootstrap, maintenance} from './maintenance';
 import type {ControlRequest} from './match_control';
-import {erasureOperation, erasureFloor} from './retention';
-
-type Account = PlatformAccount & {
-  credential_hash: string | null;
-  totp_ciphertext: string | null;
-  last_totp_step: number;
-  created_utc: number;
-} & Record<string, SqlStorageValue>;
-interface Login {
-  token_hash: string;
-  account_id: string;
-  auth_epoch: number;
-  csrf: string;
-  created_utc: number;
-  expires: number;
-  second_factor: number;
-  revoked: number;
-}
-type Directory = Omit<MatchEntry, 'membership'> & {
-  pool_id: string;
-  object_name: string;
-  config: string;
-} & Record<string, SqlStorageValue>;
-interface Operation {
-  id: string;
-  actor: string;
-  action: string;
-  target: string;
-  body_hash: string;
-  payload: string;
-  status: string;
-  created_utc: number;
-  attempts: number;
-  next_attempt: number;
-  error: string;
-  result: string;
-}
-const DATA_ACTIONS = [
-  '/platform/data/hold',
-  '/platform/data/purge',
-  '/platform/data/cancel-purge',
-];
+import {matchRequest} from './matches';
+import {alarm} from './operation_queue';
+import {assertVersion, operationView, protectOwner} from './policy';
+import {erasureFloor} from './retention';
+import {platformStore} from './schema';
+import {base32, controlSignature, platformKey, verifyTotp} from './security';
+import type {Account, Directory, Login, Operation} from './types';
+import {DATA_ACTIONS} from './types';
+/** 跨比赛身份和目录的Durable Object；各场玩法状态仍由独立比赛对象持有。 */
 export class DarkForestPlatform extends DurableObject<BackendEnv> {
-  db: Store;
+  readonly db: Store;
+
   constructor(ctx: DurableObjectState, env: BackendEnv) {
     super(ctx, env);
     this.db = platformStore(ctx.storage);
   }
+
+  /** 平台真实UTC来源；不与单场有效比赛时钟混用。 */
   now() {
     return Date.now();
   }
+
+  /** 保存平台管理责任、原因和细节，原始凭据不进入普通审计。 */
   audit(
     actor: string,
     action: string,
@@ -95,6 +64,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       JSON.stringify(detail),
     );
   }
+
+  /** 限制平台入口请求频率，持久时间桶不依赖浏览器会话。 */
   limit(key: string, max: number, window = 60000) {
     const count = this.db.one<{count: number}>(
       'INSERT INTO platform_rate_limits VALUES(?,?,1) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN bucket=excluded.bucket THEN count+1 ELSE 1 END,bucket=excluded.bucket RETURNING count',
@@ -108,6 +79,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       429,
     );
   }
+
+  /** 读取长期账号，缺失时明确返回不可用错误。 */
   account(id: string): Account {
     const a = this.db.one<Account>(
       'SELECT * FROM platform_accounts WHERE id=?',
@@ -116,6 +89,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     requireThat(a, 'NOT_FOUND', '账号不存在。', 404);
     return a;
   }
+
+  /** 投影可公开账号字段，剥离凭据摘要和第二因素秘密。 */
   safeAccount(a: Account): PlatformAccount {
     return {
       id: a.id,
@@ -127,6 +102,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       tags: a.tags,
     };
   }
+
+  /** 读取长期账号的当前平台任职，不推断单场裁判权限。 */
   roles(id: string): PlatformRole[] {
     return this.db
       .all<{role: PlatformRole}>(
@@ -135,11 +112,13 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       )
       .map(r => r.role);
   }
+
+  /** 按所有者身份或未过期资料授权判断指定比赛的资料管理范围。 */
   dataScope(accountId: string, matchId: string) {
     return (
       this.roles(accountId).includes('owner') ||
       (this.roles(accountId).includes('archivist') &&
-        !!this.db.one(
+        !!this.db.one<Record<string, SqlStorageValue>>(
           'SELECT account_id FROM archive_grants WHERE account_id=? AND match_id=? AND expires>?',
           accountId,
           matchId,
@@ -147,6 +126,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         ))
     );
   }
+
+  /** 逐次核对会话UTC有效期、撤销状态和账号授权世代。 */
   login(hash: string): Login {
     const s = this.db.one<Login>(
       'SELECT * FROM platform_sessions WHERE token_hash=? AND revoked=0 AND expires>?',
@@ -163,6 +144,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     );
     return s;
   }
+
+  /** 组合当前公开会话及平台任职，不返回会话存储摘要。 */
   view(s: Login): PlatformSession {
     return {
       account: this.safeAccount(this.account(s.account_id)),
@@ -172,6 +155,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       secondFactorEnabled: !!this.account(s.account_id).totp_ciphertext,
     };
   }
+
+  /** 要求当前有效平台会话及指定任职，单场裁判身份不能代替。 */
   admin(s: Login, roles: PlatformRole[] = ['owner', 'admin']) {
     this.login(s.token_hash);
     requireThat(
@@ -181,6 +166,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       403,
     );
   }
+
+  /** 读取本平台池中的比赛目录，未知ID不会自动创建比赛。 */
   directory(id: string): Directory {
     const d = this.db.one<Directory>(
       'SELECT * FROM match_directory WHERE id=?',
@@ -194,6 +181,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     );
     return d;
   }
+
+  /** 供持久任务复核长期账号有效性与本场索引关系。 */
   taskAllowed(accountId: string, matchId: string): boolean {
     const a = this.db.one<Account>(
       "SELECT * FROM platform_accounts WHERE id=? AND status='active'",
@@ -201,13 +190,15 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     );
     return (
       !!a &&
-      !!this.db.one(
+      !!this.db.one<Record<string, SqlStorageValue>>(
         'SELECT account_id FROM account_match_index WHERE account_id=? AND match_id=?',
         accountId,
         matchId,
       )
     );
   }
+
+  /** 向指定比赛对象发送绑定操作和UTC期限的签名控制请求。 */
   async control(
     d: Directory,
     id: string,
@@ -240,6 +231,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     }
     return result;
   }
+
+  /** 读取本场权威摘要并更新目录缓存，目录不能成为第二权威状态源。 */
   async summary(d: Directory, actor: string) {
     const summary = await this.control(
       d,
@@ -263,488 +256,18 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     );
     return summary;
   }
+
+  /** 固定RPC入口：调用独立维护认证的首次所有者安装流程。 */
   async bootstrap(secret: string, raw: unknown): Promise<string> {
-    const expected =
-      this.env.PLATFORM_BOOTSTRAP_SECRET ??
-      (this.env.APP_ENV === 'local' ? this.env.BOOTSTRAP_SECRET : undefined);
-    requireThat(
-      expected && (await digest(secret)) === (await digest(expected)),
-      'FORBIDDEN',
-      '安装授权无效。',
-      403,
-    );
-    const p = object(raw);
-    const name = text(p.name, 100);
-    const id = crypto.randomUUID();
-    const invitation = token();
-    const invitationId = crypto.randomUUID();
-    const ciphertext = await encrypt(
-      await platformKey(this.env),
-      invitation,
-      `invitation|${invitationId}`,
-    );
-    const invitationHash = await digest(invitation);
-    this.db.tx(() => {
-      requireThat(
-        !this.db.one("SELECT key FROM platform_meta WHERE key='installed'"),
-        'ALREADY_INSTALLED',
-        '平台已安装；所有者失联请使用独立救援流程。',
-      );
-      this.db.exec(
-        "INSERT INTO platform_accounts(id,kind,name,status,created_utc) VALUES(?,'staff',?,'pending',?)",
-        id,
-        name,
-        this.now(),
-      );
-      this.db.exec("INSERT INTO platform_roles VALUES(?,'owner')", id);
-      this.db.exec(
-        'INSERT INTO invitations VALUES(?,?,?,?,0,?,?,?)',
-        invitationId,
-        id,
-        invitationHash,
-        this.now() + 7 * 86400000,
-        ciphertext,
-        this.now() + 86400000,
-        'installer',
-      );
-      this.db.exec("INSERT INTO platform_meta VALUES('installed','1')");
-      this.audit('installer', 'install', id, '首次建立平台所有者');
-    });
-    return JSON.stringify({
-      accountId: id,
-      invitationId,
-      invitation,
-      expiresUtc: this.now() + 7 * 86400000,
-      environment: this.env.APP_ENV,
-    });
+    return bootstrap(this, this.env, secret, raw);
   }
+
+  /** 固定RPC入口：分派独立认证的救援、旧场接入和恢复步骤。 */
   async maintenance(secret: string, raw: unknown): Promise<string> {
-    requireThat(
-      this.env.PLATFORM_BOOTSTRAP_SECRET &&
-        (await digest(secret)) ===
-          (await digest(this.env.PLATFORM_BOOTSTRAP_SECRET)),
-      'FORBIDDEN',
-      '独立维护凭据无效。',
-      403,
-    );
-    const p = object(raw);
-    const operation = text(p.operation, 100);
-    if (operation === 'release-check') {
-      const matches = this.db.all<Directory>(
-        "SELECT * FROM match_directory WHERE kind='official' AND state IN ('available','archiving','archived','purge_pending') LIMIT 51",
-      );
-      requireThat(
-        matches.length <= 50,
-        'RELEASE_CHECK_LIMIT',
-        '正式比赛数量超过本次检查范围，请分批完成维护核对后再发布。',
-      );
-      const checked = [];
-      for (const d of matches) {
-        const state = await this.summary(d, 'root-maintainer');
-        checked.push({
-          id: d.id,
-          name: d.name,
-          kind: d.kind,
-          summary: {phase: state.phase},
-        });
-      }
-      return JSON.stringify({environment: this.env.APP_ENV, matches: checked});
-    }
-    if (operation === 'diagnostics') {
-      return JSON.stringify({
-        environment: this.env.APP_ENV,
-        version: this.env.CF_VERSION_METADATA?.id ?? 'local',
-        platformSchema: 1,
-        matchSchema: 8,
-        matches: this.db.all(
-          'SELECT id,name,kind,state,object_name,summary FROM match_directory',
-        ),
-        operations: this.db.all(
-          "SELECT id,action,target,status,error FROM platform_operations WHERE status!='succeeded'",
-        ),
-        bindingFingerprint: await digest(
-          `${this.env.APP_ENV}|${this.ctx.id.toString()}|${this.env.MATCH_DO.idFromName('match:binding-probe').toString()}`,
-        ),
-      });
-    }
-    const id = requestId(p.operationId);
-    const reason = text(p.reason, 500);
-    const hash = await digest(stableJson(p));
-    if (operation === 'rescue-owner') {
-      const old = this.db.one<{value: string}>(
-        'SELECT value FROM platform_meta WHERE key=?',
-        `rescue:${id}`,
-      );
-      if (old) {
-        const stored = parseJson(old.value) as {
-          hash: string;
-          invitationId: string;
-          accountId: string;
-        };
-        requireThat(
-          stored.hash === hash,
-          'OPERATION_CONFLICT',
-          '救援编号已用于不同内容。',
-        );
-        return JSON.stringify(stored);
-      }
-      requireThat(
-        p.confirm === '恢复平台所有者访问',
-        'CONFIRM_REQUIRED',
-        '请输入“恢复平台所有者访问”。',
-      );
-      const accountId = crypto.randomUUID();
-      const invite = token();
-      const inviteId = crypto.randomUUID();
-      const inviteHash = await digest(invite);
-      const cipher = await encrypt(
-        await platformKey(this.env),
-        invite,
-        `invitation|${inviteId}`,
-      );
-      this.db.tx(() => {
-        this.db.exec('UPDATE platform_sessions SET revoked=1');
-        this.db.exec("DELETE FROM platform_roles WHERE role='owner'");
-        this.db.exec(
-          "INSERT INTO platform_accounts(id,kind,name,status,created_utc) VALUES(?,'staff',?,'pending',?)",
-          accountId,
-          text(p.name, 100),
-          this.now(),
-        );
-        this.db.exec("INSERT INTO platform_roles VALUES(?,'owner')", accountId);
-        this.db.exec(
-          'INSERT INTO invitations VALUES(?,?,?,?,0,?,?,?)',
-          inviteId,
-          accountId,
-          inviteHash,
-          this.now() + 86400000,
-          cipher,
-          this.now() + 86400000,
-          'root-rescue',
-        );
-        this.db.exec(
-          'INSERT INTO platform_meta VALUES(?,?)',
-          `rescue:${id}`,
-          JSON.stringify({hash, invitationId: inviteId, accountId}),
-        );
-        this.audit('root-maintainer', 'owner-rescue', accountId, reason, {
-          operationId: id,
-        });
-      });
-      return JSON.stringify({
-        accountId,
-        invitationId: inviteId,
-        invitation: invite,
-      });
-    }
-    if (operation === 'rescue-delivery') {
-      const row = this.db.one<{ciphertext: string; delivery_expires: number}>(
-        "SELECT ciphertext,delivery_expires FROM invitations WHERE id=? AND issuer='root-rescue'",
-        text(p.invitationId, 100),
-      );
-      requireThat(
-        row?.ciphertext && row.delivery_expires > this.now(),
-        'DELIVERY_EXPIRED',
-        '救援材料已过期，请建立新的救援任务。',
-      );
-      return JSON.stringify({
-        invitation: await decrypt(
-          await platformKey(this.env),
-          row.ciphertext,
-          `invitation|${text(p.invitationId, 100)}`,
-        ),
-      });
-    }
-    if (operation === 'inspect-legacy') {
-      const matchId = text(p.matchId, 100);
-      requireThat(
-        /^[A-Za-z0-9_-]+$/.test(matchId),
-        'BAD_MATCH_ID',
-        '旧比赛编号格式不正确。',
-        400,
-      );
-      const inventory = parseJson(
-        await this.env.MATCH_DO.getByName(`match:${matchId}`).legacyInventory(
-          matchId,
-          await controlSignature(
-            this.env,
-            stableJson({action: 'legacy-inventory', matchId}),
-          ),
-        ),
-      );
-      this.db.exec(
-        'INSERT OR REPLACE INTO platform_meta VALUES(?,?)',
-        `legacy:${id}`,
-        JSON.stringify(inventory),
-      );
-      return JSON.stringify(inventory);
-    }
-    if (operation === 'adopt-legacy') {
-      const matchId = text(p.matchId, 100);
-      const existing = this.db.one<Operation>(
-        'SELECT * FROM platform_operations WHERE id=?',
-        id,
-      );
-      if (existing?.status === 'succeeded') {
-        requireThat(
-          existing.body_hash === hash,
-          'OPERATION_CONFLICT',
-          '迁移编号对应不同内容。',
-        );
-        return JSON.stringify({matchId, receipt: parseJson(existing.result)});
-      }
-      const row = this.db.one<{value: string}>(
-        'SELECT value FROM platform_meta WHERE key=?',
-        `legacy:${id}`,
-      );
-      requireThat(
-        row,
-        'INSPECTION_REQUIRED',
-        '请先检查旧比赛并保存加密检查点。',
-      );
-      const inventory = parseJson(row.value) as {
-        id: string;
-        revision: number;
-        accounts: Array<{
-          id: string;
-          role: string;
-          name: string;
-          credential_hash: string;
-        }>;
-        checkpoint: unknown;
-      };
-      requireThat(
-        inventory.id === matchId &&
-          p.checkpointDigest ===
-            (await digest(stableJson(inventory.checkpoint))),
-        'BACKUP_RECEIPT_REQUIRED',
-        '请保存检查点、回读校验后再登记旧比赛。',
-      );
-      requireThat(
-        p.confirm === `接入旧比赛 ${matchId}`,
-        'CONFIRM_REQUIRED',
-        `请输入“接入旧比赛 ${matchId}”。`,
-      );
-      let op = existing;
-      if (!op) {
-        const mappings = inventory.accounts.map(a => ({
-          ...a,
-          accountId: crypto.randomUUID(),
-        }));
-        this.db.tx(() => {
-          requireThat(
-            !this.db.one('SELECT id FROM match_directory WHERE id=?', matchId),
-            'MATCH_EXISTS',
-            '该场次已登记，禁止重建。',
-          );
-          this.db.exec(
-            "INSERT INTO match_directory(id,name,kind,state,object_name,created_utc,retention_days,audit_days,config) VALUES(?,?,'official','provisioning',?,?,44,365,'{}')",
-            matchId,
-            text(p.name, 100),
-            `match:${matchId}`,
-            this.now(),
-          );
-          for (const a of mappings) {
-            this.db.exec(
-              "INSERT INTO platform_accounts(id,kind,name,status,created_utc) VALUES(?,?,?,'pending',?)",
-              a.accountId,
-              a.role === 'judge' ? 'staff' : 'player',
-              a.name,
-              this.now(),
-            );
-            this.db.exec(
-              'INSERT INTO invitations VALUES(?,?,?,?,0,NULL,?,?)',
-              crypto.randomUUID(),
-              a.accountId,
-              a.credential_hash,
-              this.now() + 7 * 86400000,
-              this.now(),
-              'legacy-migration',
-            );
-            this.db.exec(
-              'INSERT INTO account_match_index VALUES(?,?)',
-              a.accountId,
-              matchId,
-            );
-          }
-          this.insertOperation(
-            id,
-            'root-maintainer',
-            'adopt-legacy',
-            matchId,
-            hash,
-            {mappings, expectedRevision: inventory.revision},
-            reason,
-          );
-        });
-        op = this.db.one<Operation>(
-          'SELECT * FROM platform_operations WHERE id=?',
-          id,
-        )!;
-      }
-      requireThat(
-        op.body_hash === hash,
-        'OPERATION_CONFLICT',
-        '迁移编号对应不同内容。',
-      );
-      const saved = parseJson(op.payload) as {
-        mappings: Array<{id: string; accountId: string}>;
-        expectedRevision: number;
-      };
-      const d = this.directory(matchId);
-      const receipt = await this.control(
-        d,
-        `${id}:adopt`,
-        'adopt-legacy',
-        'root-maintainer',
-        reason,
-        {
-          kind: 'official',
-          expectedRevision: saved.expectedRevision,
-          accounts: saved.mappings.map(a => ({
-            localId: a.id,
-            accountId: a.accountId,
-          })),
-        },
-      );
-      this.db.tx(() => {
-        this.db.exec(
-          "UPDATE match_directory SET state='available',version=version+1 WHERE id=?",
-          matchId,
-        );
-        this.db.exec(
-          "UPDATE platform_operations SET status='succeeded',result=?,payload='{}' WHERE id=?",
-          JSON.stringify(receipt),
-          id,
-        );
-        this.db.exec('DELETE FROM platform_meta WHERE key=?', `legacy:${id}`);
-      });
-      return JSON.stringify({
-        matchId,
-        receipt,
-        message:
-          '原对象、码本和比赛记录已保留；旧口令仅可在领取页面兑换一次长期口令，7天后失效。未知旧日志人员保持未确认。',
-      });
-    }
-    const d = this.directory(text(p.matchId, 100));
-    if (operation === 'carry-receipt') {
-      const carry = object(p.carry);
-      const savedDigest = text(p.sha256, 100);
-      requireThat(
-        savedDigest === (await digest(stableJson(carry))),
-        'CARRY_MISMATCH',
-        '本地回读材料的摘要不匹配。',
-      );
-      this.db.exec(
-        'INSERT OR REPLACE INTO platform_meta VALUES(?,?)',
-        `carry:${d.id}:${id}`,
-        JSON.stringify({digest: savedDigest, carryId: carry.id}),
-      );
-      this.audit('root-maintainer', 'carry-saved', d.id, reason, {
-        operationId: id,
-      });
-      return JSON.stringify({saved: true});
-    }
-    if (operation === 'recovery') {
-      requireThat(
-        this.env.BOOTSTRAP_SECRET,
-        'RECOVERY_NOT_CONFIGURED',
-        '比赛恢复凭据未配置。',
-      );
-      const payload = object(p.payload);
-      const action = text(payload.operation, 100);
-      if (action === 'prepare' || action === 'launch') {
-        requireThat(
-          erasureFloor(this, d.id) === 0,
-          'RESTORE_EXPIRED',
-          '本场完整信息已清理，旧检查点不能重新开放比赛；请查看保留的正式战报。',
-          410,
-        );
-      }
-      if (action === 'launch') {
-        const receipt = this.db.one<{value: string}>(
-          'SELECT value FROM platform_meta WHERE key=?',
-          `carry:${d.id}:${id}`,
-        );
-        requireThat(
-          receipt &&
-            object(parseJson(receipt.value)).digest ===
-              (await digest(stableJson(payload.payload))),
-          'CARRY_RECEIPT_REQUIRED',
-          '必须保存并回读校验carry材料，再登记收据后执行恢复。',
-        );
-        requireThat(
-          p.confirm === `恢复比赛 ${d.id}`,
-          'CONFIRM_REQUIRED',
-          `请输入“恢复比赛 ${d.id}”。`,
-        );
-      }
-      const signature = await controlSignature(
-        this.env,
-        stableJson({matchId: d.id, raw: payload}),
-      );
-      if (action === 'launch') {
-        requireThat(
-          erasureFloor(this, d.id) === 0,
-          'RESTORE_EXPIRED',
-          '本场资料已清理，不能恢复旧检查点。',
-          410,
-        );
-      }
-      const reply = await this.env.MATCH_DO.getByName(d.object_name).recovery(
-        this.env.BOOTSTRAP_SECRET,
-        payload,
-        signature,
-      );
-      requireThat(
-        reply.status < 400,
-        'RECOVERY_FAILED',
-        (parseJson(reply.body) as {message?: string}).message ??
-          '比赛恢复未完成。',
-      );
-      if (action === 'complete') {
-        // The platform timeline never rolls back with a match. Reapply its current security facts.
-        for (const row of this.db.all<{account_id: string}>(
-          'SELECT account_id FROM account_match_index WHERE match_id=?',
-          d.id,
-        )) {
-          const a = this.account(row.account_id);
-          await this.control(
-            d,
-            `${id}:security:${a.id}:${a.auth_epoch}`,
-            'fence',
-            'root-maintainer',
-            '恢复后应用最新平台撤销',
-            {
-              accountId: a.id,
-              authEpoch: a.auth_epoch,
-              disabled: a.status !== 'active',
-            },
-          );
-        }
-        const generation = erasureFloor(this, d.id);
-        if (generation > 0) {
-          await this.control(
-            d,
-            `${id}:erase:${generation}`,
-            'erase',
-            'root-maintainer',
-            '恢复后应用独立清理账本',
-            {generation},
-          );
-        }
-      }
-      this.audit('root-maintainer', `recovery:${action}`, d.id, reason, {
-        operationId: id,
-      });
-      return reply.body;
-    }
-    throw new Fault(
-      400,
-      'UNSUPPORTED_MAINTENANCE',
-      '此操作需要兼容性检查与基础设施工具，当前向导不会伪装执行。',
-    );
+    return maintenance(this, this.env, this.ctx, secret, raw);
   }
+
+  /** 固定RPC入口：执行平台请求、重排队列并转换不泄密的错误响应。 */
   async call(
     input: RpcInput,
   ): Promise<Omit<RpcReply, 'body'> & {body: string}> {
@@ -784,6 +307,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       };
     }
   }
+
+  /** 验证第二因素时间步或一次性恢复码，并原子标记消费以阻止重放。 */
   private async factor(a: Account, raw: unknown): Promise<boolean> {
     if (!a.totp_ciphertext) {
       return false;
@@ -813,7 +338,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       });
     }
     const hash = await digest(code);
-    const r = this.db.one(
+    const r = this.db.one<Record<string, SqlStorageValue>>(
       'SELECT hash FROM recovery_codes WHERE account_id=? AND hash=? AND used=0',
       a.id,
       hash,
@@ -824,6 +349,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     }
     return false;
   }
+
+  /** 处理长期口令、领取和退出请求，凭据明文仅经专用交付返回。 */
   private async authenticate(input: RpcInput): Promise<RpcReply | null> {
     const {path, method} = input;
     if (path === '/auth/exchange' && method === 'POST') {
@@ -943,6 +470,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     }
     return null;
   }
+
+  /** 在有效会话与职责校验后分派平台API，跨场变更由持久操作队列驱动。 */
   private async handle(input: RpcInput): Promise<RpcReply> {
     const auth = await this.authenticate(input);
     if (auth) {
@@ -1158,7 +687,10 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       if (input.method === 'POST' && personalOperation[2]) {
         this.db.tx(() => {
           if (
-            !this.db.one('SELECT id FROM platform_operations WHERE id=?', id)
+            !this.db.one<Record<string, SqlStorageValue>>(
+              'SELECT id FROM platform_operations WHERE id=?',
+              id,
+            )
           ) {
             this.insertOperation(
               id,
@@ -1591,7 +1123,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
           '本场已经安排清理或已经清理。请查看管理待办。',
         );
         requireThat(
-          !this.db.one(
+          !this.db.one<Record<string, SqlStorageValue>>(
             'SELECT match_id FROM retention_holds WHERE match_id=?',
             d.id,
           ),
@@ -1627,7 +1159,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       );
       requireThat(
         op &&
-          !this.db.one(
+          !this.db.one<Record<string, SqlStorageValue>>(
             'SELECT match_id FROM erasure_ledger WHERE match_id=? AND status!=?',
             op.target,
             'cancelled',
@@ -1665,25 +1197,18 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     }
     throw new Fault(404, 'NOT_FOUND', '平台接口不存在。');
   }
+
+  /** 调用统一的乐观版本校验，防止确认过时管理草稿。 */
   private assertVersion(row: {version: number}, version: unknown) {
-    requireThat(
-      row.version === integer(version, 1),
-      'VERSION_CONFLICT',
-      '内容已变化，请刷新后重新预览。',
-    );
+    return assertVersion(this, row, version);
   }
+
+  /** 确保敏感账号或角色变更后仍保留可访问的有效所有者。 */
   private protectOwner(id: string) {
-    if (this.roles(id).includes('owner')) {
-      requireThat(
-        this.db.one<{n: number}>(
-          "SELECT COUNT(*) AS n FROM platform_roles r JOIN platform_accounts a ON a.id=r.account_id WHERE r.role='owner' AND a.status='active' AND a.id!=?",
-          id,
-        )!.n > 0,
-        'LAST_OWNER',
-        '至少保留一名已激活且可恢复访问的所有者。',
-      );
-    }
+    return protectOwner(this, id);
   }
+
+  /** 持久记录操作身份和正文摘要，跨对象执行随后逐项保存收据。 */
   insertOperation(
     id: string,
     actor: string,
@@ -1729,168 +1254,31 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     );
     this.audit(actor, action, target, reason, {operationId: id});
   }
+
+  /** 生成脱敏操作投影，隐藏内部负载并加入各目标收据。 */
   private operationView(op: Operation) {
-    return {
-      ...op,
-      payload: undefined,
-      body_hash: undefined,
-      receipts: this.db.all(
-        'SELECT target,status,receipt FROM operation_targets WHERE operation_id=?',
-        op.id,
-      ),
-    };
+    return operationView(this, op);
   }
+
+  /** 分派按平台任职和资料范围授权的只读查询。 */
   private async readPlatform(
     path: string,
     input: RpcInput,
     s: Login,
   ): Promise<RpcReply> {
-    const url = new URL(input.path, 'https://internal');
-    const manager = this.roles(s.account_id).some(role =>
-      ['owner', 'admin'].includes(role),
-    );
-    const canSee = (id: string) => manager || this.dataScope(s.account_id, id);
-    if (path === '/platform/accounts') {
-      this.admin(s);
-      const after = url.searchParams.get('after') ?? '';
-      return {
-        status: 200,
-        body: this.db
-          .all<Account>(
-            'SELECT * FROM platform_accounts WHERE id>? ORDER BY id LIMIT 100',
-            after,
-          )
-          .map(a => this.safeAccount(a)),
-      };
-    }
-    if (path === '/platform/matches') {
-      return {
-        status: 200,
-        body: this.db
-          .all<{id: string}>(
-            'SELECT id,name,kind,state,version,created_utc,summary,synced_utc,recommended,retention_days,audit_days FROM match_directory ORDER BY created_utc DESC LIMIT 200',
-          )
-          .filter(row => canSee(row.id)),
-      };
-    }
-    if (path === '/platform/operations') {
-      return {
-        status: 200,
-        body: this.db
-          .all<Operation>(
-            'SELECT * FROM platform_operations ORDER BY created_utc DESC LIMIT 100',
-          )
-          .filter(op => op.actor === s.account_id || canSee(op.target))
-          .map(op => this.operationView(op)),
-      };
-    }
-    if (path.startsWith('/platform/operations/')) {
-      const op = this.db.one<Operation>(
-        'SELECT * FROM platform_operations WHERE id=?',
-        path.slice(21),
-      );
-      requireThat(
-        op && (op.actor === s.account_id || canSee(op.target)),
-        'NOT_FOUND',
-        '任务不存在或当前账号不能查看。',
-        404,
-      );
-      return {status: 200, body: this.operationView(op)};
-    }
-    if (path === '/platform/security') {
-      this.admin(s, ['owner']);
-      return {
-        status: 200,
-        body: {
-          roles: this.db.all(
-            'SELECT r.account_id,a.name,r.role FROM platform_roles r JOIN platform_accounts a ON a.id=r.account_id',
-          ),
-          audit: this.db.all(
-            'SELECT * FROM platform_audit ORDER BY utc_ms DESC LIMIT 100',
-          ),
-        },
-      };
-    }
-    if (path === '/platform/data') {
-      this.admin(s, ['owner', 'archivist']);
-      return {
-        status: 200,
-        body: {
-          holds: this.db
-            .all<{match_id: string}>('SELECT * FROM retention_holds')
-            .filter(row => this.dataScope(s.account_id, row.match_id)),
-          ledger: this.db
-            .all<{match_id: string}>('SELECT * FROM erasure_ledger')
-            .filter(row => this.dataScope(s.account_id, row.match_id)),
-        },
-      };
-    }
-    if (path.startsWith('/platform/invitations/')) {
-      this.admin(s, ['owner', 'admin']);
-      const row = this.db.one<{
-        id: string;
-        ciphertext: string | null;
-        delivery_expires: number;
-        issuer: string;
-      }>(
-        'SELECT * FROM invitations WHERE id=?',
-        path.slice('/platform/invitations/'.length),
-      );
-      requireThat(
-        row &&
-          row.issuer === s.account_id &&
-          row.ciphertext &&
-          row.delivery_expires > this.now(),
-        'DELIVERY_EXPIRED',
-        '交付材料已过期，请重新发送邀请。',
-        404,
-      );
-      const invitation = await decrypt(
-        await platformKey(this.env),
-        row.ciphertext,
-        `invitation|${row.id}`,
-      );
-      this.admin(this.login(s.token_hash), ['owner', 'admin']);
-      return {status: 200, body: {invitation}};
-    }
-    throw new Fault(404, 'NOT_FOUND', '页面数据不存在。');
+    return readPlatform(this, this.env, path, input, s);
   }
+
+  /** 读取真实本场摘要生成平台管理预览，不直接执行草稿。 */
   private async previewDetails(
     path: string,
     p: Record<string, unknown>,
     s: Login,
   ): Promise<Record<string, unknown>> {
-    if (p.matchId) {
-      const d = this.directory(text(p.matchId, 100));
-      const summary = await this.summary(d, s.account_id);
-      return {
-        match: {id: d.id, name: d.name, kind: d.kind, version: d.version},
-        current: path.startsWith('/platform/data/')
-          ? {
-              phase: summary.phase,
-              retention_days: d.retention_days,
-              audit_days: d.audit_days,
-            }
-          : summary,
-        warning: path.includes('purge')
-          ? '提交后等待7天再清理网站上的完整复盘。请提前下载需要保留的资料；已下载的文件需要另行处理。'
-          : '权限与比赛状态将在提交时再次检查。',
-      };
-    }
-    if (p.accountId) {
-      const a = this.account(text(p.accountId, 100));
-      return {
-        account: this.safeAccount(a),
-        matches: this.db.all(
-          'SELECT match_id FROM account_match_index WHERE account_id=?',
-          a.id,
-        ),
-        warning:
-          '全局停用先拒绝新授权，再逐场撤销；已在撤销栅栏前提交的在途请求可能已成功。',
-      };
-    }
-    return {warning: '执行后会保留审计与逐目标收据。'};
+    return previewDetails(this, path, p, s);
   }
+
+  /** 分派长期账号创建及一次性邀请交付，保留原操作幂等收据。 */
   private async createAccount(
     s: Login,
     id: string,
@@ -1898,69 +1286,10 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     hash: string,
     reason: string,
   ): Promise<RpcReply> {
-    const kind = p.kind;
-    requireThat(
-      kind === 'player' || kind === 'staff',
-      'BAD_KIND',
-      '账号类别不正确。',
-      400,
-    );
-    const name = text(p.name, 100);
-    const accountId = crypto.randomUUID();
-    const invitation = token();
-    const inviteId = crypto.randomUUID();
-    const inviteHash = await digest(invitation);
-    const cipher = await encrypt(
-      await platformKey(this.env),
-      invitation,
-      `invitation|${inviteId}`,
-    );
-    this.db.tx(() => {
-      this.db.exec(
-        'INSERT INTO platform_accounts(id,kind,name,status,tags,created_utc) VALUES(?,?,?,?,?,?)',
-        accountId,
-        kind,
-        name,
-        'pending',
-        typeof p.tags === 'string' ? text(p.tags, 500, 0) : '',
-        this.now(),
-      );
-      this.db.exec(
-        'INSERT INTO invitations VALUES(?,?,?,?,0,?,?,?)',
-        inviteId,
-        accountId,
-        inviteHash,
-        this.now() + 7 * 86400000,
-        cipher,
-        this.now() + 86400000,
-        s.account_id,
-      );
-      this.insertOperation(
-        id,
-        s.account_id,
-        'account-create',
-        accountId,
-        hash,
-        {},
-        reason,
-        'succeeded',
-      );
-      this.db.exec(
-        'UPDATE platform_operations SET result=? WHERE id=?',
-        JSON.stringify({accountId, invitationId: inviteId}),
-        id,
-      );
-    });
-    return {
-      status: 201,
-      body: {
-        accountId,
-        invitationId: inviteId,
-        invitation,
-        expiresUtc: this.now() + 7 * 86400000,
-      },
-    };
+    return createAccount(this, this.env, s, id, p, hash, reason);
   }
+
+  /** 分派批量长期账号导入，保留逐行校验与处理结果。 */
   private async importAccounts(
     s: Login,
     id: string,
@@ -1968,119 +1297,10 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     hash: string,
     reason: string,
   ): Promise<RpcReply> {
-    requireThat(
-      Array.isArray(p.rows) && p.rows.length <= 100 && p.rows.length > 0,
-      'IMPORT_LIMIT',
-      '每批须为1—100行，请分批导入。',
-      400,
-    );
-    const rows = p.rows.map((r, i) => {
-      try {
-        const row = object(r);
-        requireThat(
-          row.kind === 'player' || row.kind === 'staff',
-          'BAD_KIND',
-          '类别须为player或staff。',
-          400,
-        );
-        return {
-          line: i + 1,
-          name: text(row.name, 100),
-          kind: row.kind,
-          accountId: typeof row.accountId === 'string' ? row.accountId : null,
-          error: '',
-        };
-      } catch (error) {
-        return {
-          line: i + 1,
-          name: '',
-          kind: 'player',
-          accountId: null,
-          error: error instanceof Error ? error.message : '格式错误',
-        };
-      }
-    });
-    const errors = rows.filter(r => r.error);
-    if (p.preview === true) {
-      return {
-        status: 200,
-        body: {rows, valid: rows.length - errors.length, errors: errors.length},
-      };
-    }
-    requireThat(
-      !errors.length,
-      'IMPORT_ERRORS',
-      '请先修复预览中的行级错误。',
-      400,
-    );
-    const batch = text(p.batchId, 100);
-    const fileHash = await digest(stableJson(p.rows));
-    const old = this.db.one<{body_hash: string; result: string}>(
-      'SELECT * FROM import_batches WHERE id=?',
-      batch,
-    );
-    if (old) {
-      requireThat(
-        old.body_hash === fileHash,
-        'BATCH_CONFLICT',
-        '该批次对应不同文件。',
-      );
-      return {status: 200, body: parseJson(old.result)};
-    }
-    const result = rows.map(r => ({
-      ...r,
-      id: r.accountId ?? crypto.randomUUID(),
-    }));
-    this.db.tx(() => {
-      for (const row of result) {
-        if (row.accountId) {
-          const a = this.account(row.accountId);
-          requireThat(
-            p.confirmMapping === true && a.kind === row.kind,
-            'MAPPING_REQUIRED',
-            '已有账号需按明确ID确认映射。',
-          );
-          this.db.exec(
-            'UPDATE platform_accounts SET name=?,version=version+1 WHERE id=?',
-            row.name,
-            row.id,
-          );
-        } else {
-          this.db.exec(
-            "INSERT INTO platform_accounts(id,kind,name,status,created_utc) VALUES(?,?,?,'pending',?)",
-            row.id,
-            row.kind,
-            row.name,
-            this.now(),
-          );
-        }
-      }
-      this.db.exec(
-        'INSERT INTO import_batches VALUES(?,?,?,?)',
-        batch,
-        fileHash,
-        JSON.stringify({rows: result}),
-        s.account_id,
-      );
-      this.insertOperation(
-        id,
-        s.account_id,
-        'account-import',
-        batch,
-        hash,
-        {},
-        reason,
-        'succeeded',
-      );
-    });
-    return {
-      status: 201,
-      body: {
-        rows: result,
-        message: '未领取账号请在账号池单独生成邀请；同名不会合并。',
-      },
-    };
+    return importAccounts(this, s, id, p, hash, reason);
   }
+
+  /** 分派带版本和所有者保护的账号及权限变更。 */
   private async changeAccount(
     s: Login,
     id: string,
@@ -2089,609 +1309,15 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     hash: string,
     reason: string,
   ): Promise<RpcReply> {
-    const account = this.account(text(p.accountId, 100));
-    this.assertVersion(account, p.expected_version);
-    if (
-      path === '/platform/accounts/invite' ||
-      path === '/platform/accounts/reset'
-    ) {
-      if (path.endsWith('/reset')) {
-        requireThat(
-          account.status !== 'disabled',
-          'DISABLED',
-          '停用账号需先受控启用。',
-        );
-      }
-      const invitation = token();
-      const inviteId = crypto.randomUUID();
-      const inviteHash = await digest(invitation);
-      const cipher = await encrypt(
-        await platformKey(this.env),
-        invitation,
-        `invitation|${inviteId}`,
-      );
-      this.db.tx(() => {
-        this.assertVersion(this.account(account.id), p.expected_version);
-        this.db.exec(
-          'UPDATE invitations SET claimed=1,ciphertext=NULL WHERE account_id=?',
-          account.id,
-        );
-        this.db.exec(
-          'INSERT INTO invitations VALUES(?,?,?,?,0,?,?,?)',
-          inviteId,
-          account.id,
-          inviteHash,
-          this.now() + 7 * 86400000,
-          cipher,
-          this.now() + 86400000,
-          s.account_id,
-        );
-        if (path.endsWith('/reset')) {
-          this.db.exec(
-            'UPDATE platform_accounts SET credential_hash=NULL,auth_epoch=auth_epoch+1,version=version+1 WHERE id=?',
-            account.id,
-          );
-          this.db.exec(
-            'UPDATE platform_sessions SET revoked=1 WHERE account_id=?',
-            account.id,
-          );
-        } else {
-          this.db.exec(
-            'UPDATE platform_accounts SET version=version+1 WHERE id=?',
-            account.id,
-          );
-        }
-        this.insertOperation(
-          id,
-          s.account_id,
-          'credential-invite',
-          account.id,
-          hash,
-          {},
-          reason,
-          'succeeded',
-        );
-        this.db.exec(
-          'UPDATE platform_operations SET result=? WHERE id=?',
-          JSON.stringify({invitationId: inviteId}),
-          id,
-        );
-      });
-      return {
-        status: 200,
-        body: {
-          invitationId: inviteId,
-          invitation,
-          warning:
-            '重置影响全部比赛，旧口令和会话已失效；管理任务授权仍须另行撤销。',
-        },
-      };
-    }
-    requireThat(
-      path === '/platform/accounts/status',
-      'NOT_FOUND',
-      '账号操作不存在。',
-      404,
-    );
-    requireThat(
-      p.status === 'active' || p.status === 'disabled',
-      'BAD_STATUS',
-      '请选择启用或停用。',
-      400,
-    );
-    if (p.status === 'disabled' && p.emergency !== true) {
-      for (const target of this.db.all<{match_id: string}>(
-        'SELECT match_id FROM account_match_index WHERE account_id=?',
-        account.id,
-      )) {
-        const d = this.directory(target.match_id);
-        const current = await this.summary(d, s.account_id);
-        requireThat(
-          !(
-            current.members as Array<{
-              account_id: string;
-              local_id: string;
-              state: string;
-            }>
-          ).some(
-            m =>
-              m.account_id === account.id &&
-              m.local_id === 'J01' &&
-              m.state === 'bound',
-          ),
-          'HEAD_HANDOVER_REQUIRED',
-          `该账号仍任${d.name}的总裁判，请先交接岗位；凭据泄漏时可选择紧急停用。`,
-        );
-      }
-    }
-    this.db.tx(() => {
-      this.assertVersion(this.account(account.id), p.expected_version);
-      if (p.status === 'disabled' && p.emergency !== true) {
-        this.protectOwner(account.id);
-      }
-      this.db.exec(
-        'UPDATE platform_accounts SET status=?,auth_epoch=auth_epoch+1,version=version+1 WHERE id=?',
-        p.status === 'active' && !account.credential_hash
-          ? 'pending'
-          : (p.status as string),
-        account.id,
-      );
-      this.db.exec(
-        'UPDATE platform_sessions SET revoked=1 WHERE account_id=?',
-        account.id,
-      );
-      const updated = this.account(account.id);
-      this.insertOperation(
-        id,
-        s.account_id,
-        'fence',
-        account.id,
-        hash,
-        {
-          accountId: account.id,
-          authEpoch: updated.auth_epoch,
-          disabled: p.status === 'disabled',
-        },
-        reason,
-      );
-      for (const target of this.db.all<{match_id: string}>(
-        'SELECT match_id FROM account_match_index WHERE account_id=?',
-        account.id,
-      )) {
-        this.db.exec(
-          'INSERT INTO operation_targets(operation_id,target) VALUES(?,?)',
-          id,
-          target.match_id,
-        );
-      }
-    });
-    await this.arm();
-    return {
-      status: 202,
-      body: {
-        operationId: id,
-        status: 'pending',
-        message: '平台已拒绝旧授权；逐场撤销完成前，在途请求可能已提交。',
-      },
-    };
+    return changeAccount(this, this.env, s, id, path, p, hash, reason);
   }
+
+  /** 分派本场成员、岗位及发布请求，并安排持久队列执行。 */
   private async matchRequest(input: RpcInput, s: Login): Promise<RpcReply> {
-    const url = new URL(input.path, 'https://internal');
-    const match = /^\/matches\/([A-Za-z0-9_-]+)(\/.*)?$/.exec(url.pathname);
-    requireThat(match, 'MATCH_NOT_FOUND', '场次地址无效。', 404);
-    const d = this.directory(match[1]!);
-    const path = match[2] ?? '/';
-    const indexed = !!this.db.one(
-      'SELECT account_id FROM account_match_index WHERE account_id=? AND match_id=?',
-      s.account_id,
-      d.id,
-    );
-    const admin = this.roles(s.account_id).some(r =>
-      ['owner', 'admin'].includes(r),
-    );
-    if (
-      ((path === '/manage' || path === '/eligible') &&
-        input.method === 'GET') ||
-      (path === '/preview' && input.method === 'POST')
-    ) {
-      const current = await this.summary(d, s.account_id);
-      const head = (
-        current.members as Array<{
-          account_id: string;
-          local_id: string;
-          state: string;
-        }>
-      ).some(
-        m =>
-          m.account_id === s.account_id &&
-          m.local_id === 'J01' &&
-          m.state === 'bound',
-      );
-      if (admin) {
-        this.admin(s);
-      } else {
-        requireThat(head, 'FORBIDDEN', '需要本场总裁判或平台管理员。', 403);
-      }
-      if (path === '/eligible') {
-        return {
-          status: 200,
-          body: (
-            current.members as Array<{
-              account_id: string;
-              name: string;
-              kind: string;
-              state: string;
-            }>
-          )
-            .filter(m => m.kind === 'staff' && m.state === 'accepted')
-            .map(m => ({
-              id: m.account_id,
-              name: m.name,
-              kind: 'staff',
-              status: 'active',
-            })),
-        };
-      }
-      if (path === '/preview') {
-        const body = object(input.body);
-        const payload = object(body.payload);
-        const target = text(body.path, 200);
-        requireThat(
-          target === `/matches/${d.id}/staff/assign`,
-          'BAD_PREVIEW',
-          '本页面只预览本场裁判交接。',
-          400,
-        );
-        const previewToken = token();
-        this.db.exec(
-          'INSERT INTO platform_previews VALUES(?,?,?,?,?)',
-          previewToken,
-          s.account_id,
-          target,
-          await digest(stableJson(payload)),
-          this.now() + 300000,
-        );
-        return {
-          status: 200,
-          body: {
-            previewToken,
-            match: {name: d.name, kind: d.kind},
-            current,
-            warning:
-              '交接后旧任职结束，旧预览失效。未执行管理任务需要重新核对。',
-          },
-        };
-      }
-      return {status: 200, body: {match: d, current}};
-    }
-    if (
-      input.method === 'GET' &&
-      (path === '/history' || path.startsWith('/history/'))
-    ) {
-      return this.matchHistory(s, d, path, url);
-    }
-    if (
-      input.method === 'POST' &&
-      [
-        '/members/invite',
-        '/members/remove',
-        '/members/accept',
-        '/members/bind',
-        '/staff/assign',
-        '/publish',
-      ].includes(path)
-    ) {
-      const p = object(input.body);
-      const id = requestId(p.request_id);
-      const reason = text(p.reason, 500);
-      const bodyHash = await digest(stableJson({path, matchId: d.id, body: p}));
-      const old = this.db.one<Operation>(
-        'SELECT * FROM platform_operations WHERE id=?',
-        id,
-      );
-      if (old) {
-        requireThat(
-          old.actor === s.account_id && old.body_hash === bodyHash,
-          'OPERATION_CONFLICT',
-          '操作编号已用于不同内容。',
-        );
-        return {status: 200, body: this.operationView(old)};
-      }
-      const self = path === '/members/accept' || path === '/members/bind';
-      const actor = s.account_id;
-      if (self) {
-        requireThat(indexed, 'FORBIDDEN', '请先取得本场邀请。', 403);
-      } else {
-        if (admin) {
-          this.admin(s, ['owner', 'admin']);
-        } else {
-          const current = await this.summary(d, s.account_id);
-          const member = (
-            current.members as Array<{
-              account_id: string;
-              local_id: string;
-              state: string;
-            }>
-          ).find(
-            m =>
-              m.account_id === s.account_id &&
-              m.local_id === 'J01' &&
-              m.state === 'bound',
-          );
-          requireThat(member, 'FORBIDDEN', '需要本场总裁判或平台管理员。', 403);
-          requireThat(
-            !(
-              path === '/staff/assign' &&
-              p.seat === 'J01' &&
-              p.takeover === true
-            ),
-            'FORBIDDEN',
-            '失联接管需要平台管理员。',
-            403,
-          );
-        }
-        const payload = {...p};
-        delete payload.request_id;
-        delete payload.preview_token;
-        if (path === '/staff/assign') {
-          const preview = this.db.one<{body_hash: string}>(
-            'SELECT body_hash FROM platform_previews WHERE id=? AND actor=? AND path=? AND expires>?',
-            String(p.preview_token),
-            s.account_id,
-            `/matches/${d.id}${path}`,
-            this.now(),
-          );
-          requireThat(
-            preview?.body_hash === (await digest(stableJson(payload))),
-            'PREVIEW_REQUIRED',
-            '请重新预览裁判交接影响。',
-          );
-          const a = this.account(text(p.accountId, 100));
-          requireThat(
-            a.status === 'active' && a.kind === 'staff',
-            'ACTIVE_STAFF_REQUIRED',
-            '新裁判需先激活工作人员账号。',
-          );
-        }
-      }
-      const targetId =
-        path === '/members/invite' ? text(p.accountId, 100) : actor;
-      let payload: Record<string, unknown> = {...p};
-      if (path === '/members/invite') {
-        const a = this.account(targetId);
-        requireThat(
-          a.status !== 'disabled',
-          'ACCOUNT_DISABLED',
-          '停用账号不能加入比赛。',
-        );
-        payload = {accountId: a.id, kind: a.kind, name: a.name};
-      }
-      const action = (
-        {
-          '/members/invite': 'invite',
-          '/members/remove': 'remove-member',
-          '/members/accept': 'accept',
-          '/members/bind': 'bind',
-          '/staff/assign': 'assign',
-          '/publish': 'publish',
-        } as Record<string, string>
-      )[path]!;
-      this.db.tx(() => {
-        this.insertOperation(
-          id,
-          s.account_id,
-          `control:${action}`,
-          d.id,
-          bodyHash,
-          {...payload, controlActor: actor},
-          reason,
-        );
-        if (action === 'invite') {
-          this.db.exec(
-            'INSERT OR IGNORE INTO account_match_index VALUES(?,?)',
-            targetId,
-            d.id,
-          );
-        }
-      });
-      await this.arm();
-      return {status: 202, body: {operationId: id, status: 'pending'}};
-    }
-    requireThat(indexed, 'MATCH_FORBIDDEN', '当前账号没有本场访问权限。', 403);
-    if (erasureFloor(this, d.id) > 0) {
-      throw new Fault(
-        410,
-        'REPLAY_EXPIRED',
-        '完整复盘已到期，请从本场历史页面查看保留的战报。',
-      );
-    }
-    requireThat(
-      d.state === 'available' ||
-        d.state === 'archived' ||
-        d.state === 'archiving' ||
-        d.state === 'purge_pending',
-      'MATCH_NOT_AVAILABLE',
-      '本场尚未发布或只保留档案。',
-      409,
-    );
-    const a = this.account(s.account_id);
-    const grant: MatchGrant = {
-      accountId: a.id,
-      authEpoch: a.auth_epoch,
-      matchId: d.id,
-      csrf: s.csrf,
-      expires: this.now() + 30000,
-      audience: a.kind,
-    };
-    const matchInput = {...input, path: `${path}${url.search}`};
-    const reply = await this.env.MATCH_DO.getByName(d.object_name).authorized(
-      matchInput,
-      grant,
-      await controlSignature(this.env, stableJson({input: matchInput, grant})),
-    );
-    this.login(s.token_hash);
-    if (input.method === 'GET' && erasureFloor(this, d.id) > 0) {
-      throw new Fault(
-        410,
-        'REPLAY_EXPIRED',
-        '完整复盘已到期，请从本场历史页面查看保留的战报。',
-      );
-    }
-    return {...reply, body: parseJson(reply.body)};
+    return matchRequest(this, this.env, input, s);
   }
-  private async matchHistory(
-    s: Login,
-    d: Directory,
-    path: string,
-    url: URL,
-  ): Promise<RpcReply> {
-    const staffScope = () => this.dataScope(s.account_id, d.id);
-    const download = /^\/history\/download\/(report|replay|audit|backup)$/.exec(
-      path,
-    );
-    const kind = (download?.[1] ??
-      path.slice('/history/'.length)) as MatchDownload;
-    requireThat(
-      path === '/history' || download || kind === 'report' || kind === 'replay',
-      'NOT_FOUND',
-      '没有这项赛后资料。',
-      404,
-    );
-    if (download) {
-      this.admin(s, ['owner', 'archivist']);
-      requireThat(
-        staffScope(),
-        'ARCHIVE_SCOPE_REQUIRED',
-        '当前账号不能下载本场资料。',
-        403,
-      );
-    }
-    const indexed = this.db.one(
-      'SELECT account_id FROM account_match_index WHERE account_id=? AND match_id=?',
-      s.account_id,
-      d.id,
-    );
-    requireThat(
-      indexed || staffScope(),
-      'FORBIDDEN',
-      '当前账号不能查看本场历史。',
-      403,
-    );
-    const current = await this.summary(d, s.account_id);
-    const localReader =
-      (current.participants as string[]).includes(s.account_id) ||
-      (current.members as MatchMember[]).some(
-        m =>
-          m.account_id === s.account_id &&
-          m.state === 'bound' &&
-          m.local_id === 'J01',
-      );
-    const authorize = () => {
-      this.login(s.token_hash);
-      if (download) {
-        this.admin(s, ['owner', 'archivist']);
-      } else if (!localReader) {
-        this.admin(s, ['owner', 'archivist']);
-      }
-      requireThat(
-        download ? staffScope() : localReader || staffScope(),
-        'FORBIDDEN',
-        '当前账号不能查看这项赛后资料。',
-        403,
-      );
-    };
-    authorize();
-    const available = (full: boolean) => {
-      const held = this.db.one(
-        'SELECT match_id FROM retention_holds WHERE match_id=?',
-        d.id,
-      );
-      const days = full ? d.retention_days : d.audit_days;
-      return (
-        current.phase === 'ended' &&
-        !current.recovering &&
-        (!full ||
-          (erasureFloor(this, d.id) === 0 &&
-            current.erasureGeneration === 0)) &&
-        (!!held || this.now() < Number(current.endedUtc) + days * 86400000)
-      );
-    };
-    const record = (level: string, version?: number) =>
-      this.control(
-        d,
-        crypto.randomUUID(),
-        'history-record',
-        s.account_id,
-        '读取本场赛后资料',
-        {
-          kind: level,
-          organizer: staffScope(),
-          ...(version === undefined ? {} : {version}),
-        },
-      );
-    if (path === '/history') {
-      const versions = available(false)
-        ? ((await record('versions')).versions as MatchHistory['versions'])
-        : [];
-      authorize();
-      const replayAvailable = available(true) && versions.length > 0;
-      const downloads: MatchDownload[] =
-        staffScope() && available(false)
-          ? [...(versions.length ? ['report' as const] : []), 'audit']
-          : [];
-      if (staffScope() && replayAvailable) {
-        downloads.push('replay', 'backup');
-      }
-      return {
-        status: 200,
-        body: {
-          phase: String(current.phase),
-          versions: available(false) ? versions : [],
-          replayAvailable,
-          downloads,
-        } satisfies MatchHistory,
-      };
-    }
-    const full = kind === 'replay' || kind === 'backup';
-    requireThat(
-      current.phase === 'ended',
-      'ENDED_REQUIRED',
-      '比赛结束后可以查看赛后资料。',
-    );
-    requireThat(
-      !current.recovering,
-      'RECOVERY_LOCKED',
-      '比赛正在恢复，请稍后再查看资料。',
-    );
-    requireThat(
-      available(full),
-      'HISTORY_EXPIRED',
-      '这项赛后资料已超过保留期。',
-      410,
-    );
-    this.limit(`history:${s.account_id}`, 20);
-    const rawVersion = url.searchParams.get('version');
-    const version =
-      rawVersion !== null && kind === 'report'
-        ? integer(Number(rawVersion), 1)
-        : undefined;
-    const data = await record(kind, version);
-    authorize();
-    requireThat(
-      available(full),
-      'HISTORY_EXPIRED',
-      '这项赛后资料已停止提供。',
-      410,
-    );
-    if (!download) {
-      return {status: 200, body: data};
-    }
-    this.audit(s.account_id, 'history-download', d.id, '下载本场赛后资料', {
-      kind,
-      version,
-    });
-    if (kind === 'backup') {
-      requireThat(
-        typeof data.fileName === 'string' && typeof data.text === 'string',
-        'HISTORY_UNAVAILABLE',
-        '暂时无法生成加密备份，请稍后重试。',
-        503,
-      );
-      return {status: 200, body: {fileName: data.fileName, text: data.text}};
-    }
-    const labels = {report: '战报', replay: '完整复盘', audit: '裁判操作记录'};
-    const reportVersion =
-      kind === 'report'
-        ? `-第${(data.report as {version: number}).version}版`
-        : '';
-    return {
-      status: 200,
-      body: {
-        fileName: `${d.id}-${labels[kind]}${reportVersion}.json`,
-        text: JSON.stringify(data, null, 2),
-      },
-    };
-  }
+
+  /** 根据持久队列下一次可执行UTC重排Alarm，不改变原操作身份。 */
   async arm() {
     const next = this.db.one<{due: number}>(
       "SELECT MIN(next_attempt) AS due FROM platform_operations WHERE status IN ('pending','partial') AND attempts<8 AND action!='adopt-legacy'",
@@ -2708,169 +1334,9 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       }
     }
   }
+
+  /** Cloudflare固定入口：执行可到期的平台队列工作并保留失败重试证据。 */
   async alarm() {
-    this.db.exec(
-      'UPDATE invitations SET ciphertext=NULL WHERE delivery_expires<?',
-      this.now(),
-    );
-    this.db.exec(
-      'DELETE FROM platform_sessions WHERE expires<?',
-      this.now() - 30 * 86400000,
-    );
-    const operations = this.db.all<Operation>(
-      "SELECT * FROM platform_operations WHERE status IN ('pending','partial') AND attempts<8 AND next_attempt<=? AND action!='adopt-legacy' ORDER BY created_utc LIMIT 4",
-      this.now(),
-    );
-    for (const op of operations) {
-      try {
-        const owner = this.account(op.actor);
-        requireThat(
-          owner.status === 'active',
-          'AUTHOR_DISABLED',
-          '任务发起账号已停用，需要管理员重新核对。',
-        );
-        if (!op.action.startsWith('control:')) {
-          requireThat(
-            this.roles(op.actor).some(r =>
-              ['owner', 'admin', 'archivist'].includes(r),
-            ),
-            'AUTHOR_REVOKED',
-            '任务发起人已失去管理权限。',
-          );
-        }
-        const p = parseJson(op.payload) as Record<string, unknown>;
-        let result: unknown = {};
-        if (op.action === 'create') {
-          const d = this.directory(op.target);
-          result = await this.control(
-            d,
-            op.id,
-            'initialize',
-            op.actor,
-            '网站新建独立比赛',
-            p,
-          );
-          this.db.exec(
-            "UPDATE match_directory SET state='draft',version=version+1 WHERE id=?",
-            d.id,
-          );
-        } else if (op.action.startsWith('control:')) {
-          const d = this.directory(op.target);
-          const action = op.action.slice(8);
-          if (
-            ['invite', 'remove-member', 'assign', 'publish'].includes(action) &&
-            !this.roles(op.actor).some(r => ['owner', 'admin'].includes(r))
-          ) {
-            const latest = await this.summary(d, op.actor);
-            requireThat(
-              (
-                latest.members as Array<{
-                  account_id: string;
-                  local_id: string;
-                  state: string;
-                }>
-              ).some(
-                m =>
-                  m.account_id === op.actor &&
-                  m.local_id === 'J01' &&
-                  m.state === 'bound',
-              ),
-              'AUTHOR_REVOKED',
-              '原总裁判已失去任职，请由新人重新提交。',
-            );
-          }
-          if (p.accountId && action !== 'remove-member') {
-            requireThat(
-              this.account(scalarText(p.accountId)).status !== 'disabled',
-              'ACCOUNT_DISABLED',
-              '目标账号已停用。',
-            );
-          }
-          result = await this.control(
-            d,
-            op.id,
-            action,
-            scalarText(p.controlActor ?? op.actor),
-            '网站本场管理',
-            p,
-          );
-          if (action === 'publish') {
-            this.db.exec(
-              "UPDATE match_directory SET state='available',version=version+1 WHERE id=?",
-              d.id,
-            );
-          }
-        } else if (op.action === 'fence') {
-          const targets = this.db.all<{target: string}>(
-            'SELECT target FROM operation_targets WHERE operation_id=? AND status!=? LIMIT 8',
-            op.id,
-            'succeeded',
-          );
-          for (const target of targets) {
-            try {
-              const receipt = await this.control(
-                this.directory(target.target),
-                `${op.id}:${target.target}`,
-                'fence',
-                op.actor,
-                '全局账号授权更新',
-                p,
-              );
-              this.db.exec(
-                "UPDATE operation_targets SET status='succeeded',receipt=? WHERE operation_id=? AND target=?",
-                JSON.stringify(receipt),
-                op.id,
-                target.target,
-              );
-            } catch {
-              this.db.exec(
-                "UPDATE operation_targets SET status='failed',receipt=? WHERE operation_id=? AND target=?",
-                JSON.stringify({message: '连接未确认，请重试原步骤。'}),
-                op.id,
-                target.target,
-              );
-            }
-          }
-          if (
-            this.db.one(
-              'SELECT target FROM operation_targets WHERE operation_id=? AND status!=?',
-              op.id,
-              'succeeded',
-            )
-          ) {
-            this.db.exec(
-              "UPDATE platform_operations SET status='partial',attempts=attempts+1,next_attempt=? WHERE id=?",
-              this.now() + Math.min(300000, 1000 * 2 ** op.attempts),
-              op.id,
-            );
-            continue;
-          }
-          result = {allFenced: true};
-        } else if (op.action === 'purge') {
-          requireThat(
-            this.dataScope(op.actor, op.target),
-            'ARCHIVE_SCOPE_REQUIRED',
-            '任务发起人已失去本场数据权限。',
-          );
-          result = await erasureOperation(this, op);
-        } else {
-          throw new Error('UNKNOWN_OPERATION');
-        }
-        this.db.exec(
-          "UPDATE platform_operations SET status='succeeded',result=?,error='' WHERE id=?",
-          JSON.stringify(result),
-          op.id,
-        );
-      } catch (error) {
-        this.db.exec(
-          "UPDATE platform_operations SET status='failed',attempts=attempts+1,error=? WHERE id=?",
-          error instanceof Fault
-            ? error.message
-            : '未取得完整收据，源数据保留；可重试原任务。',
-          op.id,
-        );
-      }
-    }
-    await this.arm();
+    return alarm(this);
   }
 }

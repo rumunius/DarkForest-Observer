@@ -6,16 +6,17 @@ import {
 import {requireThat} from '../storage/store';
 import type {Engine} from './engine';
 import {archiveReport, results} from './life';
+/** 校验战报更正的目标、字段与版本，不允许通过更正重开比赛。 */
 export function validateReportCorrection(
-  e: Engine,
+  engine: Engine,
   body: Record<string, unknown>,
 ): void {
   requireThat(
-    e.db.match().phase === 'ended',
+    engine.db.match().phase === 'ended',
     'RESULTS_NOT_READY',
     '比赛结束后可更正战报。',
   );
-  const version = e.db.one<{version: number}>(
+  const version = engine.db.one<{version: number}>(
     'SELECT MAX(version) AS version FROM result_reports',
   )!.version;
   requireThat(
@@ -33,24 +34,28 @@ export function validateReportCorrection(
   );
   if (field === 'attack_valid') {
     requireThat(
-      e.db.one('SELECT id FROM attacks WHERE id=?', target) &&
-        typeof body.value === 'boolean',
+      engine.db.one<Record<string, SqlStorageValue>>(
+        'SELECT id FROM attacks WHERE id=?',
+        target,
+      ) && typeof body.value === 'boolean',
       'ATTACK_NOT_FOUND',
       '请选择攻击记录。',
       400,
     );
   } else {
-    e.db.player(target);
+    engine.db.player(target);
     requireThat(
-      e.db.roster().includes(target),
+      engine.db.roster().includes(target),
       'NOT_PARTICIPANT',
       '请选择本场正式玩家。',
       400,
     );
     if (field === 'elimination_valid') {
       requireThat(
-        e.db.one('SELECT seq FROM eliminations WHERE player_id=?', target) &&
-          typeof body.value === 'boolean',
+        engine.db.one<Record<string, SqlStorageValue>>(
+          'SELECT seq FROM eliminations WHERE player_id=?',
+          target,
+        ) && typeof body.value === 'boolean',
         'ELIMINATION_NOT_FOUND',
         '请选择淘汰记录。',
         400,
@@ -58,7 +63,7 @@ export function validateReportCorrection(
     } else {
       const n = nickname(body.value);
       requireThat(
-        !e.db.one(
+        !engine.db.one<Record<string, SqlStorageValue>>(
           'SELECT id FROM players WHERE nickname=? AND id<>?',
           n,
           target,
@@ -69,38 +74,39 @@ export function validateReportCorrection(
     }
   }
 }
+/** 应用获准更正并生成新战报版本，旧版本和更正原因继续保留。 */
 export function correctReport(
-  e: Engine,
+  engine: Engine,
   body: Record<string, unknown>,
   reason: string,
 ): void {
-  results(e, e.resolvedKeys!); // Freeze legacy reports before touching the current facts.
+  results(engine, engine.resolvedKeys!); // Freeze legacy reports before touching the current facts.
   const target = String(body.target);
   if (body.field === 'attack_valid') {
-    e.db.exec(
+    engine.db.exec(
       'UPDATE attacks SET valid=? WHERE id=?',
       body.value ? 1 : 0,
       target,
     );
   } else if (body.field === 'elimination_valid') {
-    e.db.exec('UPDATE eliminations SET valid=0 WHERE player_id=?', target);
+    engine.db.exec('UPDATE eliminations SET valid=0 WHERE player_id=?', target);
     if (body.value) {
-      e.db.exec(
+      engine.db.exec(
         'UPDATE eliminations SET valid=1 WHERE seq=(SELECT MAX(seq) FROM eliminations WHERE player_id=?)',
         target,
       );
     }
-    e.db.exec(
+    engine.db.exec(
       'UPDATE flights SET status=? WHERE player_id=?',
       body.value ? 'eliminated' : 'active',
       target,
     );
   } else {
-    e.db.exec(
+    engine.db.exec(
       'UPDATE players SET nickname=? WHERE id=?',
       nickname(body.value),
       target,
     );
   }
-  archiveReport(e, reason);
+  archiveReport(engine, reason);
 }

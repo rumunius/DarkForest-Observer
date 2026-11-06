@@ -1,4 +1,5 @@
 import type {Action, Snapshot} from '@darkforest/contracts';
+/** 按快照控制页面动作可见性；正式提交仍由服务端重新授权。 */
 export function canAct(data: Snapshot, action: Action): boolean {
   const {player: me, match} = data;
   if (
@@ -39,6 +40,7 @@ export function canAct(data: Snapshot, action: Action): boolean {
   }
   return true;
 }
+/** 判断当前裁判页面职责，平台身份或隐藏按钮不能代替API权限。 */
 export function judgeCan(data: Snapshot, area: string): boolean {
   return (
     data.session?.role === 'judge' &&

@@ -1,6 +1,7 @@
 import {parseJson} from './backend';
 /** DF-Judge/1: shared, executable command catalogue and syntax. No browser rule engine. */
 export const LANGUAGE_VERSION = 'DF-Judge/1';
+/** 共享命令语法与执行预算，服务端仍必须限制组合深度和输出大小。 */
 export const COMMAND_LIMITS = {
   bytes: 256 * 1024,
   depth: 32,
@@ -18,6 +19,7 @@ export function commandByteLength(input: string): number {
   }
   return size;
 }
+/** 注册命令的参数、权限及执行模式描述，供解析和帮助共同使用。 */
 export interface CommandSpec {
   path: string;
   args: string;
@@ -108,6 +110,7 @@ const groups: Array<[string, string, string]> = [
     'control',
   ],
 ];
+/** 完整注册命令目录；未知路径不能动态变成可执行代码。 */
 export const COMMAND_SPECS: CommandSpec[] = groups.flatMap(
   ([source, permission, mode]) =>
     source.split(';').map(entry => {
@@ -125,11 +128,13 @@ export const COMMAND_SPECS: CommandSpec[] = groups.flatMap(
       };
     }),
 );
+/** 解析后的命令树节点，包含位置参数、选项及可选组合块。 */
 export interface CommandNode {
   words: string[];
   block?: CommandNode[];
   options: Record<string, string>;
 }
+/** 包含位置证据的命令语法错误，供控制台展示可定位提示。 */
 export class CommandSyntaxError extends Error {
   constructor(
     message: string,
@@ -138,11 +143,13 @@ export class CommandSyntaxError extends Error {
     super(`${message}（位置 ${offset + 1}）`);
   }
 }
+/** 命令词法单元及其原文跨度，避免提示丢失准确位置。 */
 export interface Lexeme {
   value: string;
   start: number;
   end: number;
 }
+/** 按引号、转义和组合括号拆词；不执行或授权任何命令。 */
 export function tokenizeCommand(input: string): Lexeme[] {
   const result: Lexeme[] = [];
   for (let i = 0; i < input.length;) {
@@ -237,6 +244,7 @@ const optionNames = new Set([
   'until',
   'search',
 ]);
+/** 构造受预算限制的命令语法树，未知或非法结构在执行前拒绝。 */
 export function parseCommandTree(input: string): CommandNode {
   if (commandByteLength(input) > COMMAND_LIMITS.bytes) {
     throw new CommandSyntaxError('输入超过256KiB');
@@ -311,11 +319,13 @@ export function parseCommandTree(input: string): CommandNode {
   }
   return node;
 }
+/** 把已解析节点匹配到固定命令目录，未注册路径没有执行权限。 */
 export function commandSpec(node: CommandNode): CommandSpec | undefined {
   return COMMAND_SPECS.filter(s =>
     s.path.split(' ').every((w, i) => node.words[i] === w),
   ).sort((a, b) => b.path.length - a.path.length)[0];
 }
+/** 将命令时长语法转换成毫秒并检查范围，不接受任意日期表达式。 */
 export function durationMs(value: string): number {
   const parts = [...value.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h|d)/g)];
   if (!parts.length || parts.map(p => p[0]).join('') !== value) {
@@ -334,6 +344,7 @@ export function durationMs(value: string): number {
   }
   return n;
 }
+/** 解析明确的时间输入为UTC毫秒，拒绝无效或越界时刻。 */
 export function instantMs(value: string): number {
   if (
     !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?(Z|[+-]\d\d:\d\d)$/.test(
@@ -345,6 +356,7 @@ export function instantMs(value: string): number {
   }
   return Date.parse(value);
 }
+/** 控制台补全候选及替换范围，不代表该候选在当前战局可执行。 */
 export interface Completion {
   value: string;
   description: string;
@@ -441,6 +453,7 @@ const values: Record<string, Array<[string, string]>> = {
     'qq-material-name',
   ].map(v => [v, '活动设置项']),
 };
+/** 按当前输入和授权命令目录提供补全，不包含未授权秘密。 */
 export function commandCompletions(
   input: string,
   caret = input.length,

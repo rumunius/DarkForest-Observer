@@ -3,6 +3,7 @@ import {useState} from 'react';
 import {useApp} from '../state';
 import {Button, CopyText, Field} from '../ui';
 import {ManagementForm} from './judge';
+/** 在本场权限范围内展示账号管理，凭据只通过专用交付入口读取。 */
 export function AccountsManagement() {
   const {reportError, data, source, result, base} = useApp();
   const platform = base.startsWith('/m/');

@@ -552,7 +552,7 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     await runInDurableObject(platform(), (_instance, state) => {
       const db = new Store(state.storage);
       expect(
-        db.one(
+        db.one<Record<string, SqlStorageValue>>(
           'SELECT id FROM invitations WHERE token_hash=?',
           jsonString(jsonObject(created.body).invitation),
         ),
@@ -1284,7 +1284,7 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       (_instance, state) => {
         const db = new Store(state.storage);
         expect(
-          db.one(
+          db.one<Record<string, SqlStorageValue>>(
             'SELECT disabled FROM authorization_fences WHERE account_id=?',
             accountId,
           ),
@@ -1455,7 +1455,9 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     ).toBe(200);
     expect(
       await runInDurableObject(platform(), (_instance, state) =>
-        new Store(state.storage).all('SELECT * FROM recovery_codes'),
+        new Store(state.storage).all<Record<string, SqlStorageValue>>(
+          'SELECT * FROM recovery_codes',
+        ),
       ),
     ).toEqual([]);
   });

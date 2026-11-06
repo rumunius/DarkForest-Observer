@@ -1,5 +1,6 @@
 import {useApp} from '../state';
 import {Button} from '../ui';
+/** 按裁判集合游标加载历史，保留请求期间的忙碌反馈。 */
 export function RecordPagination({
   kind,
 }: {

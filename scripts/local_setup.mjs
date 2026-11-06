@@ -10,11 +10,12 @@ const count = Number(countIndex < 0 ? 24 : flags[countIndex + 1]);
 if (!Number.isInteger(count) || count < 2 || count > 350) {
   throw new Error('--players须为2—350之间的整数');
 }
-const exists = async path =>
-  access(path).then(
+async function exists(path) {
+  return access(path).then(
     () => true,
     () => false,
   );
+}
 const varsPath = resolve(root, 'apps/match-worker/.dev.vars');
 let vars;
 if (await exists(varsPath)) {

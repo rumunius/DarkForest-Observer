@@ -2,6 +2,7 @@ import type {HomeworldSubmission} from './index';
 
 /** Public wire protocol. No storage types or secrets may be exported here. */
 export const CONTRACT_VERSION = 1;
+/** 服务器使用的完整比赛阶段；前端显示阶段可合并但不能改变该状态机。 */
 export type DomainPhase =
   | 'setup'
   | 'armed'
@@ -12,11 +13,13 @@ export type DomainPhase =
   | 'transfer'
   | 'hunt'
   | 'ended';
+/** 公共失败响应，definitive区分确定拒绝与需要查询原操作的未知结果。 */
 export interface ApiFailure {
   code: string;
   message: string;
   definitive: boolean;
 }
+/** 输入不符合公共契约时的错误，由网关或服务端转换为400响应。 */
 export class ContractError extends Error {
   constructor(message = '输入内容有误，请检查后重试。') {
     super(message);
@@ -63,12 +66,14 @@ export function numericRecord(value: unknown): Record<string, number> {
   });
   return Object.fromEntries(entries);
 }
+/** 要求非空且非数组的对象，返回未知字段供后续逐项校验。 */
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new ContractError();
   }
   return value as Record<string, unknown>;
 }
+/** 按输入对象字段白名单拒绝多余字段，防止静默接收旧参数。 */
 export function strict(
   value: unknown,
   allowed: readonly string[],
@@ -79,12 +84,14 @@ export function strict(
   }
   return result;
 }
+/** 校验字符串及长度边界，不进行数字或对象到文本的隐式转换。 */
 export function text(value: unknown, max = 500, min = 1): string {
   if (typeof value !== 'string' || value.length < min || value.length > max) {
     throw new ContractError();
   }
   return value;
 }
+/** 校验安全整数与包含端点的范围，避免浮点或越界值进入权威状态。 */
 export function integer(
   value: unknown,
   min = 0,
@@ -100,6 +107,7 @@ export function integer(
   }
   return value;
 }
+/** 校验稳定的请求ID，重试必须复用原ID而不是再创建业务操作。 */
 export function requestId(value: unknown): string {
   const id = text(value, 100);
   if (!/^[A-Za-z0-9_-]+$/.test(id)) {
@@ -107,12 +115,14 @@ export function requestId(value: unknown): string {
   }
   return id;
 }
+/** 要求保留前导零的六位十进制字符串，与手环分组码独立。 */
 export function coordinate(value: unknown): string {
   if (typeof value !== 'string' || !/^[0-9]{6}$/.test(value)) {
     throw new ContractError('请输入六位数字口令。');
   }
   return value;
 }
+/** 验证母星提交的共享wire字段；拒绝额外字段并保留原请求ID。 */
 export function homeworldSubmission(
   value: unknown,
 ): HomeworldSubmission & {request_id: string} {
@@ -133,6 +143,7 @@ export function nickname(value: unknown): string {
   }
   return normalized;
 }
+/** 递归按对象键排序序列化，用于幂等摘要和签名；不改变数组顺序。 */
 export function stableJson(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableJson).join(',')}]`;

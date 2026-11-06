@@ -12,6 +12,7 @@ import {integer, stableJson} from '../../../../packages/contracts/src/backend';
 import {permission, requireThat, type Actor} from '../storage/store';
 import type {Engine} from './engine';
 
+/** 文明历史查询允许的分类集合，分类可见性仍逐次按角色验证。 */
 export const HISTORY_KINDS = [
   'all',
   'attack',
@@ -46,7 +47,7 @@ interface Cursor {
 
 /** Merge independent persisted histories; the cursor fixes each source's first-page waterline. */
 export function civilizationHistory(
-  e: Engine,
+  engine: Engine,
   actor: Actor,
   id: string,
   kind: string,
@@ -122,12 +123,12 @@ export function civilizationHistory(
       cursor?.ceilings[table] ??
       (cursor
         ? 0
-        : e.db.one<{n: number}>(
+        : engine.db.one<{n: number}>(
             `SELECT COALESCE(MAX(rowid),0) n FROM ${table}`,
           )!.n);
     integer(ceiling, 0);
     ceilings[table] = ceiling;
-    for (const row of e.db.all(
+    for (const row of engine.db.all<Record<string, SqlStorageValue>>(
       `SELECT rowid AS position,${fields} FROM ${table} WHERE rowid<=? AND (${where})`,
       ceiling,
       ...args,
@@ -307,7 +308,7 @@ export function civilizationHistory(
   }
   const result = filtered.slice(0, count);
   const last = result.at(-1);
-  const watermark = cursor?.watermark ?? e.db.match().revision;
+  const watermark = cursor?.watermark ?? engine.db.match().revision;
   return {
     items: result,
     nextCursor:

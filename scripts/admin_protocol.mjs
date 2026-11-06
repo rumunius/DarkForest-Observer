@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {URL} from 'node:url';
+/** 规范化运维材料JSON，供回读校验和请求摘要复用。 */
 export function stable(value) {
   if (Array.isArray(value)) {
     return `[${value.map(stable).join(',')}]`;
@@ -12,9 +13,11 @@ export function stable(value) {
   }
   return JSON.stringify(value);
 }
+/** 计算运维材料摘要，验证本地保存内容与原材料一致。 */
 export function checksum(value) {
   return createHash('sha256').update(stable(value)).digest('base64');
 }
+/** 校验并规范化运维向导的站点URL，后续请求只发往明确选定站点。 */
 export function siteUrl(value) {
   const url = new URL(value);
   if (
@@ -37,6 +40,7 @@ export function siteUrl(value) {
   }
   return url;
 }
+/** 根据持久恢复状态选择下一步，防止跳过保存材料或网站核对。 */
 export function nextRecoveryAction(state) {
   if (state === 'prepared') {
     return 'save-carry';
@@ -55,6 +59,7 @@ export function nextRecoveryAction(state) {
   }
   return 'select-checkpoint';
 }
+/** 核对正式比赛状态，存在不适合发布的活动场次时拒绝继续。 */
 export function assertReleaseSafe(diagnostics) {
   const active = diagnostics.matches.filter(match => {
     const summary =

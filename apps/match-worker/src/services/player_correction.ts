@@ -4,12 +4,13 @@ import {requireThat, type FlightRow} from '../storage/store';
 import {TIMES} from '../domain/rules';
 import {retire} from './life';
 
+/** 根据阶段和原航次计算恢复资格后的合法状态，不修改持久数据。 */
 export function restoration(
-  e: Engine,
+  engine: Engine,
   target: string,
   intervention = false,
 ): {status: string; deadline: number | null} {
-  const db = e.db;
+  const db = engine.db;
   const m = db.match();
   const p = db.player(target);
   requireThat(
@@ -47,7 +48,7 @@ export function restoration(
       m.phase === 'forest' &&
         db.home(target)?.destroyed_game === null &&
         prior.deadline !== null &&
-        e.game() < Math.min(prior.deadline, TIMES.apocalypse),
+        engine.game() < Math.min(prior.deadline, TIMES.apocalypse),
       'RESTORE_DEADLINE_EXPIRED',
       '原重生期限或母星资格已失效，请先核对关联事件。',
     );
@@ -68,7 +69,7 @@ export function restoration(
     ].includes(out.reason)
   ) {
     requireThat(
-      db.one(
+      db.one<Record<string, SqlStorageValue>>(
         'SELECT id FROM sighting_codes WHERE player_id=? AND voyage=? AND activated_game IS NOT NULL AND retired_reason=?',
         target,
         db.flight(target).voyage,
@@ -87,23 +88,24 @@ export function restoration(
   return {
     status: 'preparing',
     deadline: Math.min(
-      e.game() + db.parameters().respawnSeconds * 1000,
+      engine.game() + db.parameters().respawnSeconds * 1000,
       TIMES.apocalypse,
     ),
   };
 }
 
+/** 恢复文明资格并处理新码、观战撤销及通知，保留已传播信息的审计。 */
 export function restorePlayer(
-  e: Engine,
+  engine: Engine,
   target: string,
   id: string,
   source: string,
   prepared: PreparedCode[],
   intervention = false,
 ): void {
-  const next = restoration(e, target, intervention);
-  const db = e.db;
-  retire(e, target, 'judge_restoration', e.game(), e.now());
+  const next = restoration(engine, target, intervention);
+  const db = engine.db;
+  retire(engine, target, 'judge_restoration', engine.game(), engine.now());
   db.exec(
     'UPDATE eliminations SET valid=0 WHERE player_id=? AND valid=1',
     target,
@@ -119,10 +121,10 @@ export function restorePlayer(
     target,
   );
   if (next.status === 'issued') {
-    e.issue(target, `restore-${id}`, prepared);
+    engine.issue(target, `restore-${id}`, prepared);
   }
   if (next.deadline !== null) {
-    e.schedule(
+    engine.schedule(
       `${source}:timeout`,
       'respawn_timeout',
       'game',
@@ -134,7 +136,7 @@ export function restorePlayer(
       },
     );
   }
-  e.notice(
+  engine.notice(
     source,
     target,
     '参赛资格更正',

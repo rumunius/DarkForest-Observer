@@ -486,6 +486,7 @@ function Screen() {
     </div>
   );
 }
+/** 组合本场状态提供器与页面外壳，所有可见动作仍取决于服务端快照。 */
 export function App({
   source,
   base = '',

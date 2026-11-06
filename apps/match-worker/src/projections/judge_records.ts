@@ -6,9 +6,12 @@ import type {AuditEntry, JudgeState, Notice} from '@darkforest/contracts';
 import type {Engine} from '../services/engine';
 import {integer} from '../../../../packages/contracts/src/backend';
 import {permission, type Actor} from '../storage/store';
+/** 裁判分页接口支持的历史集合，各集合有独立权限和游标。 */
 export type JudgeCollection = 'notices' | 'audits' | 'attacks';
+/** 裁判分页响应的公开记录类型，不含存储密钥或会话字段。 */
 export type JudgeItems =
   Notice[] | AuditEntry[] | NonNullable<JudgeState['attacks']>;
+/** 将通知持久行转换为裁判可读记录，保留版本及复制、发送责任信息。 */
 export function noticeProjection(r: Record<string, SqlStorageValue>): Notice {
   return {
     id: r.id as string,
@@ -28,8 +31,9 @@ export function noticeProjection(r: Record<string, SqlStorageValue>): Notice {
     error: r.error as string,
   };
 }
+/** 按集合权限读取稳定顺序的历史页，并返回下一页游标。 */
 export function judgeRecords(
-  e: Engine,
+  engine: Engine,
   actor: Actor,
   kind: JudgeCollection,
   before = Number.MAX_SAFE_INTEGER,
@@ -46,7 +50,7 @@ export function judgeRecords(
         : 'attacks';
   const sequence =
     kind === 'notices' ? 'ordering_seq' : kind === 'audits' ? 'seq' : 'rowid';
-  const rows = e.db.all<Record<string, SqlStorageValue>>(
+  const rows = engine.db.all<Record<string, SqlStorageValue>>(
     `SELECT *,${sequence} AS position FROM ${table} WHERE ${sequence}<? ORDER BY ${sequence} DESC LIMIT ?`,
     before,
     limit,

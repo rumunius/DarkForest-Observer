@@ -15,12 +15,13 @@ import {dueUtc} from '../scheduler/events';
 import {observerAllowed} from '../projections/snapshot';
 
 type Impact = Pick<ManagementPreview, 'changes' | 'consequences'>;
+/** 根据权威状态计算管理前后变化及副作用说明，执行时仍需重新校验。 */
 export function managementImpact(
-  e: Engine,
+  engine: Engine,
   path: string,
   body: Record<string, unknown>,
 ): Impact {
-  const db = e.db;
+  const db = engine.db;
   const m = db.match();
   const target = scalarText(body.target ?? m.id);
   const changes: Impact['changes'] = [];
@@ -47,11 +48,11 @@ export function managementImpact(
     );
   };
   const restoring = (id: string) => {
-    const next = restoration(e, id);
+    const next = restoration(engine, id);
     add(`${id}飞船`, db.flight(id).status, next.status);
     add(`${id}重生截止（有效毫秒）`, db.flight(id).deadline, next.deadline);
     add(`${id}有效淘汰记录`, '有效', '撤销并保留原记录');
-    add(`${id}赛中观战`, observerAllowed(e, db.player(id)), false);
+    add(`${id}赛中观战`, observerAllowed(engine, db.player(id)), false);
     if (next.status === 'issued') {
       capacity();
     }
@@ -68,8 +69,8 @@ export function managementImpact(
         '永久退役、清空当前引用',
       );
     }
-    const left = survivors(e).length - ids.length;
-    add('存活文明', survivors(e).length, left);
+    const left = survivors(engine).length - ids.length;
+    add('存活文明', survivors(engine).length, left);
     consequences.push(
       `写入淘汰、通知与排名记录；观战等待${db.parameters().observerWaitSeconds}秒。${left <= 1 ? '本次结算将触发提前完赛、封存排名并取消剩余正赛计划。' : '比赛继续。'}`,
     );
@@ -124,7 +125,7 @@ export function managementImpact(
       );
     }
   } else if (path === '/judge/attack-correction') {
-    const a = correctionTarget(e, body.attack_id);
+    const a = correctionTarget(engine, body.attack_id);
     const before = parseJson(a.before_json!) as {
       wrong: number;
       lockedUntil: number;
@@ -164,7 +165,7 @@ export function managementImpact(
       );
       add(
         `${restored}赛中观战`,
-        observerAllowed(e, db.player(restored)),
+        observerAllowed(engine, db.player(restored)),
         false,
       );
       add(`${restored}重生期限`, db.flight(restored).deadline, null);
@@ -202,7 +203,7 @@ export function managementImpact(
       db.one<{count: number}>(
         'SELECT COUNT(*) AS count FROM sessions WHERE account_id=? AND revoked=0 AND expires>?',
         target,
-        e.now(),
+        engine.now(),
       )!.count,
       0,
     );
@@ -253,7 +254,7 @@ export function managementImpact(
     const h = db.officialHome(String(body.code), true);
     add('手动歌者事件', '无', {
       clock: 'game',
-      due: e.game(),
+      due: engine.game(),
       code: body.code,
       target: h?.player_id ?? null,
     });
@@ -268,7 +269,7 @@ export function managementImpact(
     );
   } else if (path === '/judge/effects') {
     if (body.revoke) {
-      const effect = db.one(
+      const effect = db.one<Record<string, SqlStorageValue>>(
         'SELECT target,starts,ends,active FROM admin_effects WHERE id=?',
         scalarText(body.revoke),
       )!;
@@ -276,8 +277,8 @@ export function managementImpact(
     } else {
       add('临时禁止目击', '无该项效果', {
         target,
-        starts: e.now(),
-        ends: e.now() + Number(body.seconds) * 1000,
+        starts: engine.now(),
+        ends: engine.now() + Number(body.seconds) * 1000,
       });
     }
     consequences.push('按真实UTC计时；不冻结比赛、不解除个人处罚或阶段限制。');
@@ -289,8 +290,8 @@ export function managementImpact(
     );
     add(
       `${target}当前赛中观战资格`,
-      observerAllowed(e, db.player(target)),
-      observerAllowed(e, {
+      observerAllowed(engine, db.player(target)),
+      observerAllowed(engine, {
         ...db.player(target),
         observer_revoked: body.allowed ? 0 : 1,
       }),
@@ -333,8 +334,8 @@ export function managementImpact(
       "SELECT * FROM scheduled_events WHERE status='pending'",
     );
     const due = pending.filter(event => {
-      const utc = dueUtc(e, event);
-      return utc !== null && utc <= e.now();
+      const utc = dueUtc(engine, event);
+      return utc !== null && utc <= engine.now();
     });
     add(
       '到期事件',
@@ -352,10 +353,13 @@ export function managementImpact(
   } else if (path === '/judge/report-correction') {
     const row =
       body.field === 'attack_valid'
-        ? db.one('SELECT valid,actor,target FROM attacks WHERE id=?', target)
+        ? db.one<Record<string, SqlStorageValue>>(
+            'SELECT valid,actor,target FROM attacks WHERE id=?',
+            target,
+          )
         : body.field === 'nickname'
           ? {nickname: db.player(target).nickname}
-          : db.all(
+          : db.all<Record<string, SqlStorageValue>>(
               'SELECT seq,valid FROM eliminations WHERE player_id=?',
               target,
             );
@@ -376,7 +380,7 @@ export function managementImpact(
             )!.count
           : db.one<{count: number}>(
               "SELECT COUNT(*) AS count FROM attacks WHERE classification='hit' AND valid=1 AND game_ms>?",
-              e.game() - 600000,
+              engine.game() - 600000,
             )!.count;
     add('拟公开的实时统计', '尚未发布本次统计', {
       statistic: body.statistic,
@@ -386,7 +390,7 @@ export function managementImpact(
       '执行时重新读取权威统计；产生群公告待办，不消耗正式广播额度或安排歌者。',
     );
   } else if (path === '/judge/replay') {
-    const rows = db.all(
+    const rows = db.all<Record<string, SqlStorageValue>>(
       'SELECT id,title,body,code FROM event_log WHERE audience=? ORDER BY seq DESC LIMIT ?',
       'public',
       Number(body.count),
@@ -417,38 +421,52 @@ export function managementImpact(
 }
 
 /** Restricted business audit. Authentication material and cryptographic code indexes are excluded. */
-export function managementState(e: Engine): Record<string, unknown> {
-  const db = e.db;
+export function managementState(engine: Engine): Record<string, unknown> {
+  const db = engine.db;
   return {
-    match: db.one(
+    match: db.one<Record<string, SqlStorageValue>>(
       'SELECT id,phase,revision,paused_at,paused_total,pause_reason,release_at,started_at,hunt_finalized,ended_game,ended_utc,finish_reason,recovery_state,site_json FROM matches',
     ),
     roster: db.roster(),
-    players: db.all('SELECT * FROM players ORDER BY id'),
-    homes: db.all('SELECT * FROM homeworlds ORDER BY player_id'),
-    flights: db.all('SELECT * FROM flights ORDER BY player_id'),
-    codes: db.all(
+    players: db.all<Record<string, SqlStorageValue>>(
+      'SELECT * FROM players ORDER BY id',
+    ),
+    homes: db.all<Record<string, SqlStorageValue>>(
+      'SELECT * FROM homeworlds ORDER BY player_id',
+    ),
+    flights: db.all<Record<string, SqlStorageValue>>(
+      'SELECT * FROM flights ORDER BY player_id',
+    ),
+    codes: db.all<Record<string, SqlStorageValue>>(
       'SELECT id,player_id,voyage,status,issued_utc,activated_utc,activated_game,retired_utc,retired_game,retired_reason FROM sighting_codes ORDER BY issued_utc,id',
     ),
-    eliminations: db.all('SELECT * FROM eliminations ORDER BY seq'),
-    attacks: db.all(
+    eliminations: db.all<Record<string, SqlStorageValue>>(
+      'SELECT * FROM eliminations ORDER BY seq',
+    ),
+    attacks: db.all<Record<string, SqlStorageValue>>(
       'SELECT id,actor,target,classification,valid,wrong_index,game_ms FROM attacks ORDER BY rowid',
     ),
-    controls: db.all('SELECT * FROM attack_controls ORDER BY player_id'),
-    scheduled: db.all('SELECT * FROM scheduled_events ORDER BY id'),
-    effects: db.all('SELECT * FROM admin_effects ORDER BY id'),
-    notices: db.all(
+    controls: db.all<Record<string, SqlStorageValue>>(
+      'SELECT * FROM attack_controls ORDER BY player_id',
+    ),
+    scheduled: db.all<Record<string, SqlStorageValue>>(
+      'SELECT * FROM scheduled_events ORDER BY id',
+    ),
+    effects: db.all<Record<string, SqlStorageValue>>(
+      'SELECT * FROM admin_effects ORDER BY id',
+    ),
+    notices: db.all<Record<string, SqlStorageValue>>(
       'SELECT id,target,status,version,copied_by,copied_utc,sent_by,sent_utc,error FROM notice_queue ORDER BY ordering_seq',
     ),
-    accounts: db.all(
+    accounts: db.all<Record<string, SqlStorageValue>>(
       'SELECT id,role,enabled,version,permissions FROM accounts ORDER BY id',
     ),
-    sessions: db.all(
+    sessions: db.all<Record<string, SqlStorageValue>>(
       'SELECT account_id,COUNT(*) AS active FROM sessions WHERE revoked=0 AND expires>? GROUP BY account_id',
-      e.now(),
+      engine.now(),
     ),
     parameters: db.parameters(),
-    reports: db.all(
+    reports: db.all<Record<string, SqlStorageValue>>(
       'SELECT version,reason,correction_reason FROM result_reports ORDER BY version',
     ),
   };

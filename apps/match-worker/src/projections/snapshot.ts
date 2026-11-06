@@ -40,8 +40,9 @@ import {
   gameTimeCopy,
 } from '../../../../packages/contracts/src/message_copy';
 type Keys = Awaited<ReturnType<Engine['keys']>>;
-export function matchProjection(e: Engine): MatchState {
-  const m = e.db.match();
+/** 生成赛事时钟和阶段的客户端投影；客户端不得以此代替写接口授权。 */
+export function matchProjection(engine: Engine): MatchState {
+  const m = engine.db.match();
   return {
     recoveryReview: m.recovery_state.startsWith('review:'),
     id: m.id,
@@ -51,45 +52,48 @@ export function matchProjection(e: Engine): MatchState {
         ? 'countdown'
         : m.phase,
     phase: m.phase,
-    gameMs: e.game(),
-    serverUtcMs: e.now(),
+    gameMs: engine.game(),
+    serverUtcMs: engine.now(),
     running: m.start_settled !== null && m.phase !== 'ended',
     paused: m.paused_at !== null,
     pauseReason:
       m.pause_reason === 'hunt_review' ? '终局资格确认中' : m.pause_reason,
     verification: m.pause_reason === 'hunt_review' && m.hunt_finalized === null,
-    total: e.db.roster().length,
-    survivors: survivors(e).length,
-    homeworldsAlive: e.db.one<{count: number}>(
+    total: engine.db.roster().length,
+    survivors: survivors(engine).length,
+    homeworldsAlive: engine.db.one<{count: number}>(
       "SELECT COUNT(*) AS count FROM homeworlds h JOIN players p ON p.id=h.player_id WHERE h.status='verified' AND h.destroyed_game IS NULL AND p.entry_status='registered' AND p.id IN (SELECT player_id FROM roster_members)",
     )!.count,
     releaseAt: m.release_at,
     startAt: m.started_at,
   };
 }
-export function observerAllowed(e: Engine, p: Player): boolean {
-  const out = e.db.one<{utc_ms: number}>(
+/** 按淘汰事实、管理撤销和真实UTC等待计算当前只读观战资格。 */
+export function observerAllowed(engine: Engine, p: Player): boolean {
+  const out = engine.db.one<{utc_ms: number}>(
     'SELECT utc_ms FROM eliminations WHERE player_id=? AND valid=1',
     p.id,
   );
   return (
-    !!e.db.one(
+    !!engine.db.one<Record<string, SqlStorageValue>>(
       'SELECT player_id FROM roster_members WHERE player_id=?',
       p.id,
     ) &&
-    e.db.flight(p.id).status === 'eliminated' &&
+    engine.db.flight(p.id).status === 'eliminated' &&
     !p.observer_revoked &&
     !!out &&
-    e.now() >= out.utc_ms + e.db.parameters().observerWaitSeconds * 1000
+    engine.now() >=
+      out.utc_ms + engine.db.parameters().observerWaitSeconds * 1000
   );
 }
+/** 组合本人可见状态与可用动作，不向普通玩家泄露他人秘密。 */
 export function playerProjection(
-  e: Engine,
+  engine: Engine,
   id: string,
   keys: Keys,
   own = false,
 ): PlayerState {
-  const db = e.db;
+  const db = engine.db;
   const p = db.player(id);
   const f = db.flight(id);
   const h = db.home(id);
@@ -105,7 +109,10 @@ export function playerProjection(
   if (
     p.entry_status !== 'registered' ||
     (db.match().phase !== 'setup' &&
-      !db.one('SELECT player_id FROM roster_members WHERE player_id=?', id))
+      !db.one<Record<string, SqlStorageValue>>(
+        'SELECT player_id FROM roster_members WHERE player_id=?',
+        id,
+      ))
   ) {
     flight = 'absent';
   } else if (f.status === 'prelaunch') {
@@ -146,7 +153,7 @@ export function playerProjection(
     homeAlive: !!h && h.status === 'verified' && h.destroyed_game === null,
     homeVersion: h?.version ?? 0,
     rejection: h?.rejection ?? '',
-    arms: e.arms(currentCode(e, id), keys),
+    arms: engine.arms(currentCode(engine, id), keys),
     flightNumber: f.voyage,
     kills,
     wrongCount: control.wrong,
@@ -157,28 +164,29 @@ export function playerProjection(
       f.deadline === null ? null : Math.min(f.deadline, TIMES.apocalypse),
     eliminatedAt: out?.utc_ms ?? null,
     eliminationReason: out ? (reasons[out.reason] ?? '裁判判定淘汰') : '',
-    observerAllowed: observerAllowed(e, p),
-    actions: own ? allowedActions(e, id) : [],
+    observerAllowed: observerAllowed(engine, p),
+    actions: own ? allowedActions(engine, id) : [],
   };
 }
+/** 按当前查看身份与职责生成文明投影，秘密字段仅在授权范围内加入。 */
 export function civilization(
-  e: Engine,
+  engine: Engine,
   id: string,
   keys: Keys,
   full: boolean,
 ): Civilization {
-  const player = playerProjection(e, id, keys);
+  const player = playerProjection(engine, id, keys);
   return {
     ...player,
     voyages: full
-      ? e.db
+      ? engine.db
           .all<CodeRow>(
             'SELECT * FROM sighting_codes WHERE player_id=? AND activated_game IS NOT NULL ORDER BY voyage',
             id,
           )
           .map(c => ({
             number: c.voyage,
-            arms: e.arms(c, keys)!,
+            arms: engine.arms(c, keys)!,
             startMs: c.activated_game!,
             endMs: c.retired_game,
           }))
@@ -187,8 +195,9 @@ export function civilization(
     tied: false,
   };
 }
+/** 按当前角色与请求游标读取已发生的事件，保留公开及本人可见性边界。 */
 export function events(
-  e: Engine,
+  engine: Engine,
   actor: Actor | null,
   full: boolean,
   before = Number.MAX_SAFE_INTEGER,
@@ -197,7 +206,7 @@ export function events(
   if (!actor) {
     return [];
   }
-  const rows = e.db.all<{
+  const rows = engine.db.all<{
     seq: number;
     id: string;
     kind: GameEvent['kind'];
@@ -223,9 +232,9 @@ export function events(
     title: r.title,
     body: eventBody(
       r,
-      r.owner ? e.identity(r.owner) : '',
+      r.owner ? engine.identity(r.owner) : '',
       actor.role === 'player' && r.owner === actor.id,
-      r.sighting_actor ? e.identity(r.sighting_actor) : undefined,
+      r.sighting_actor ? engine.identity(r.sighting_actor) : undefined,
     ),
     audience: r.audience,
     ...(r.owner ? {recipient: r.owner} : {}),
@@ -238,11 +247,12 @@ export function events(
       : {}),
   }));
 }
-export function intel(e: Engine, actor: Actor): Intel[] {
-  if (!e.db.roster().includes(actor.id)) {
+/** 读取当前身份获准查看的秘密情报，不授予未来随机计划访问权。 */
+export function intel(engine: Engine, actor: Actor): Intel[] {
+  if (!engine.db.roster().includes(actor.id)) {
     return [];
   }
-  return e.db
+  return engine.db
     .all<{
       id: string;
       target: string;
@@ -268,10 +278,10 @@ export function intel(e: Engine, actor: Actor): Intel[] {
             : '历史情报（来源未记录）',
     }));
 }
-function judgeProjection(e: Engine, actor: Actor): JudgeState {
+function judgeProjection(engine: Engine, actor: Actor): JudgeState {
   permission(actor, 'overview');
   const permits = accountPermissions(actor);
-  const db = e.db;
+  const db = engine.db;
   const health = db.one<{
     last_success: number;
     next_wake: number | null;
@@ -284,7 +294,7 @@ function judgeProjection(e: Engine, actor: Actor): JudgeState {
             "SELECT COUNT(*) AS count FROM notice_queue WHERE status!='sent'",
           )!.count,
           noticeTasks: db
-            .all(
+            .all<Record<string, SqlStorageValue>>(
               "SELECT * FROM notice_queue WHERE status!='sent' ORDER BY priority DESC,ordering_seq ASC LIMIT 100",
             )
             .map(noticeProjection),
@@ -316,20 +326,20 @@ function judgeProjection(e: Engine, actor: Actor): JudgeState {
         }
       : {}),
     notices: permits.includes('notices')
-      ? (judgeRecords(e, actor, 'notices').items as Notice[])
+      ? (judgeRecords(engine, actor, 'notices').items as Notice[])
       : [],
     audits: permits.includes('audit')
-      ? (judgeRecords(e, actor, 'audits').items as AuditEntry[])
+      ? (judgeRecords(engine, actor, 'audits').items as AuditEntry[])
       : [],
     attacks: permits.includes('attacks')
-      ? (judgeRecords(e, actor, 'attacks').items as NonNullable<
+      ? (judgeRecords(engine, actor, 'attacks').items as NonNullable<
           JudgeState['attacks']
         >)
       : [],
     cursors: Object.fromEntries(
       (['notices', 'audits', 'attacks'] as const)
         .filter(kind => permits.includes(kind === 'audits' ? 'audit' : kind))
-        .map(kind => [kind, judgeRecords(e, actor, kind).nextCursor]),
+        .map(kind => [kind, judgeRecords(engine, actor, kind).nextCursor]),
     ),
     effects: permits.includes('effects')
       ? db
@@ -347,7 +357,7 @@ function judgeProjection(e: Engine, actor: Actor): JudgeState {
             reason: r.reason,
             untilUtcMs: r.ends,
             operator: r.operator,
-            active: !!r.active && r.ends > e.now(),
+            active: !!r.active && r.ends > engine.now(),
           }))
       : [],
     issuedCodes: permits.includes('equipment')
@@ -364,14 +374,16 @@ function judgeProjection(e: Engine, actor: Actor): JudgeState {
               "SELECT * FROM scheduled_events WHERE status='pending'",
             )
             .filter(r =>
-              r.clock === 'utc' ? r.due <= e.now() : r.due <= e.game(),
+              r.clock === 'utc'
+                ? r.due <= engine.now()
+                : r.due <= engine.game(),
             ).length,
         }
       : {lastSuccessUtcMs: 0, nextWakeUtcMs: null, error: '', backlog: 0},
   };
 }
 function requireFull(
-  e: Engine,
+  engine: Engine,
   actor: Actor | null,
   resultsScope = false,
 ): Actor {
@@ -379,37 +391,38 @@ function requireFull(
   if (actor.role === 'judge') {
     return actor;
   }
-  const player = e.db.player(actor.id);
+  const player = engine.db.player(actor.id);
   requireThat(
     resultsScope
-      ? e.db.match().phase === 'ended' &&
+      ? engine.db.match().phase === 'ended' &&
           player.entry_status === 'registered' &&
-          e.db.one(
+          engine.db.one<Record<string, SqlStorageValue>>(
             'SELECT player_id FROM roster_members WHERE player_id=?',
             actor.id,
           )
-      : observerAllowed(e, player),
+      : observerAllowed(engine, player),
     'OBSERVER_UNAVAILABLE',
     '当前账号尚未开放此页面。',
     403,
   );
   return actor;
 }
+/** 组合当前会话的完整页面快照，服务端仍保留每个后续操作的最终授权。 */
 export function projectSnapshot(
-  e: Engine,
+  engine: Engine,
   actor: Actor | null,
   session: Session | null,
   route: string,
   keys: Keys,
 ): Snapshot {
   const snapshot: Snapshot = {
-    parameters: e.db.parameters(),
-    site: parseJson(e.db.match().site_json) as SiteConfig,
+    parameters: engine.db.parameters(),
+    site: parseJson(engine.db.match().site_json) as SiteConfig,
     session,
-    match: matchProjection(e),
+    match: matchProjection(engine),
     player:
       actor?.role === 'player'
-        ? playerProjection(e, actor.id, keys, true)
+        ? playerProjection(engine, actor.id, keys, true)
         : null,
     events: [],
     intel: [],
@@ -426,16 +439,16 @@ export function projectSnapshot(
     if (!['more', 'account', ''].includes(area)) {
       permission(actor, area === 'commands' ? 'overview' : area);
     }
-    snapshot.judge = judgeProjection(e, actor);
+    snapshot.judge = judgeProjection(engine, actor);
     const permits = accountPermissions(actor);
     if (permits.includes('system')) {
-      snapshot.judge.accounts = accountList(e, actor);
+      snapshot.judge.accounts = accountList(engine, actor);
     }
     if (permits.includes('results')) {
-      snapshot.results = results(e, keys);
+      snapshot.results = results(engine, keys);
     }
     if (snapshot.results && permits.includes('results')) {
-      snapshot.results.versions = e.db
+      snapshot.results.versions = engine.db
         .all<{version: number; correction_reason: string; created_utc: number}>(
           'SELECT version,correction_reason,created_utc FROM result_reports ORDER BY version DESC',
         )
@@ -447,36 +460,36 @@ export function projectSnapshot(
     }
     if (permits.includes('clock')) {
       snapshot.judge.roster = {
-        members: e.db
+        members: engine.db
           .all<{player_id: string}>(
             'SELECT player_id FROM roster_members ORDER BY player_id',
           )
           .map(r => r.player_id),
-        accounts: e.db
+        accounts: engine.db
           .all<Player>('SELECT * FROM players ORDER BY id')
           .map(p => ({
             id: p.id,
             nickname: p.nickname ?? '',
             eligible: p.entry_status === 'registered',
           })),
-        locked: e.db.match().phase !== 'setup',
+        locked: engine.db.match().phase !== 'setup',
       };
     }
     if (permits.includes('settings')) {
       snapshot.judge.parameters = {
-        values: e.db.parameters(),
-        locked: e.db.match().phase !== 'setup',
-        version: e.db.one<{version: number}>(
+        values: engine.db.parameters(),
+        locked: engine.db.match().phase !== 'setup',
+        version: engine.db.one<{version: number}>(
           "SELECT version FROM settings WHERE key='parameters'",
         )!.version,
       };
     }
-    snapshot.civilizations = e.db
+    snapshot.civilizations = engine.db
       .all<{id: string}>(
         'SELECT id FROM players WHERE id IN (SELECT player_id FROM roster_members) ORDER BY id',
       )
       .map(({id}) => {
-        const c = civilization(e, id, keys, permits.includes('equipment'));
+        const c = civilization(engine, id, keys, permits.includes('equipment'));
         // Communications judges can review homeworlds; equipment and audits need head permission.
         if (!permits.includes('homeworlds')) {
           c.homeworld = null;
@@ -489,7 +502,7 @@ export function projectSnapshot(
         }
         return c;
       });
-    snapshot.events = events(e, actor, true);
+    snapshot.events = events(engine, actor, true);
   } else if (
     route.startsWith('/display') ||
     route.startsWith('/observer') ||
@@ -503,46 +516,47 @@ export function projectSnapshot(
         403,
       );
     }
-    requireFull(e, actor, route.startsWith('/results'));
-    snapshot.civilizations = e.db
+    requireFull(engine, actor, route.startsWith('/results'));
+    snapshot.civilizations = engine.db
       .all<{id: string}>(
         "SELECT id FROM players WHERE entry_status='registered' AND id IN (SELECT player_id FROM roster_members) ORDER BY id",
       )
-      .map(({id}) => civilization(e, id, keys, true));
-    snapshot.events = events(e, actor, true);
-    snapshot.results = results(e, keys);
+      .map(({id}) => civilization(engine, id, keys, true));
+    snapshot.events = events(engine, actor, true);
+    snapshot.results = results(engine, keys);
   } else {
-    snapshot.events = events(e, actor, false);
+    snapshot.events = events(engine, actor, false);
     if (actor.role === 'player') {
-      snapshot.intel = intel(e, actor);
+      snapshot.intel = intel(engine, actor);
     }
   }
-  snapshot.eventCursor = eventCursor(e, snapshot.events, 500);
+  snapshot.eventCursor = eventCursor(engine, snapshot.events, 500);
   return snapshot;
 }
 function eventCursor(
-  e: Engine,
+  engine: Engine,
   items: GameEvent[],
   limit: number,
 ): string | null {
   const last = items.at(-1);
   return items.length === limit && last
     ? String(
-        e.db.one<{seq: number}>(
+        engine.db.one<{seq: number}>(
           'SELECT seq FROM event_log WHERE id=?',
           last.id,
         )!.seq,
       )
     : null;
 }
+/** 按本人状态生成QQ通知材料；生成文案不等于现场发送或完成裁决。 */
 export function template(
-  e: Engine,
+  engine: Engine,
   actor: Actor,
   kind: string,
 ): {text: string} {
   requireThat(actor.role === 'player', 'FORBIDDEN', '请使用参赛账号。', 403);
-  const home = e.db.home(actor.id);
-  const identity = e.identity(actor.id);
+  const home = engine.db.home(actor.id);
+  const identity = engine.identity(actor.id);
   if (kind === 'homeworld') {
     requireThat(home, 'NO_HOMEWORLD', '请先提交母星登记。');
     return {
@@ -555,7 +569,7 @@ export function template(
   if (kind === 'respawn') {
     requireThat(
       ['returning', 'preparing', 'issued'].includes(
-        e.db.flight(actor.id).status,
+        engine.db.flight(actor.id).status,
       ),
       'NO_RESPAWN',
       '当前无需提交重生照片。',
@@ -571,14 +585,15 @@ export function template(
     return {
       text: qqCopy(
         '异常申报',
-        `文明${identity}请求裁判协助。\n比赛时间：${gameTimeCopy(e.game())}。\n现场情况：`,
+        `文明${identity}请求裁判协助。\n比赛时间：${gameTimeCopy(engine.game())}。\n现场情况：`,
       ),
     };
   }
   throw new Fault(404, 'NOT_FOUND', '消息模板不存在。');
 }
+/** 处理本场只读API并调用相应角色投影，未知路径不作为任意数据库查询。 */
 export function readEndpoint(
-  e: Engine,
+  engine: Engine,
   actor: Actor | null,
   path: string,
   keys: Keys,
@@ -589,7 +604,7 @@ export function readEndpoint(
   if (collection) {
     requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
     return judgeRecords(
-      e,
+      engine,
       actor,
       collection[1] as JudgeCollection,
       integer(
@@ -600,21 +615,25 @@ export function readEndpoint(
     );
   }
   if (route === '/public/site-config') {
-    return parseJson(e.db.match().site_json);
+    return parseJson(engine.db.match().site_json);
   }
   if (route === '/public/match') {
-    return matchProjection(e);
+    return matchProjection(engine);
   }
   requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
   if (route === '/judge/accounts') {
-    return accountList(e, actor);
+    return accountList(engine, actor);
   }
   if (route === '/judge/command/history') {
-    return readCommandHistory(e, actor, Object.fromEntries(url.searchParams));
+    return readCommandHistory(
+      engine,
+      actor,
+      Object.fromEntries(url.searchParams),
+    );
   }
   if (route === '/judge/events' || route.startsWith('/judge/events/')) {
     permission(actor, 'system');
-    const events = judgeProjection(e, actor).scheduledEvents ?? [];
+    const events = judgeProjection(engine, actor).scheduledEvents ?? [];
     if (route === '/judge/events') {
       return events;
     }
@@ -626,9 +645,9 @@ export function readEndpoint(
     return event;
   }
   if (route === '/results/report') {
-    requireFull(e, actor, true);
+    requireFull(engine, actor, true);
     const report = results(
-      e,
+      engine,
       keys,
       integer(Number(url.searchParams.get('version')), 1),
     );
@@ -638,48 +657,48 @@ export function readEndpoint(
   if (route === '/timeline') {
     const scope = url.searchParams.get('route') ?? '/player';
     // Cursor selects a position only. Authorization and SQL audience filters apply on every page.
-    projectSnapshot(e, actor, null, scope, keys);
+    projectSnapshot(engine, actor, null, scope, keys);
     const full = ['/judge', '/display', '/observer', '/results'].some(prefix =>
       scope.startsWith(prefix),
     );
     const before = integer(Number(url.searchParams.get('before')), 1);
     const limit = integer(Number(url.searchParams.get('limit') ?? 100), 1, 200);
-    const items = events(e, actor, full, before, limit);
-    return {items, nextCursor: eventCursor(e, items, limit)};
+    const items = events(engine, actor, full, before, limit);
+    return {items, nextCursor: eventCursor(engine, items, limit)};
   }
   const operation = /^\/operations\/([A-Za-z0-9_-]+)$/.exec(route);
   if (operation) {
-    return e.result(actor, requestId(operation[1]));
+    return engine.result(actor, requestId(operation[1]));
   }
   if (route === '/player/self') {
     requireThat(actor.role === 'player', 'FORBIDDEN', '请使用参赛账号。', 403);
-    return playerProjection(e, actor.id, keys, true);
+    return playerProjection(engine, actor.id, keys, true);
   }
   if (route === '/player/messages') {
-    return events(e, actor, false);
+    return events(engine, actor, false);
   }
   if (route === '/player/intel') {
-    return intel(e, actor);
+    return intel(engine, actor);
   }
   if (route.startsWith('/player/templates/')) {
-    return template(e, actor, route.split('/').pop()!);
+    return template(engine, actor, route.split('/').pop()!);
   }
   if (route === '/judge/overview') {
-    const s = projectSnapshot(e, actor, null, '/judge', keys);
+    const s = projectSnapshot(engine, actor, null, '/judge', keys);
     return {judge: s.judge, civilizations: s.civilizations, events: s.events};
   }
   if (route === '/judge/parameters') {
     permission(actor, 'settings');
     return {
-      version: e.db.one<{version: number}>(
+      version: engine.db.one<{version: number}>(
         "SELECT version FROM settings WHERE key='parameters'",
       )!.version,
-      locked: e.db.match().phase !== 'setup',
-      values: e.db.parameters(),
+      locked: engine.db.match().phase !== 'setup',
+      values: engine.db.parameters(),
     };
   }
   if (route === '/judge/display') {
-    const s = projectSnapshot(e, actor, null, '/display', keys);
+    const s = projectSnapshot(engine, actor, null, '/display', keys);
     return {
       civilizations: s.civilizations,
       events: s.events,
@@ -688,25 +707,25 @@ export function readEndpoint(
   }
   if (route === '/judge/scheduler/health') {
     permission(actor, 'system');
-    return judgeProjection(e, actor).scheduler;
+    return judgeProjection(engine, actor).scheduler;
   }
   if (route.startsWith('/observer/') || route.startsWith('/results/')) {
-    requireFull(e, actor, route.startsWith('/results/'));
+    requireFull(engine, actor, route.startsWith('/results/'));
     if (route.endsWith('/events')) {
-      return events(e, actor, true);
+      return events(engine, actor, true);
     }
     if (route.endsWith('/civilizations')) {
-      return e.db
+      return engine.db
         .all<{id: string}>(
           "SELECT id FROM players WHERE entry_status='registered' AND id IN (SELECT player_id FROM roster_members)",
         )
-        .map(({id}) => civilization(e, id, keys, true));
+        .map(({id}) => civilization(engine, id, keys, true));
     }
     if (route === '/results/overview') {
-      return results(e, keys);
+      return results(engine, keys);
     }
     if (route === '/observer/overview') {
-      return matchProjection(e);
+      return matchProjection(engine);
     }
   }
   throw new Fault(404, 'NOT_FOUND', '未找到这个页面。');

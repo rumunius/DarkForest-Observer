@@ -2,6 +2,35 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
 import reactHooks from 'eslint-plugin-react-hooks';
+import {
+  documentedExports,
+  spacedClassMethods,
+  namedFunctions,
+} from './scripts/eslint_rules.mjs';
+
+const restrictedTypeScriptSyntax = [
+  {
+    selector: 'TSEnumDeclaration[const=true]',
+    message: 'Use a regular enum; const enum erases the runtime contract.',
+  },
+  {
+    selector: 'TSImportEqualsDeclaration, TSExportAssignment',
+    message: 'Use ES module imports and named exports.',
+  },
+  {
+    selector: 'TSImportType',
+    message: 'Use a top-level import type instead of import() annotations.',
+  },
+  {
+    selector: 'PrivateIdentifier',
+    message: 'Use TypeScript private visibility instead of #private fields.',
+  },
+  {
+    selector:
+      'TSTypeAliasDeclaration > TSUnionType > :matches(TSUndefinedKeyword, TSNullKeyword)',
+    message: 'Add null or undefined where the type alias is used.',
+  },
+];
 
 export default tseslint.config(
   {
@@ -19,6 +48,23 @@ export default tseslint.config(
   },
   js.configs.recommended,
   {
+    files: ['apps/**/*.{ts,tsx}', 'packages/**/*.ts', 'scripts/*.{mjs,mts}'],
+    plugins: {
+      project: {
+        rules: {
+          'documented-exports': documentedExports,
+          'spaced-class-methods': spacedClassMethods,
+          'named-functions': namedFunctions,
+        },
+      },
+    },
+    rules: {
+      'project/documented-exports': 'error',
+      'project/spaced-class-methods': 'error',
+      'project/named-functions': 'error',
+    },
+  },
+  {
     linterOptions: {reportUnusedDisableDirectives: 'error'},
     rules: {
       curly: ['error', 'all'],
@@ -28,6 +74,12 @@ export default tseslint.config(
       'no-eval': 'error',
       'no-new-func': 'error',
       'no-new-wrappers': 'error',
+      'no-caller': 'error',
+      'no-proto': 'error',
+      'guard-for-in': 'error',
+      'no-return-assign': ['error', 'always'],
+      'default-case': 'error',
+      'default-case-last': 'error',
       eqeqeq: ['error', 'always', {null: 'ignore'}],
     },
   },
@@ -38,6 +90,9 @@ export default tseslint.config(
       '@typescript-eslint/array-type': ['error', {default: 'array-simple'}],
       '@typescript-eslint/consistent-type-definitions': ['error', 'interface'],
       '@typescript-eslint/consistent-type-imports': 'error',
+      '@typescript-eslint/no-inferrable-types': 'error',
+      '@typescript-eslint/prefer-for-of': 'error',
+      '@typescript-eslint/prefer-readonly': 'error',
       '@typescript-eslint/no-namespace': [
         'error',
         {allowDeclarations: false, allowDefinitionFiles: true},
@@ -45,7 +100,7 @@ export default tseslint.config(
       '@typescript-eslint/ban-ts-comment': [
         'error',
         {
-          'ts-expect-error': 'allow-with-description',
+          'ts-expect-error': true,
           'ts-ignore': true,
           'ts-nocheck': true,
           'ts-check': false,
@@ -85,6 +140,7 @@ export default tseslint.config(
           message:
             'Use named exports; framework entry points have explicit exceptions.',
         },
+        ...restrictedTypeScriptSyntax,
       ],
     },
   },
@@ -120,7 +176,9 @@ export default tseslint.config(
       'vitest*.config.ts',
       'apps/match-worker/src/index.ts',
     ],
-    rules: {'no-restricted-syntax': 'off'},
+    rules: {
+      'no-restricted-syntax': ['error', ...restrictedTypeScriptSyntax],
+    },
   },
   {
     files: ['apps/web/src/**/*.{ts,tsx}', 'packages/contracts/src/**/*.ts'],
@@ -135,6 +193,21 @@ export default tseslint.config(
             '**/match-worker/**',
             '**/functions/**',
           ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['tests/**/*.{ts,tsx,mts,cts}'],
+    rules: {
+      '@typescript-eslint/ban-ts-comment': [
+        'error',
+        {
+          'ts-expect-error': 'allow-with-description',
+          'ts-ignore': true,
+          'ts-nocheck': true,
+          'ts-check': false,
+          minimumDescriptionLength: 10,
         },
       ],
     },

@@ -111,6 +111,7 @@ function SignalFracture({
   );
 }
 
+/** 按已发生赛事状态和动效偏好绘制气氛覆盖层，不阻挡页面交互。 */
 export function Atmosphere() {
   const {data, route, reduced} = useApp();
   const {utc} = useClock();

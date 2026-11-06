@@ -17,6 +17,7 @@ const names: Record<string, string> = {
   hunt_cutoff: '终局核验',
   regulation_end: '常规完赛',
 };
+/** 展示持久事件与故障状态，重试或取消使用原事件身份。 */
 export function ScheduledEvents() {
   const {data} = useApp();
   const [selected, setSelected] = useState('');

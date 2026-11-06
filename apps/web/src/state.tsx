@@ -66,6 +66,7 @@ interface AppContext {
   markRead: (id: string) => void;
 }
 const Context = createContext<AppContext | null>(null);
+/** 取得当前本场上下文；缺少提供器时抛错，避免页面默用其他场次状态。 */
 export function useApp(): AppContext {
   const c = useContext(Context);
   if (!c) {
@@ -111,6 +112,7 @@ function savePending(value: PendingRecord | null, key = pendingKey) {
     /* Memory state remains authoritative for this page. */
   }
 }
+/** 管理本场快照、轮询、待确认操作和草稿，并隔离过时响应与账号切换。 */
 export function AppProvider({
   source,
   base = '',
@@ -624,6 +626,7 @@ export function AppProvider({
     </Context.Provider>
   );
 }
+/** 从最近服务器时刻和本地单调经过时间生成显示时钟，最终截止由服务器裁决。 */
 export function useClock() {
   const {data, receivedAt} = useApp();
   const [, tick] = useState(0);

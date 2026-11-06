@@ -3,6 +3,7 @@ import {text} from '../../../../packages/contracts/src/backend';
 import {requireThat, type CodeRow} from '../storage/store';
 import type {Engine, PreparedCode} from './engine';
 import {retire, logEvent} from './life';
+/** 攻击审计持久行，保留原判定、随机结果及纠错所需的前态证据。 */
 export interface AttackRow {
   id: string;
   actor: string;
@@ -18,9 +19,13 @@ export interface AttackRow {
   valid: number;
   before_json: string | null;
 }
-export function correctionTarget(e: Engine, raw: unknown): AttackRow {
+/** 定位可纠错的攻击并核对证据；不重新抽取原判罚随机结果。 */
+export function correctionTarget(engine: Engine, raw: unknown): AttackRow {
   const id = text(raw, 180);
-  const attack = e.db.one<AttackRow>('SELECT * FROM attacks WHERE id=?', id);
+  const attack = engine.db.one<AttackRow>(
+    'SELECT * FROM attacks WHERE id=?',
+    id,
+  );
   requireThat(
     attack?.valid &&
       attack.before_json &&
@@ -29,11 +34,11 @@ export function correctionTarget(e: Engine, raw: unknown): AttackRow {
     '请选择一条有效的攻击记录。',
   );
   requireThat(
-    e.db.match().paused_at !== null && e.db.match().phase !== 'ended',
+    engine.db.match().paused_at !== null && engine.db.match().phase !== 'ended',
     'PAUSE_REQUIRED',
     '请先暂停比赛。',
   );
-  const later = e.db.one(
+  const later = engine.db.one<Record<string, SqlStorageValue>>(
     'SELECT id FROM attacks WHERE actor=? AND valid=1 AND (committed_utc>? OR (committed_utc=? AND rowid>(SELECT rowid FROM attacks WHERE id=?)))',
     attack.actor,
     attack.committed_utc,
@@ -48,14 +53,14 @@ export function correctionTarget(e: Engine, raw: unknown): AttackRow {
   const restored =
     attack.classification === 'hit'
       ? attack.target
-      : e.db.flight(attack.actor).status === 'eliminated'
+      : engine.db.flight(attack.actor).status === 'eliminated'
         ? attack.actor
         : null;
   if (restored) {
-    const flight = e.db.flight(restored);
+    const flight = engine.db.flight(restored);
     const before = parseJson(attack.before_json) as {actorVoyage: number};
     const voyage = attack.target
-      ? e.db.one<CodeRow>(
+      ? engine.db.one<CodeRow>(
           'SELECT * FROM sighting_codes WHERE id=?',
           attack.code_id,
         )!.voyage
@@ -66,7 +71,7 @@ export function correctionTarget(e: Engine, raw: unknown): AttackRow {
       'CORRECTION_DEPENDENCY',
       '相关文明已进入后续航次，请核对航次与事件后更正。',
     );
-    const out = e.db.one<{source: string}>(
+    const out = engine.db.one<{source: string}>(
       'SELECT source FROM eliminations WHERE player_id=? AND valid=1',
       restored,
     );
@@ -78,15 +83,16 @@ export function correctionTarget(e: Engine, raw: unknown): AttackRow {
   }
   return attack;
 }
+/** 撤销指定攻击的有效影响并保留原事实、传播和纠错审计。 */
 export function correctAttack(
-  e: Engine,
+  engine: Engine,
   id: string,
   actor: string,
   attack: AttackRow,
   reason: string,
   prepared: PreparedCode[],
 ): void {
-  const db = e.db;
+  const db = engine.db;
   const before = parseJson(attack.before_json!) as {
     wrong: number;
     lockedUntil: number;
@@ -94,8 +100,8 @@ export function correctAttack(
     actorHomeSource: string | null;
   };
   const source = `action:${attack.actor}:${attack.request_id}`;
-  const game = e.game();
-  const now = e.now();
+  const game = engine.game();
+  const now = engine.now();
   const restored =
     attack.classification === 'hit'
       ? attack.target
@@ -131,8 +137,8 @@ export function correctAttack(
       restored,
       source,
     );
-    retire(e, restored, 'attack_correction', game, now);
-    e.issue(restored, `correction-${id}`, prepared);
+    retire(engine, restored, 'attack_correction', game, now);
+    engine.issue(restored, `correction-${id}`, prepared);
     db.exec(
       "UPDATE flights SET status='issued',deadline=NULL WHERE player_id=?",
       restored,
@@ -141,7 +147,7 @@ export function correctAttack(
       "UPDATE scheduled_events SET status='cancelled' WHERE kind='respawn_timeout' AND status='pending' AND json_extract(payload,'$.player')=?",
       restored,
     );
-    e.notice(
+    engine.notice(
       `correction:${id}`,
       restored,
       '攻击更正',
@@ -164,7 +170,7 @@ export function correctAttack(
     }),
   );
   logEvent(
-    e,
+    engine,
     `correction:${id}`,
     'review',
     '攻击更正',

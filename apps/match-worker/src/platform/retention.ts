@@ -2,6 +2,7 @@ import type {DarkForestPlatform} from './platform';
 import {requireThat} from '../storage/store';
 
 // Match recovery never rewinds this database.
+/** 读取不可回退的资料清理世代，用于阻止恢复旧检查点重新暴露已清理信息。 */
 export function erasureFloor(p: DarkForestPlatform, matchId: string): number {
   return (
     p.db.one<{generation: number}>(
@@ -11,6 +12,7 @@ export function erasureFloor(p: DarkForestPlatform, matchId: string): number {
   );
 }
 
+/** 执行有持久收据的清理协议；重试复用原操作并保留不可回退边界。 */
 export async function erasureOperation(
   p: DarkForestPlatform,
   op: {id: string; actor: string; target: string},
@@ -35,7 +37,10 @@ export async function erasureOperation(
   );
   const generation = p.db.tx(() => {
     requireThat(
-      !p.db.one('SELECT match_id FROM retention_holds WHERE match_id=?', d.id),
+      !p.db.one<Record<string, SqlStorageValue>>(
+        'SELECT match_id FROM retention_holds WHERE match_id=?',
+        d.id,
+      ),
       'RETENTION_HOLD',
       '本场资料因申诉暂缓清理。',
     );

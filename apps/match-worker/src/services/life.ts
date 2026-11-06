@@ -8,8 +8,9 @@ import {
 } from '../../../../packages/contracts/src/message_copy';
 import type {CodeRow} from '../storage/store';
 
+/** 以固定来源、受众和双时间基准记录赛事事实；不把提交时间当作生效时间。 */
 export function logEvent(
-  e: Engine,
+  engine: Engine,
   id: string,
   kind: GameEvent['kind'],
   title: string,
@@ -22,7 +23,7 @@ export function logEvent(
   code: string | null = null,
   actor: string | null = null,
 ): void {
-  e.db.exec(
+  engine.db.exec(
     'INSERT INTO event_log(id,kind,title,body,audience,owner,civilization_ids,code,actor,game_ms,utc_ms,committed_utc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
     id,
     kind,
@@ -35,27 +36,29 @@ export function logEvent(
     actor,
     game,
     utc,
-    e.now(),
+    engine.now(),
   );
 }
+/** 永久退役指定现役手环码，已发行编码不能重新回到可发码池。 */
 export function retire(
-  e: Engine,
+  engine: Engine,
   player: string,
   reason: string,
   game: number,
   utc: number,
 ): void {
-  e.db.exec(
+  engine.db.exec(
     "UPDATE sighting_codes SET status='retired',retired_game=?,retired_utc=?,retired_reason=? WHERE player_id=? AND status IN ('active','reserved')",
     game,
     utc,
     reason,
     player,
   );
-  e.db.exec('UPDATE flights SET code_id=NULL WHERE player_id=?', player);
+  engine.db.exec('UPDATE flights SET code_id=NULL WHERE player_id=?', player);
 }
+/** 原子登记淘汰事实并清理航次及通知；批量调用方最后统一判断提前完赛。 */
 export function eliminate(
-  e: Engine,
+  engine: Engine,
   player: string,
   reason: string,
   source: string,
@@ -63,39 +66,39 @@ export function eliminate(
   utc: number,
   group = source,
 ): void {
-  if (e.db.flight(player).status === 'eliminated') {
+  if (engine.db.flight(player).status === 'eliminated') {
     return;
   }
   if (source.startsWith('judge:') || source === 'hunt_cutoff') {
-    e.db.exec(
+    engine.db.exec(
       'INSERT INTO judge_eliminations(source,player_id,before_json) VALUES(?,?,?)',
       source,
       player,
-      JSON.stringify(e.db.flight(player)),
+      JSON.stringify(engine.db.flight(player)),
     );
   }
-  retire(e, player, reason, game, utc);
-  e.db.exec(
+  retire(engine, player, reason, game, utc);
+  engine.db.exec(
     "UPDATE flights SET status='eliminated',deadline=NULL WHERE player_id=?",
     player,
   );
-  e.db.exec(
+  engine.db.exec(
     'INSERT INTO eliminations(player_id,game_ms,utc_ms,committed_utc,reason,source,group_id) VALUES(?,?,?,?,?,?,?)',
     player,
     game,
     utc,
-    e.now(),
+    engine.now(),
     reason,
     source,
     group,
   );
   const body = eliminationCopy(
-    e.identity(player),
-    e.db.parameters().observerWaitSeconds,
+    engine.identity(player),
+    engine.db.parameters().observerWaitSeconds,
     reason === 'wrong_attack_direct_out',
   );
   logEvent(
-    e,
+    engine,
     `${source}:elimination:${player}`,
     'notice',
     '永久淘汰',
@@ -106,16 +109,17 @@ export function eliminate(
     utc,
     player,
   );
-  e.notice(source, player, '永久淘汰', body, game);
+  engine.notice(source, player, '永久淘汰', body, game);
 }
+/** 处理母星毁灭与当前航次联动，返回是否新增毁灭而不重复结算。 */
 export function destroyHome(
-  e: Engine,
+  engine: Engine,
   player: string,
   source: string,
   game: number,
   utc: number,
 ): boolean {
-  const changed = e.db.all(
+  const changed = engine.db.all<Record<string, SqlStorageValue>>(
     "UPDATE homeworlds SET destroyed_game=?,source=? WHERE player_id=? AND status='verified' AND destroyed_game IS NULL RETURNING player_id",
     game,
     source,
@@ -124,60 +128,62 @@ export function destroyHome(
   if (!changed.length) {
     return false;
   }
-  if (!['active', 'eliminated'].includes(e.db.flight(player).status)) {
-    eliminate(e, player, 'homeworld_destroyed', source, game, utc);
+  if (!['active', 'eliminated'].includes(engine.db.flight(player).status)) {
+    eliminate(engine, player, 'homeworld_destroyed', source, game, utc);
   }
-  e.notice(
+  engine.notice(
     source,
     player,
     '母星毁灭',
-    homeDestroyedCopy(e.identity(player), e.db.home(player)!.code),
+    homeDestroyedCopy(engine.identity(player), engine.db.home(player)!.code),
     game,
   );
   return true;
 }
-export function survivors(e: Engine): string[] {
-  return e.db
+/** 读取仍有存活或合法重生资格的正式文明，不能仅统计现役飞船。 */
+export function survivors(engine: Engine): string[] {
+  return engine.db
     .all<{id: string}>(
       "SELECT p.id FROM players p JOIN flights f ON f.player_id=p.id WHERE p.entry_status='registered' AND p.id IN (SELECT player_id FROM roster_members) AND f.status!='eliminated' ORDER BY p.id",
     )
     .map(p => p.id);
 }
+/** 封存完赛状态与结果并处置剩余任务，不重新开放已结束的玩法写入。 */
 export function finish(
-  e: Engine,
+  engine: Engine,
   reason: string,
   game: number,
   utc: number,
   source: string,
 ): void {
-  if (e.db.match().phase === 'ended') {
+  if (engine.db.match().phase === 'ended') {
     return;
   }
-  const alive = new Set(survivors(e));
-  e.db.exec(
+  const alive = new Set(survivors(engine));
+  engine.db.exec(
     "UPDATE matches SET phase='ended',ended_game=?,ended_utc=?,finish_reason=?",
     game,
     utc,
     reason,
   );
-  archiveReport(e, '');
-  const registered = e.db.all<{id: string}>(
+  archiveReport(engine, '');
+  const registered = engine.db.all<{id: string}>(
     'SELECT player_id AS id FROM roster_members',
   );
   for (const player of registered) {
-    retire(e, player.id, 'match_ended', game, utc);
+    retire(engine, player.id, 'match_ended', game, utc);
   }
-  e.db.exec(
+  engine.db.exec(
     "UPDATE command_objects SET status='cancelled' WHERE kind='schedule' AND status='pending' AND json_extract(data,'$.afterEnd')='cancel'",
   );
-  e.db.exec(
+  engine.db.exec(
     "UPDATE command_objects SET status='cancelled' WHERE kind='job' AND status='pending'",
   );
-  e.db.exec(
+  engine.db.exec(
     "UPDATE scheduled_events SET status='cancelled' WHERE status='pending' AND NOT (kind='judge_command_task' AND id IN (SELECT id FROM command_objects WHERE kind='schedule' AND status='pending' AND json_extract(data,'$.afterEnd')='keep'))",
   );
   logEvent(
-    e,
+    engine,
     `finish:${source}`,
     'stage',
     '比赛结束',
@@ -189,7 +195,7 @@ export function finish(
     game,
     utc,
   );
-  e.notice(
+  engine.notice(
     `finish:${source}`,
     'group',
     '比赛结束',
@@ -197,9 +203,10 @@ export function finish(
     game,
   );
 }
-export function archiveReport(e: Engine, correctionReason: string): void {
-  const alive = new Set(survivors(e));
-  const eliminated = e.db.all<{
+/** 把当前排名和战报事实保存为不可变版本，后续更正另建新版本。 */
+export function archiveReport(engine: Engine, correctionReason: string): void {
+  const alive = new Set(survivors(engine));
+  const eliminated = engine.db.all<{
     player_id: string;
     seq: number;
     utc_ms: number;
@@ -207,13 +214,13 @@ export function archiveReport(e: Engine, correctionReason: string): void {
   }>(
     'SELECT player_id,seq,utc_ms,group_id FROM eliminations WHERE valid=1 ORDER BY utc_ms DESC,seq DESC',
   );
-  const registered = e.db.all<{id: string}>(
+  const registered = engine.db.all<{id: string}>(
     "SELECT id FROM players WHERE id IN (SELECT player_id FROM roster_members) AND (entry_status='registered' OR id IN (SELECT player_id FROM eliminations WHERE valid=1)) ORDER BY id",
   );
   // Save ranking facts before retiring codes. Full DTO is rendered from the same immutable finish facts.
   const standings = registered
     .map(({id}) => {
-      const kills = e.db.one<{count: number}>(
+      const kills = engine.db.one<{count: number}>(
         "SELECT COUNT(DISTINCT target) AS count FROM attacks WHERE actor=? AND classification='hit' AND valid=1",
         id,
       )!.count;
@@ -244,10 +251,10 @@ export function archiveReport(e: Engine, correctionReason: string): void {
       index: i,
     };
   });
-  e.db.exec(
+  engine.db.exec(
     'INSERT INTO result_reports(version,reason,created_utc,report,correction_reason,snapshot_json) VALUES((SELECT COALESCE(MAX(version),0)+1 FROM result_reports),?,?,?,?,?)',
-    e.db.match().finish_reason,
-    e.now(),
+    engine.db.match().finish_reason,
+    engine.now(),
     JSON.stringify({
       champions: ranked.filter(p => p.alive && p.rank === 1).map(p => p.id),
       standings: ranked,
@@ -255,7 +262,7 @@ export function archiveReport(e: Engine, correctionReason: string): void {
     correctionReason,
     JSON.stringify(
       ranked.map(p => ({
-        ...civilization(e, p.id, e.resolvedKeys!, true),
+        ...civilization(engine, p.id, engine.resolvedKeys!, true),
         kills: p.kills,
         rank: p.rank,
         tied: p.tied,
@@ -263,30 +270,38 @@ export function archiveReport(e: Engine, correctionReason: string): void {
     ),
   );
 }
+/** 在完整结算后检查存活数量并决定提前完赛，批次中途不得调用截断。 */
 export function autoFinish(
-  e: Engine,
+  engine: Engine,
   game: number,
   utc: number,
   source: string,
 ): void {
-  if (e.commandBatch) {
+  if (engine.commandBatch) {
     return;
   }
-  const match = e.db.match();
+  const match = engine.db.match();
   if (!match.start_settled || match.phase === 'ended') {
     return;
   }
-  const count = survivors(e).length;
+  const count = survivors(engine).length;
   if (count <= 1) {
-    finish(e, count ? 'last_survivor' : 'all_eliminated', game, utc, source);
+    finish(
+      engine,
+      count ? 'last_survivor' : 'all_eliminated',
+      game,
+      utc,
+      source,
+    );
   }
 }
+/** 生成授权赛事结果，按去重战绩与淘汰事实保留并列规则。 */
 export function results(
-  e: Engine,
+  engine: Engine,
   keys: Awaited<ReturnType<Engine['keys']>>,
   version?: number,
 ): ResultsState | null {
-  const row = e.db.one<{
+  const row = engine.db.one<{
     version: number;
     reason: string;
     report: string;
@@ -308,13 +323,13 @@ export function results(
   const standings = row.snapshot_json
     ? (parseJson(row.snapshot_json) as ResultsState['standings'])
     : report.standings.map(p => ({
-        ...civilization(e, p.id, keys, true),
+        ...civilization(engine, p.id, keys, true),
         rank: p.rank,
         tied: p.tied,
         kills: p.kills,
       }));
   if (!row.snapshot_json) {
-    e.db.exec(
+    engine.db.exec(
       'UPDATE result_reports SET snapshot_json=? WHERE version=?',
       JSON.stringify(standings),
       row.version,
@@ -335,9 +350,13 @@ export function results(
     standings,
   };
 }
-export function currentCode(e: Engine, player: string): CodeRow | undefined {
-  const id = e.db.flight(player).code_id;
+/** 解密本人或获授权裁判可见的当前手环配置，原索引与密钥不进入响应。 */
+export function currentCode(
+  engine: Engine,
+  player: string,
+): CodeRow | undefined {
+  const id = engine.db.flight(player).code_id;
   return id
-    ? e.db.one<CodeRow>('SELECT * FROM sighting_codes WHERE id=?', id)
+    ? engine.db.one<CodeRow>('SELECT * FROM sighting_codes WHERE id=?', id)
     : undefined;
 }

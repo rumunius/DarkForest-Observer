@@ -34,6 +34,7 @@ test('the normal gate enforces style and frontend import boundaries', async () =
   const rules = result.messages.map(message => message.ruleId);
   assert.ok(rules.includes('curly'));
   assert.ok(rules.includes('no-restricted-imports'));
+  assert.ok(rules.includes('project/documented-exports'));
 });
 
 test('all project TypeScript rejects floating promises, unsafe JSON and hook misuse', async () => {
@@ -61,5 +62,105 @@ test('all project TypeScript rejects floating promises, unsafe JSON and hook mis
     deps.messages.some(
       message => message.ruleId === 'react-hooks/exhaustive-deps',
     ),
+  );
+});
+
+test('framework default-export exceptions still reject erased enums and undocumented APIs', async () => {
+  const [result] = await eslint.lintText(
+    'const enum Probe {Value}\nexport default {};\nexport function undocumented() {}\n',
+    {filePath: 'apps/match-worker/src/index.ts'},
+  );
+  assert.ok(
+    result.messages.some(message => message.ruleId === 'no-restricted-syntax'),
+  );
+  assert.ok(
+    result.messages.some(
+      message => message.ruleId === 'project/documented-exports',
+    ),
+  );
+  assert.equal(
+    result.messages.filter(message => message.ruleId === 'no-restricted-syntax')
+      .length,
+    1,
+  );
+});
+
+test('class spacing fixes preserve documentation and overload groups', async () => {
+  const fixer = new ESLint({cwd: root, fix: true});
+  const [result] = await fixer.lintText(
+    '/** Stores values with documented overloads. */\nexport class Probe {\nvalue = 0;\n/** Reads the current value. */\nread(): number;\nread(fallback: number): number;\nread(fallback = 0) {return this.value || fallback;}\n/** Clears the current value. */\nclear() {this.value = 0;}\n}\n',
+    {filePath: 'apps/web/src/data/http.ts'},
+  );
+  assert.ok(result.output.includes('value = 0;\n\n/** Reads'));
+  assert.ok(
+    result.output.includes(
+      'read(): number;\nread(fallback: number): number;\nread(fallback = 0)',
+    ),
+  );
+  assert.ok(result.output.includes('fallback;}\n\n/** Clears'));
+  const [stable] = await fixer.lintText(result.output, {
+    filePath: 'apps/web/src/data/http.ts',
+  });
+  assert.equal(stable.output, undefined);
+  assert.equal(
+    stable.messages.filter(
+      message => message.ruleId === 'project/spaced-class-methods',
+    ).length,
+    0,
+  );
+});
+
+test('named function declarations allow typed arrows and local callbacks', async () => {
+  const [result] = await eslint.lintText(
+    '/** Converts a value for callers. */\nexport const convert = (value: string) => value;\nconst typed: (value: string) => string = value => value;\nfunction outer() {const local = () => typed("ok"); return [1].map(() => local());}\nvoid outer;\n',
+    {filePath: 'apps/web/src/data/http.ts'},
+  );
+  const reports = result.messages.filter(
+    message => message.ruleId === 'project/named-functions',
+  );
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].line, 2);
+});
+
+test('type annotations keep imports and absent values visible at the use site', async () => {
+  const [result] = await eslint.lintText(
+    'type MaybeName = string | null;\ntype MaybeCount = number | undefined;\nlet value: import("@darkforest/contracts").Session;\nclass Probe {#value = 0;}\nvoid value;\nvoid Probe;\n',
+    {filePath: 'apps/web/src/data/http.ts'},
+  );
+  assert.equal(
+    result.messages.filter(message => message.ruleId === 'no-restricted-syntax')
+      .length,
+    4,
+  );
+  const [valid] = await eslint.lintText(
+    'type Name = string;\nlet value: Name | null = null;\nvoid value;\n',
+    {filePath: 'apps/web/src/data/http.ts'},
+  );
+  assert.equal(
+    valid.messages.filter(message => message.ruleId === 'no-restricted-syntax')
+      .length,
+    0,
+  );
+});
+
+test('compiler suppression is forbidden in product code and narrowly allowed in tests', async () => {
+  const source =
+    '// @ts-expect-error: checks rejection of an intentionally invalid argument\nconst value: string = 123;\nvoid value;\n';
+  const [product] = await eslint.lintText(source, {
+    filePath: 'apps/web/src/data/http.ts',
+  });
+  assert.ok(
+    product.messages.some(
+      message => message.ruleId === '@typescript-eslint/ban-ts-comment',
+    ),
+  );
+  const [unit] = await eslint.lintText(source, {
+    filePath: 'tests/unit/frontend.test.ts',
+  });
+  assert.equal(
+    unit.messages.filter(
+      message => message.ruleId === '@typescript-eslint/ban-ts-comment',
+    ).length,
+    0,
   );
 });

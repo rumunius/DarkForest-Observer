@@ -48,6 +48,7 @@ const controls: Array<{
     max: 120,
   },
 ];
+/** 编辑赛前规则参数并预览；锁定状态以服务端为准。 */
 export function ParametersSettings() {
   const {data} = useApp();
   const config = data.judge?.parameters;
@@ -94,6 +95,7 @@ export function ParametersSettings() {
     </section>
   );
 }
+/** 编辑正式参赛名单，账号池与本场正式文明资格保持区分。 */
 export function RosterSettings() {
   const {data} = useApp();
   const config = data.judge?.roster;

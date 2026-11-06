@@ -2,6 +2,7 @@ import {useState} from 'react';
 import {useApp} from '../state';
 import {Field} from '../ui';
 import {ManagementForm} from './judge';
+/** 对封存事实提交带版本和原因的更正，不修改旧战报版本。 */
 export function ReportCorrection() {
   const {data} = useApp();
   const [field, setField] = useState('attack_valid');

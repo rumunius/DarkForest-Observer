@@ -5,10 +5,10 @@ import process from 'node:process';
 import console from 'node:console';
 const {fetch, performance} = globalThis;
 const args = process.argv.slice(2);
-const option = (name, defaultValue) => {
+function option(name, defaultValue) {
   const i = args.indexOf(name);
   return i < 0 ? defaultValue : args[i + 1];
-};
+}
 const origin = option('--origin', 'http://127.0.0.1:5173');
 const accountsPath = option(
   '--accounts',
@@ -99,10 +99,11 @@ await Promise.all(
   }),
 );
 const times = samples.map(s => s.ms).sort((a, b) => a - b);
-const percentile = p =>
-  Math.round(
+function percentile(p) {
+  return Math.round(
     times[Math.min(times.length - 1, Math.floor(times.length * p))] ?? 0,
   );
+}
 const result = {
   origin,
   startedUtc: new Date(started).toISOString(),

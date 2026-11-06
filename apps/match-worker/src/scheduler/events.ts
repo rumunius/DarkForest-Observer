@@ -26,11 +26,12 @@ import {
   text,
 } from '../../../../packages/contracts/src/backend';
 
-export function dueUtc(e: Engine, event: Scheduled): number | null {
+/** 把事件的UTC或有效时间映射到可唤醒UTC，暂停可能使游戏时钟事件暂不可达。 */
+export function dueUtc(engine: Engine, event: Scheduled): number | null {
   if (event.clock === 'utc') {
     return event.due;
   }
-  const m = e.db.match();
+  const m = engine.db.match();
   if (
     m.started_at === null ||
     m.start_settled === null ||
@@ -38,14 +39,15 @@ export function dueUtc(e: Engine, event: Scheduled): number | null {
   ) {
     return null;
   }
-  if (m.paused_at !== null && event.due > gameTime(m, e.now())) {
+  if (m.paused_at !== null && event.due > gameTime(m, engine.now())) {
     return null;
   }
   return m.started_at + m.paused_total + event.due;
 }
+/** 保留事件失败身份及诊断，供受控故障查询和后续重试使用。 */
 export class EventFailure extends Fault {
   constructor(
-    public eventId: string,
+    readonly eventId: string,
     reason = '事务未完成',
   ) {
     super(
@@ -55,28 +57,33 @@ export class EventFailure extends Fault {
     );
   }
 }
-export function recordEventFailure(e: Engine, error: EventFailure): void {
-  e.db.tx(() => {
-    e.db.exec(
+/** 持久记录结算失败，阻断依赖到期屏障的战局操作而不伪造成功。 */
+export function recordEventFailure(engine: Engine, error: EventFailure): void {
+  engine.db.tx(() => {
+    engine.db.exec(
       'UPDATE scheduled_events SET attempt_count=attempt_count+1,last_attempt_utc=?,last_error=?,last_error_utc=? WHERE id=?',
-      e.now(),
+      engine.now(),
       error.message,
-      e.now(),
+      engine.now(),
       error.eventId,
     );
-    e.db.exec('UPDATE scheduler_health SET error=? WHERE id=1', error.message);
+    engine.db.exec(
+      'UPDATE scheduler_health SET error=? WHERE id=1',
+      error.message,
+    );
   });
 }
-export function settleDue(e: Engine): void {
-  if (e.db.match().recovery_state) {
+/** 按既定事件顺序补结算到期任务；遇到故障停止，已提交事件保持幂等。 */
+export function settleDue(engine: Engine): void {
+  if (engine.db.match().recovery_state) {
     return;
   }
-  const db = e.db;
+  const db = engine.db;
   for (let count = 0; count < 128; count++) {
-    const now = e.now();
+    const now = engine.now();
     const due = db
       .all<Scheduled>("SELECT * FROM scheduled_events WHERE status='pending'")
-      .map(event => ({event, utc: dueUtc(e, event)}))
+      .map(event => ({event, utc: dueUtc(engine, event)}))
       .filter(
         (v): v is {event: Scheduled; utc: number} =>
           v.utc !== null && v.utc <= now,
@@ -100,20 +107,20 @@ export function settleDue(e: Engine): void {
         if (!event) {
           return;
         }
-        const utc = dueUtc(e, event);
-        if (utc === null || utc > e.now()) {
+        const utc = dueUtc(engine, event);
+        if (utc === null || utc > engine.now()) {
           return;
         }
         db.exec(
           "UPDATE scheduled_events SET status='settled',committed_utc=?,attempt_count=attempt_count+1,last_attempt_utc=?,last_error='' WHERE id=? AND status='pending'",
-          e.now(),
-          e.now(),
+          engine.now(),
+          engine.now(),
           event.id,
         );
-        settleEvent(e, event, utc);
+        settleEvent(engine, event, utc);
         db.exec(
           "UPDATE scheduler_health SET last_success=?,error='' WHERE id=1",
-          e.now(),
+          engine.now(),
         );
         db.bump();
       });
@@ -132,8 +139,8 @@ export function settleDue(e: Engine): void {
   }
   throw new Fault(503, 'EVENT_BACKLOG', '正在处理到期赛事事件，请稍后再试。');
 }
-function settleEvent(e: Engine, event: Scheduled, utc: number): void {
-  const db = e.db;
+function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
+  const db = engine.db;
   const m = db.match();
   const payload = object(parseJson(event.payload));
   const game =
@@ -141,11 +148,11 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
       ? event.due
       : event.kind === 'match_start'
         ? 0
-        : e.game(utc);
+        : engine.game(utc);
   switch (event.kind) {
     case 'judge_command_task':
     case 'judge_command_job':
-      executeCommandEvent(e, event);
+      executeCommandEvent(engine, event);
       break;
     case 'code_release':
       requireThat(
@@ -155,7 +162,7 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
       );
       db.exec("UPDATE matches SET phase='outfitting'");
       logEvent(
-        e,
+        engine,
         event.id,
         'stage',
         '做好准备',
@@ -165,12 +172,12 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         game,
         utc,
       );
-      e.notice(event.id, 'group', '做好准备', PREPARE_COPY, game);
+      engine.notice(event.id, 'group', '做好准备', PREPARE_COPY, game);
       break;
     case 'match_start': {
       db.exec(
         "INSERT OR IGNORE INTO participation_history SELECT m.account_id,m.local_id,? FROM memberships m JOIN roster_members r ON r.player_id=m.local_id WHERE m.kind='player' AND m.state='bound'",
-        e.now(),
+        engine.now(),
       );
       const roster = db.all<{id: string}>(
         "SELECT id FROM players WHERE entry_status='registered' AND id IN (SELECT player_id FROM roster_members)",
@@ -188,7 +195,7 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
           '仍有玩家未完成穿戴。',
         );
         requireThat(
-          db.all(
+          db.all<Record<string, SqlStorageValue>>(
             "UPDATE sighting_codes SET status='active',activated_utc=?,activated_game=0 WHERE id=? AND player_id=? AND status='reserved' RETURNING id",
             utc,
             flight.code_id,
@@ -201,7 +208,7 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
       }
       db.exec("UPDATE matches SET phase='forest',start_settled=?", utc);
       logEvent(
-        e,
+        engine,
         event.id,
         'stage',
         '比赛开始',
@@ -211,7 +218,7 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         0,
         utc,
       );
-      e.notice(
+      engine.notice(
         event.id,
         'group',
         '比赛开始',
@@ -228,9 +235,9 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         ['returning', 'preparing', 'issued'].includes(flight.status) &&
         flight.deadline === payload.deadline
       ) {
-        eliminate(e, player, 'respawn_timeout', event.id, game, utc);
+        eliminate(engine, player, 'respawn_timeout', event.id, game, utc);
       }
-      autoFinish(e, game, utc, event.id);
+      autoFinish(engine, game, utc, event.id);
       break;
     }
     case 'tech_burst': {
@@ -243,11 +250,11 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
       if (target) {
         db.exec('UPDATE players SET tech=1,photons=1 WHERE id=?', target);
         logEvent(
-          e,
+          engine,
           event.id,
           'tech',
           '技术爆炸',
-          techBurstCopy(e.identity(target)),
+          techBurstCopy(engine.identity(target)),
           'personal',
           [target],
           game,
@@ -256,15 +263,20 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
           null,
           target,
         );
-        e.notice(
+        engine.notice(
           event.id,
           target,
           '技术爆炸',
-          techBurstCopy(e.identity(target)),
+          techBurstCopy(engine.identity(target)),
           game,
         );
       } else {
-        e.audit('system', 'tech_burst_empty', event.id, '没有符合条件的文明');
+        engine.audit(
+          'system',
+          'tech_burst_empty',
+          event.id,
+          '没有符合条件的文明',
+        );
       }
       break;
     }
@@ -272,15 +284,15 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
       const code = coordinate(payload.code);
       const target = db.officialHome(code, true);
       const hit = target
-        ? destroyHome(e, target.player_id, event.id, game, utc)
+        ? destroyHome(engine, target.player_id, event.id, game, utc)
         : false;
       const body = clearingCopy(
         'singer',
         code,
-        hit ? e.identity(target!.player_id) : undefined,
+        hit ? engine.identity(target!.player_id) : undefined,
       );
       logEvent(
-        e,
+        engine,
         event.id,
         'singer',
         '歌者清理',
@@ -296,8 +308,8 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         "UPDATE broadcasts SET singer_status='settled' WHERE id=?",
         String(payload.broadcast),
       );
-      e.notice(event.id, 'group', '歌者清理', body, game);
-      autoFinish(e, game, utc, event.id);
+      engine.notice(event.id, 'group', '歌者清理', body, game);
+      autoFinish(engine, game, utc, event.id);
       break;
     }
     case 'apocalypse': {
@@ -306,16 +318,16 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         "SELECT player_id FROM homeworlds WHERE status='verified' AND destroyed_game IS NULL AND player_id IN (SELECT player_id FROM roster_members)",
       );
       for (const h of homes) {
-        destroyHome(e, h.player_id, event.id, game, utc);
+        destroyHome(engine, h.player_id, event.id, game, utc);
       }
       const inactive = db.all<{id: string}>(
         "SELECT p.id FROM players p JOIN flights f ON f.player_id=p.id WHERE p.entry_status='registered' AND p.id IN (SELECT player_id FROM roster_members) AND f.status NOT IN ('active','eliminated')",
       );
       for (const p of inactive) {
-        eliminate(e, p.id, 'apocalypse', event.id, game, utc);
+        eliminate(engine, p.id, 'apocalypse', event.id, game, utc);
       }
       logEvent(
-        e,
+        engine,
         event.id,
         'stage',
         '宇宙末日',
@@ -325,14 +337,14 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         game,
         utc,
       );
-      e.notice(event.id, 'group', '宇宙末日', APOCALYPSE_COPY, game);
-      autoFinish(e, game, utc, event.id);
+      engine.notice(event.id, 'group', '宇宙末日', APOCALYPSE_COPY, game);
+      autoFinish(engine, game, utc, event.id);
       break;
     }
     case 'transfer_start':
       db.exec("UPDATE matches SET phase='transfer'");
       logEvent(
-        e,
+        engine,
         event.id,
         'stage',
         '前往终局圈',
@@ -342,7 +354,7 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         game,
         utc,
       );
-      e.notice(event.id, 'group', '前往终局圈', TRANSFER_COPY, game);
+      engine.notice(event.id, 'group', '前往终局圈', TRANSFER_COPY, game);
       break;
     case 'hunt_cutoff':
       db.exec(
@@ -354,7 +366,7 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         utc,
       );
       logEvent(
-        e,
+        engine,
         event.id,
         'stage',
         '终局资格确认中',
@@ -364,15 +376,21 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         game,
         utc,
       );
-      e.notice(event.id, 'group', '终局资格确认中', HUNT_REVIEW_COPY, game);
+      engine.notice(
+        event.id,
+        'group',
+        '终局资格确认中',
+        HUNT_REVIEW_COPY,
+        game,
+      );
       break;
     case 'regulation_end':
-      finish(e, 'regulation', game, utc, event.id);
+      finish(engine, 'regulation', game, utc, event.id);
       break;
     case 'judge_delayed_command': {
       const message = text(payload.message, 1000);
       logEvent(
-        e,
+        engine,
         event.id,
         'notice',
         '赛事通知',
@@ -382,15 +400,16 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         game,
         utc,
       );
-      e.notice(event.id, 'group', '赛事通知', message, game);
+      engine.notice(event.id, 'group', '赛事通知', message, game);
       break;
     }
     default:
       throw new Error('UNKNOWN_SCHEDULED_EVENT');
   }
 }
-export async function rearm(e: Engine): Promise<void> {
-  const db = e.db;
+/** 依据持久事件队列重新登记最近Alarm，不改变事件ID或重新抽取随机计划。 */
+export async function rearm(engine: Engine): Promise<void> {
+  const db = engine.db;
   for (let attempt = 0; attempt < 8; attempt++) {
     const revision = db.match().scheduler_revision;
     const recoveryState = db.match().recovery_state;
@@ -400,10 +419,10 @@ export async function rearm(e: Engine): Promise<void> {
           .all<Scheduled>(
             "SELECT * FROM scheduled_events WHERE status='pending'",
           )
-          .map(event => dueUtc(e, event))
+          .map(event => dueUtc(engine, event))
           .filter((v): v is number => v !== null);
     const next = times.length
-      ? Math.max(e.now() + 1, Math.min(...times))
+      ? Math.max(engine.now() + 1, Math.min(...times))
       : null;
     try {
       if (next === null) {

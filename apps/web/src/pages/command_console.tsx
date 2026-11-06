@@ -15,6 +15,7 @@ import {
 import {useApp} from '../state';
 import {Button, CutOutline, Disclosure, Field, Frame, PageTitle} from '../ui';
 
+/** 组合语法提示、真实影响预览和确认执行，旧预览不能直接重复提交。 */
 export function CommandConsole() {
   const {reportError, data, operate, busy} = useApp();
   const [command, setCommand] = useState('');

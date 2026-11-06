@@ -367,7 +367,7 @@ describe('audit fixes without a complete command language', () => {
     expect(await inEngine(e => e.db.home('C04')!.destroyed_game)).toBeNull();
     expect(
       await inEngine(e =>
-        e.db.all(
+        e.db.all<Record<string, SqlStorageValue>>(
           "SELECT id FROM notice_queue WHERE target='C04' AND title IN ('收到母星情报','母星毁灭','永久淘汰')",
         ),
       ),
@@ -505,7 +505,7 @@ describe('audit fixes without a complete command language', () => {
       });
       expect(
         await inEngine(e =>
-          e.db.all(
+          e.db.all<Record<string, SqlStorageValue>>(
             "SELECT id FROM sighting_codes WHERE player_id='C02' AND status='retired'",
           ),
         ),
@@ -646,11 +646,11 @@ describe('audit fixes without a complete command language', () => {
       ).status,
     ).toBe(200);
     const state = await inEngine(e => ({
-      notice: e.db.one(
+      notice: e.db.one<Record<string, SqlStorageValue>>(
         'SELECT copied_by,copied_utc,sent_by,sent_utc FROM notice_queue WHERE id=?',
         noticeId,
       ),
-      actions: e.db.all(
+      actions: e.db.all<Record<string, SqlStorageValue>>(
         'SELECT actor,action FROM notice_actions WHERE notice_id=? ORDER BY utc_ms',
         noticeId,
       ),
@@ -817,7 +817,9 @@ describe('audit fixes without a complete command language', () => {
     });
     expect(
       await inEngine(e =>
-        e.db.all("SELECT id FROM event_log WHERE kind='singer'"),
+        e.db.all<Record<string, SqlStorageValue>>(
+          "SELECT id FROM event_log WHERE kind='singer'",
+        ),
       ),
     ).toHaveLength(1);
     const settled = (r.body as OperationResult).scheduler!.settledEvents[0]!;
@@ -831,7 +833,9 @@ describe('audit fixes without a complete command language', () => {
     ).toBe(200);
     expect(
       await inEngine(e =>
-        e.db.all("SELECT id FROM event_log WHERE kind='singer'"),
+        e.db.all<Record<string, SqlStorageValue>>(
+          "SELECT id FROM event_log WHERE kind='singer'",
+        ),
       ),
     ).toHaveLength(1);
   });
@@ -1334,9 +1338,11 @@ describe('real Workers SQLite and RPC', () => {
           retire(engine, 'C01', 'test', i, Date.now());
         });
       }
-      expect(db.all('SELECT DISTINCT mac FROM sighting_codes')).toHaveLength(
-        350,
-      );
+      expect(
+        db.all<Record<string, SqlStorageValue>>(
+          'SELECT DISTINCT mac FROM sighting_codes',
+        ),
+      ).toHaveLength(350);
       expect(() =>
         db.tx(() => engine.issue('C01', 'overflow', candidates)),
       ).toThrow('本场手环配置已耗尽');

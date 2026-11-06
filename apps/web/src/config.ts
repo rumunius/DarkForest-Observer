@@ -1,5 +1,6 @@
 import type {SiteConfig} from '@darkforest/contracts';
 
+/** 默认公共站点展示配置；不包含业务秘密或可绕过权限的控制项。 */
 export const DEFAULT_SITE: SiteConfig = {
   version: 1,
   title: '黑暗森林：观察者效应',

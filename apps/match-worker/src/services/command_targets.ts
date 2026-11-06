@@ -4,6 +4,7 @@ import {uniformInt} from '../domain/rules';
 import {requireThat} from '../storage/store';
 import type {Engine} from './engine';
 
+/** 按选择器语法拆分过滤条件，保留引号和嵌套表达式中的分隔符。 */
 export function splitFilters(input: string): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -37,6 +38,7 @@ export function splitFilters(input: string): string[] {
   parts.push(input.slice(start).trim());
   return parts;
 }
+/** 按命令区间语法判断数值，可处理开放端点且拒绝非法范围。 */
 export function inRange(n: number, range: string): boolean {
   if (!/^(?:\d+(?:\.\.\d*)?|\.\.\d+)$/.test(range)) {
     throw new CommandSyntaxError('数值范围格式不正确');
@@ -50,8 +52,9 @@ export function inRange(n: number, range: string): boolean {
   }
   return (!a || n >= Number(a)) && (!b || n <= Number(b));
 }
-export function score(e: Engine, id: string, key: string): number {
-  const p = e.db.player(id);
+/** 读取注册的文明数值属性，禁止把任意SQL字段作为命令分数。 */
+export function score(engine: Engine, id: string, key: string): number {
+  const p = engine.db.player(id);
   if (key === 'photons') {
     return p.photons;
   }
@@ -59,27 +62,29 @@ export function score(e: Engine, id: string, key: string): number {
     return 2 - p.broadcasts;
   }
   if (key === 'wrong') {
-    return e.db.one<{wrong: number}>(
+    return engine.db.one<{wrong: number}>(
       'SELECT wrong FROM attack_controls WHERE player_id=?',
       id,
     )!.wrong;
   }
   if (key === 'kills') {
-    return e.db.one<{n: number}>(
+    return engine.db.one<{n: number}>(
       "SELECT COUNT(DISTINCT target) n FROM attacks WHERE actor=? AND classification='hit' AND valid=1",
       id,
     )!.n;
   }
   throw new CommandSyntaxError('未知战绩字段 ' + key);
 }
+/** 选择器的候选、数量和随机属性；候选集合不等于最终抽样结果。 */
 export interface TargetSet {
   candidates: string[];
   count: number;
   random: boolean;
   ids: string[];
 }
+/** 在本场正式名单或显式账号池边界内解析选择器，调用方负责对应业务授权。 */
 export function targets(
-  e: Engine,
+  engine: Engine,
   value: string,
   self?: string,
   preview = false,
@@ -98,7 +103,7 @@ export function targets(
     value = self;
   }
   if (/^C\d{2,3}$/.test(value)) {
-    e.db.player(value);
+    engine.db.player(value);
     return {candidates: [value], ids: [value], count: 1, random: false};
   }
   if (/^\{\s*C/.test(value)) {
@@ -117,7 +122,7 @@ export function targets(
         '集合只能包含文明编号。',
         400,
       );
-      e.db.player(id);
+      engine.db.player(id);
     }
     return {candidates: ids, ids, count: ids.length, random: false};
   }
@@ -125,31 +130,33 @@ export function targets(
   if (!m) {
     throw new CommandSyntaxError('无法识别目标 ' + value);
   }
-  const roster = e.db.roster();
+  const roster = engine.db.roster();
   const base = m[1]!;
-  const registered = e.db
+  const registered = engine.db
     .all<{id: string}>(
       "SELECT id FROM players WHERE entry_status='registered' ORDER BY id",
     )
     .map(p => p.id);
   let ids =
     base === 'pool'
-      ? e.db
+      ? engine.db
           .all<{id: string}>('SELECT id FROM players ORDER BY id')
           .map(p => p.id)
       : roster.filter(id => registered.includes(id));
-  const scope = e.commandSnapshot[value];
+  const scope = engine.commandSnapshot[value];
   if (scope) {
     ids = ids.filter(id => scope.includes(id));
   }
   const alive = (id: string) =>
-    e.db.match().start_settled !== null &&
-    e.db.flight(id).status !== 'eliminated';
+    engine.db.match().start_settled !== null &&
+    engine.db.flight(id).status !== 'eliminated';
   if (base === 'alive') {
     ids = ids.filter(alive);
   }
   if (base === 'dead') {
-    ids = ids.filter(id => e.db.match().start_settled !== null && !alive(id));
+    ids = ids.filter(
+      id => engine.db.match().start_settled !== null && !alive(id),
+    );
   }
   let random = base === 'random';
   let limit = base === 'random' ? 1 : Number.MAX_SAFE_INTEGER;
@@ -188,13 +195,13 @@ export function targets(
       ) {
         throw new CommandSyntaxError('未知飞船状态');
       }
-      filter(id => e.db.flight(id).status === val);
+      filter(id => engine.db.flight(id).status === val);
     } else if (key === 'homeworld') {
       if (!['alive', 'destroyed', 'pending'].includes(val)) {
         throw new CommandSyntaxError('未知母星状态');
       }
       filter(id => {
-        const h = e.db.home(id);
+        const h = engine.db.home(id);
         return val === 'pending'
           ? h?.status === 'pending'
           : h?.status === 'verified' &&
@@ -206,12 +213,12 @@ export function targets(
       if (!['0', '1'].includes(val)) {
         throw new CommandSyntaxError('科技为0或1');
       }
-      filter(id => e.db.player(id).tech === Number(val));
+      filter(id => engine.db.player(id).tech === Number(val));
     } else if (key === 'tag') {
       const tag = val.startsWith('"') ? (parseJson(val) as string) : val;
       filter(
         id =>
-          !!e.db.one(
+          !!engine.db.one<Record<string, SqlStorageValue>>(
             'SELECT player_id FROM command_tags WHERE player_id=? AND tag=?',
             id,
             tag,
@@ -229,7 +236,7 @@ export function targets(
         }
         fields.add(k);
         inRange(0, r);
-        ids = ids.filter(id => inRange(score(e, id, k), r));
+        ids = ids.filter(id => inRange(score(engine, id, k), r));
       }
     } else if (key === 'sort') {
       if (!['id', 'random'].includes(val)) {

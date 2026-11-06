@@ -28,6 +28,7 @@ import {SCHEMA_VERSION} from '../../apps/match-worker/src/storage/schema';
 import {
   createCheckpoint,
   openCheckpoint,
+  openCarry,
   prepareRecovery,
   restoreCheckpointTables,
   completeRecovery,
@@ -121,6 +122,31 @@ beforeEach(async () => {
   });
   expect(r.status).toBe(201);
 });
+it('validates recovery file metadata without changing the valid encrypted format', async () => {
+  await runInDurableObject(stub(), async (_instance, state) => {
+    const engine = new Engine(new Store(state.storage), bindings);
+    const checkpoint = await createCheckpoint(engine);
+    const opened = await openCheckpoint(engine, checkpoint);
+    expect(opened.envelope).toEqual(checkpoint);
+    await expect(
+      openCheckpoint(engine, {...checkpoint, revision: '1'}),
+    ).rejects.toThrow();
+    await expect(
+      openCheckpoint(engine, {...checkpoint, bookmark: null}),
+    ).rejects.toThrow();
+    const carry = await prepareRecovery(engine, {
+      target: checkpoint,
+      reason: '验证恢复文件元数据',
+    });
+    expect((await openCarry(engine, carry)).envelope).toEqual(carry);
+    await expect(
+      openCarry(engine, {...carry, createdUtc: String(carry.createdUtc)}),
+    ).rejects.toThrow();
+    await expect(
+      openCarry(engine, {...carry, id: {value: carry.id}}),
+    ).rejects.toThrow();
+  });
+});
 it('upgrades an existing v5 database without losing notices and applies the upgrade only once', async () => {
   await runInDurableObject(stub(), (_instance, state) => {
     const db = new Store(state.storage);
@@ -168,7 +194,7 @@ it('upgrades an existing v5 database without losing notices and applies the upgr
     migrate(state.storage);
     migrate(state.storage);
     expect(
-      db.one(
+      db.one<Record<string, SqlStorageValue>>(
         'SELECT status,priority,copied_by,sent_by FROM notice_queue WHERE id=?',
         'legacy-notice',
       ),
@@ -178,10 +204,18 @@ it('upgrades an existing v5 database without losing notices and applies the upgr
       copied_by: null,
       sent_by: null,
     });
-    expect(db.one('SELECT MAX(version) AS version FROM schema_meta')).toEqual({
+    expect(
+      db.one<Record<string, SqlStorageValue>>(
+        'SELECT MAX(version) AS version FROM schema_meta',
+      ),
+    ).toEqual({
       version: SCHEMA_VERSION,
     });
-    expect(db.one('SELECT COUNT(*) AS count FROM accounts')).toEqual({
+    expect(
+      db.one<Record<string, SqlStorageValue>>(
+        'SELECT COUNT(*) AS count FROM accounts',
+      ),
+    ).toEqual({
       count: 5,
     });
   });
@@ -222,13 +256,13 @@ it('preserves copy/send history across a short local checkpoint recovery', async
     restoreCheckpointTables(e, target.tables);
     await completeRecovery(e, carry);
     expect(
-      e.db.one(
+      e.db.one<Record<string, SqlStorageValue>>(
         'SELECT status,copied_by,sent_by FROM notice_queue WHERE id=?',
         noticeId,
       ),
     ).toEqual({status: 'sent', copied_by: '通讯裁判', sent_by: '事件裁判'});
     expect(
-      e.db.all(
+      e.db.all<Record<string, SqlStorageValue>>(
         'SELECT actor,action FROM notice_actions WHERE notice_id=? ORDER BY utc_ms,id',
         noticeId,
       ),
@@ -473,9 +507,13 @@ it('blocks an already preparing write when recovery starts before its final tran
       edgeUtc: Date.now(),
     });
     expect(result.status).toBe(503);
-    expect(e.db.all('SELECT * FROM sighting_codes')).toHaveLength(0);
     expect(
-      e.db.all("SELECT * FROM request_journal WHERE request_id='late-issue'"),
+      e.db.all<Record<string, SqlStorageValue>>('SELECT * FROM sighting_codes'),
+    ).toHaveLength(0);
+    expect(
+      e.db.all<Record<string, SqlStorageValue>>(
+        "SELECT * FROM request_journal WHERE request_id='late-issue'",
+      ),
     ).toHaveLength(0);
     e.schedule(
       'after-recovery',
@@ -581,9 +619,15 @@ it('restores checkpoint data, preserves every issued code, invalidates late requ
     restoreCheckpointTables(e, target.tables);
     const result = await completeRecovery(e, carry);
     expect(result.issuedCount).toBe(2);
-    expect(e.db.all('SELECT id FROM sighting_codes')).toHaveLength(2);
     expect(
-      e.db.all("SELECT id FROM sighting_codes WHERE status!='retired'"),
+      e.db.all<Record<string, SqlStorageValue>>(
+        'SELECT id FROM sighting_codes',
+      ),
+    ).toHaveLength(2);
+    expect(
+      e.db.all<Record<string, SqlStorageValue>>(
+        "SELECT id FROM sighting_codes WHERE status!='retired'",
+      ),
     ).toHaveLength(0);
     expect(e.db.match().recovery_state).toContain('review:');
     expect(
@@ -591,7 +635,11 @@ it('restores checkpoint data, preserves every issued code, invalidates late requ
         "SELECT cancelled FROM request_journal WHERE request_id='late'",
       )!.cancelled,
     ).toBe(1);
-    expect(e.db.all('SELECT * FROM sessions WHERE revoked=0')).toHaveLength(0);
+    expect(
+      e.db.all<Record<string, SqlStorageValue>>(
+        'SELECT * FROM sessions WHERE revoked=0',
+      ),
+    ).toHaveLength(0);
     expect((await completeRecovery(e, carry)).issuedCount).toBe(2);
     const keys = await e.keys();
     const plaintext = await decrypt(
@@ -602,7 +650,9 @@ it('restores checkpoint data, preserves every issued code, invalidates late requ
     expect(
       jsonObject(jsonObject(parseJson(plaintext)).latest).sighting_codes,
     ).toHaveLength(2);
-    const reportCount = e.db.all('SELECT version FROM result_reports').length;
+    const reportCount = e.db.all<Record<string, SqlStorageValue>>(
+      'SELECT version FROM result_reports',
+    ).length;
     expect(reportCount).toBe(0);
   });
 });

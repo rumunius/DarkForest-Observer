@@ -3,13 +3,16 @@ import type {MatchEntry} from '@darkforest/contracts';
 import {useApp} from '../state';
 import {judgeCan} from '../permissions';
 
+/** 本场页面使用的目录及入口身份，只作导航和展示上下文。 */
 export interface MatchContext {
   entry: MatchEntry;
   audience: 'player' | 'staff';
 }
 const Context = createContext<MatchContext | null>(null);
+/** 向本场页面注入比赛目录和入口身份，服务端仍独立验证授权。 */
 export const MatchContextProvider = Context.Provider;
 
+/** 展示本场名称与状态，避免跨比赛导航时混淆当前场次。 */
 export function MatchHeading() {
   const context = useContext(Context);
   if (!context) {
@@ -23,6 +26,7 @@ export function MatchHeading() {
   );
 }
 
+/** 提供跨比赛与本场导航，保留待确认操作的离场提示。 */
 export function MatchLinks() {
   const context = useContext(Context);
   const {data, pending} = useApp();

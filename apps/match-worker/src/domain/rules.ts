@@ -1,6 +1,7 @@
 import {COLORS, validArms, type Arms} from '@darkforest/contracts';
 import {ContractError} from '../../../../packages/contracts/src/backend';
 
+/** 有效比赛时钟上的阶段边界；暂停期间这些时间点不向前推进。 */
 export const TIMES = {
   apocalypse: 3_900_000,
   transfer: 5_400_000,
@@ -8,6 +9,7 @@ export const TIMES = {
   end: 7_200_000,
   respawn: 900_000,
 };
+/** 校验合法手环分组并归一化两臂顺序；同臂排列不影响码身份。 */
 export function normalizeArms(a: unknown, b: unknown): string {
   if (!Array.isArray(a) || !Array.isArray(b) || !validArms([a, b] as Arms)) {
     throw new ContractError('手环分组不合法。');
@@ -23,6 +25,7 @@ export function normalizeArms(a: unknown, b: unknown): string {
     .sort((x, y) => x - y);
   return masks.join(':');
 }
+/** 将服务器规范码还原为七色分组，保留两臂交换等价的表示。 */
 export function decodeArms(key: string): Arms {
   return key
     .split(':')
@@ -30,6 +33,7 @@ export function decodeArms(key: string): Arms {
       COLORS.filter((_, i) => Number(n) & (1 << i)).map(c => c.id),
     ) as Arms;
 }
+/** 枚举本场可发行的完整合法码本，发行历史仍由持久化存储保证不复用。 */
 export function enumerateCodes(): string[] {
   const result: string[] = [];
   for (let a = 1; a < 128; a++) {
@@ -45,6 +49,7 @@ export function enumerateCodes(): string[] {
   }
   return result;
 }
+/** 使用加密随机源和拒绝采样，在给定上界内均匀取整数。 */
 export function uniformInt(max: number): number {
   if (!Number.isSafeInteger(max) || max < 1 || max > 2 ** 32) {
     throw new Error('Invalid random bound');
@@ -56,6 +61,7 @@ export function uniformInt(max: number): number {
   } while (sample[0]! >= limit);
   return sample[0]! % max;
 }
+/** 计算首次歌者到达的有效时间；事件持久化后不得因重试重新抽取。 */
 export function firstSongDue(
   at: number,
   random = uniformInt,
@@ -68,6 +74,7 @@ export function firstSongDue(
   }
   return null;
 }
+/** 生成技术爆炸计划；调用方负责在开赛锁定事务中保存既定抽签。 */
 export function techSchedule(n: number, random = uniformInt): number[] {
   const count = Math.min(
     Math.max(1, Math.round(n / 3)),
@@ -84,12 +91,14 @@ export function techSchedule(n: number, random = uniformInt): number[] {
   );
   return jitter.map((v, i) => start + v + i * gap);
 }
+/** 计算有效时间所需的UTC节点与累计暂停信息，不代表客户端计时授权。 */
 export interface Clock {
   started_at: number | null;
   paused_at: number | null;
   paused_total: number;
   ended_game: number | null;
 }
+/** 从UTC和暂停记录计算有效比赛时长，暂停时冻结结果。 */
 export function gameTime(clock: Clock, utc: number): number {
   if (clock.ended_game !== null) {
     return clock.ended_game;

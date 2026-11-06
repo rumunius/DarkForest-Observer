@@ -19,13 +19,16 @@ import {configureRestore, recoveryRpc} from './services/recovery';
 import {prepareCommandCredentials} from './services/commands';
 import {createCheckpoint} from './services/recovery';
 
+/** 单场唯一的权威Durable Object；持有SQLite状态并串行结算入口与Alarm。 */
 export class DarkForestMatch extends DurableObject<BackendEnv> {
   private engine: Engine;
+
   constructor(ctx: DurableObjectState, env: BackendEnv) {
     super(ctx, env);
     migrate(ctx.storage);
     this.engine = new Engine(new Store(ctx.storage), env);
   }
+
   private scopedEngine(grant?: MatchGrant): Engine {
     const name = this.ctx.id.name;
     const id = name?.startsWith('match:') ? name.slice(6) : this.engine.matchId;
@@ -35,6 +38,7 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
       grant,
     );
   }
+
   async control(request: ControlRequest, signature: string): Promise<string> {
     try {
       const reply = JSON.stringify(
@@ -61,6 +65,7 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
       });
     }
   }
+
   async legacyInventory(matchId: string, signature: string): Promise<string> {
     requireThat(
       signature ===
@@ -84,13 +89,16 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
       id: m.id,
       phase: m.phase,
       revision: m.revision,
-      accounts: e.db.all(
+      accounts: e.db.all<Record<string, SqlStorageValue>>(
         'SELECT id,role,name,credential_hash,permissions FROM accounts',
       ),
-      issued: e.db.one('SELECT COUNT(*) AS count FROM sighting_codes'),
+      issued: e.db.one<Record<string, SqlStorageValue>>(
+        'SELECT COUNT(*) AS count FROM sighting_codes',
+      ),
       checkpoint: await createCheckpoint(e),
     });
   }
+
   async authorized(input: RpcInput, grant: MatchGrant, signature: string) {
     try {
       requireThat(
@@ -125,8 +133,13 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
       };
     }
   }
+
   private async authorizeTasks(engine: Engine) {
-    if (!engine.db.one('SELECT id FROM match_identity')) {
+    if (
+      !engine.db.one<Record<string, SqlStorageValue>>(
+        'SELECT id FROM match_identity',
+      )
+    ) {
       return;
     }
     for (const row of engine.db.all<{actor: string; account_id: string}>(
@@ -146,6 +159,7 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
       }
     }
   }
+
   async call(
     input: RpcInput,
   ): Promise<Omit<RpcReply, 'body'> & {body: string; workerVersion: string}> {
@@ -156,6 +170,7 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
       workerVersion: this.env.CF_VERSION_METADATA?.id ?? 'local',
     };
   }
+
   async bootstrap(
     secret: string,
     body: unknown,
@@ -179,6 +194,7 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
       };
     }
   }
+
   async alarm(): Promise<void> {
     this.engine = this.scopedEngine();
     await this.authorizeTasks(this.engine);
@@ -187,7 +203,7 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
       throw new Error('KEY_CONFIGURATION_CHANGED');
     }
     if (
-      this.engine.db.one(
+      this.engine.db.one<Record<string, SqlStorageValue>>(
         "SELECT id FROM scheduled_events WHERE status='pending' AND kind IN ('judge_command_task','judge_command_job')",
       )
     ) {
@@ -211,6 +227,7 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
     }
     await rearm(this.engine);
   }
+
   async recovery(
     secret: string,
     raw: unknown,
@@ -218,7 +235,11 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
   ): Promise<{status: number; body: string}> {
     this.engine = this.scopedEngine();
     try {
-      if (this.engine.db.one('SELECT id FROM match_identity')) {
+      if (
+        this.engine.db.one<Record<string, SqlStorageValue>>(
+          'SELECT id FROM match_identity',
+        )
+      ) {
         requireThat(
           platformSignature ===
             (await controlSignature(
@@ -233,7 +254,7 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
       const body = raw as {operation: string; payload?: unknown};
       if (body.operation === 'launch') {
         requireThat(
-          !this.engine.db.one(
+          !this.engine.db.one<Record<string, SqlStorageValue>>(
             'SELECT id FROM match_identity WHERE erasure_generation>0',
           ),
           'RESTORE_EXPIRED',

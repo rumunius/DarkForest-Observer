@@ -1,5 +1,6 @@
 import {object, parseJson} from '../../../packages/contracts/src/backend';
 import type {ReactNode} from 'react';
+/** 权威比赛阶段的中文显示名称，未知阶段不能据此获得权限。 */
 export const PHASE_NAMES: Record<string, string> = {
   setup: '赛前准备',
   armed: '等待统一发码',
@@ -118,6 +119,7 @@ const VALUES: Record<string, string> = {
   'nonessential-secrets': '非必要秘密信息',
   ...PHASE_NAMES,
 };
+/** 平台持久操作的中文显示名称，原状态和收据仍用于成功判定。 */
 export const OPERATION_NAMES: Record<string, string> = {
   create: '新建比赛',
   fence: '更新各比赛访问限制',
@@ -139,6 +141,7 @@ export const OPERATION_NAMES: Record<string, string> = {
   'control:assign': '交接裁判岗位',
   'control:publish': '发布准备入口',
 };
+/** 把未知结构的管理结果投影成允许展示的字段，隐藏未注册的内部字段。 */
 export function HumanData({
   value,
   field = '',

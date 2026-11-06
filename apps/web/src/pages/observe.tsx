@@ -26,6 +26,7 @@ import {
   formatTime,
 } from '../ui';
 
+/** 列出当前身份可见的文明摘要，详情链接保持当前查看范围。 */
 export function CivilizationList({
   prefix,
   onlyAlive = false,
@@ -86,6 +87,7 @@ export function CivilizationList({
     </>
   );
 }
+/** 展示获授权的文明详情与历史，不推测或补齐不可见秘密。 */
 export function CivilizationDetail({
   civilization: c,
   back,
@@ -221,6 +223,7 @@ function Overview() {
     </>
   );
 }
+/** 浏览已发生的赛事事件及游标历史，未来安排保留在受限入口。 */
 export function EventExplorer({
   title = '赛事事件',
   back,
@@ -279,6 +282,7 @@ export function EventExplorer({
     </>
   );
 }
+/** 按服务端观战资格呈现只读全局信息，不提供赛事写操作。 */
 export function ObserverPages() {
   const {route, data} = useApp();
   const id = route.split('/')[3];
@@ -306,6 +310,7 @@ export function ObserverPages() {
   }
   return <Empty title="页面不存在" to="/observer" />;
 }
+/** 展示封存或更正后的战报和完整复盘访问范围。 */
 export function ResultsPages() {
   const {data, route} = useApp();
   const results = data.results;
@@ -392,6 +397,7 @@ export function ResultsPages() {
     </>
   );
 }
+/** 使用裁判会话展示只读中控大屏，管理操作留在裁判桌面。 */
 export function Display() {
   const {data, reduced} = useApp();
   const [tab, setTab] = useState('overview');

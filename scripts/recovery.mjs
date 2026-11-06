@@ -6,10 +6,10 @@ import console from 'node:console';
 const {fetch} = globalThis;
 const args = process.argv.slice(2);
 const operation = args[0];
-const option = name => {
+function option(name) {
   const index = args.indexOf(name);
   return index < 0 ? undefined : args[index + 1];
-};
+}
 const origin = option('--origin');
 const secretFile = option('--secret-file');
 const input = option('--input');
