@@ -583,6 +583,51 @@ describe('登录、邀请与场内体验', () => {
     ).toBe('切换比赛');
     expect(document.querySelector<Element>('a[href*="/history"]')).toBeNull();
   });
+  it('临时效果只预览服务端允许的整数秒数', async () => {
+    history.replaceState({}, '', '/judge/effects');
+    const source = new MockSource();
+    source.reset('chief', 'active');
+    const snapshot = await source.read('/judge/effects');
+    vi.spyOn(source, 'read').mockImplementation(
+      promiseStub(() => structuredClone(snapshot)),
+    );
+    await mount(<App source={source} />);
+    const duration = document.querySelector<HTMLInputElement>(
+      'input[type="number"]',
+    )!;
+    const form = duration.closest<HTMLElement>('.management-form')!;
+    const reason = form.querySelector('textarea')!;
+    const preview = form.querySelector('button')!;
+    await act(
+      promiseStub(() => {
+        Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          'value',
+        )!.set!.call(reason, '核对现场情况');
+        reason.dispatchEvent(new Event('input', {bubbles: true}));
+      }),
+    );
+    const setSeconds = async (value: string) => {
+      await act(
+        promiseStub(() => {
+          Object.getOwnPropertyDescriptor(
+            HTMLInputElement.prototype,
+            'value',
+          )!.set!.call(duration, value);
+          duration.dispatchEvent(new Event('input', {bubbles: true}));
+        }),
+      );
+    };
+    for (const invalid of ['', '0', '-1', '1.5', '86401', '1e300']) {
+      await setSeconds(invalid);
+      expect(preview.disabled, invalid).toBe(true);
+    }
+    for (const valid of ['1', '60', '86400']) {
+      await setSeconds(valid);
+      expect(preview.disabled, valid).toBe(false);
+    }
+  });
+
   it('裁判尚未填原因时保留禁用的预览按钮，填写后可预览', async () => {
     const source = new MockSource();
     source.reset('chief', 'active');

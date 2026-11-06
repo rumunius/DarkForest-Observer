@@ -8,6 +8,11 @@ export function Effects() {
   const {data} = useApp();
   const [target, setTarget] = useState('@a');
   const [seconds, setSeconds] = useState('60');
+  const durationSeconds = Number(seconds);
+  const validDuration =
+    Number.isSafeInteger(durationSeconds) &&
+    durationSeconds >= 1 &&
+    durationSeconds <= 86400;
   return (
     <>
       <PageTitle title="临时效果" />
@@ -42,8 +47,8 @@ export function Effects() {
       <ManagementForm
         title="建立临时禁止目击攻击"
         path="/judge/effects"
-        payload={{target, seconds: Number(seconds)}}
-        ready={!!target && Number(seconds) > 0}
+        payload={{target, seconds: durationSeconds}}
+        ready={!!target && validDuration}
       >
         <Field label="目标范围">
           <select value={target} onChange={e => setTarget(e.target.value)}>
@@ -59,7 +64,8 @@ export function Effects() {
           <input
             type="number"
             min={1}
-            max={3600}
+            max={86400}
+            step={1}
             value={seconds}
             onChange={e => setSeconds(e.target.value)}
           />
