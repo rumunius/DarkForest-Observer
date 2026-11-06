@@ -12,6 +12,7 @@ import {Security} from './platform/security';
 import {Delivery, platformFeedbackMessages, roles} from './platform/shared';
 import {HumanData} from './platform_copy';
 import {Button, Feedback} from './ui';
+import {requireError} from '@darkforest/contracts';
 
 /** 协调长期会话、平台导航和持久操作反馈，单场玩法仍走独立入口。 */
 export function PlatformApp() {
@@ -47,7 +48,7 @@ export function PlatformApp() {
       setReady(true);
       setTick(t => t + 1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '读取失败。');
+      setError(requireError(e).message);
       setReady(true);
     }
   }, [client]);
@@ -85,7 +86,7 @@ export function PlatformApp() {
       setNotice('操作已完成。');
     } catch (e) {
       setNotice('');
-      setError(e instanceof Error ? e.message : '操作结果未知，请查询原操作。');
+      setError(requireError(e).message);
     } finally {
       setTick(t => t + 1);
       running.current = false;
@@ -318,9 +319,7 @@ export function MatchApp({id}: {id: string}) {
       setEntry(current);
     })().catch(e => {
       if (active) {
-        setError(
-          e instanceof Error ? e.message : '暂时无法读取比赛，请刷新重试。',
-        );
+        setError(requireError(e).message);
       }
     });
     return () => {

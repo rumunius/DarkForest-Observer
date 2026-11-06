@@ -14,6 +14,7 @@ import {
 } from '../../../../packages/contracts/src/commands';
 import {useApp} from '../state';
 import {Button, CutOutline, Disclosure, Field, Frame, PageTitle} from '../ui';
+import {requireError} from '@darkforest/contracts';
 
 /** 组合语法提示、真实影响预览和确认执行，旧预览不能直接重复提交。 */
 export function CommandConsole() {
@@ -37,7 +38,7 @@ export function CommandConsole() {
       spec = commandSpec(parseCommandTree(command));
     }
   } catch (error) {
-    syntax = error instanceof Error ? error.message : '指令格式不正确';
+    syntax = requireError(error).message;
   }
   const direct =
     spec?.query ||

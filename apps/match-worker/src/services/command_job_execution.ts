@@ -8,6 +8,7 @@ import {
 import type {JobData} from './command_runtime';
 import {actualTargets, commandState, isMessage} from './command_runtime';
 import {autoFinish} from './life';
+import {requireError} from '@darkforest/contracts';
 
 /** 复核逐步作业位置与赛后门禁，保存本步结果或失败并安排下一步。 */
 export function executeCommandJob(context: CommandEventContext): void {
@@ -82,7 +83,7 @@ export function executeCommandJob(context: CommandEventContext): void {
       null,
     );
   } catch (error) {
-    data.error = error instanceof Error ? error.message : '步骤失败';
+    data.error = requireError(error).message;
     updateCommandObject(commandContext, row, data, 'failed');
     recordCommand(
       engine,

@@ -24,6 +24,7 @@ import {
   MatchHeading,
   type MatchContext,
 } from './components/match_context';
+import {requireError} from '@darkforest/contracts';
 
 function Stars() {
   return (
@@ -101,7 +102,7 @@ function Login() {
                   : '/player',
             );
           } catch (e) {
-            setError(e instanceof Error ? e.message : '登录未完成，请重试。');
+            setError(requireError(e).message);
           } finally {
             setBusy(false);
           }

@@ -9,6 +9,7 @@ import {
 import {ApiError} from './data/http';
 import {mergeRecords, type Collection} from './judge_records';
 import {EMPTY_SNAPSHOT as empty} from './state_snapshot';
+import {requireError} from '@darkforest/contracts';
 
 interface HistoryContext {
   readonly source: DataSource;
@@ -64,9 +65,7 @@ export function useMatchHistory({
         snapshotRef.current = next;
         setData(next);
       }
-      setError(
-        error instanceof Error ? error.message : '暂时无法取得历史记录。',
-      );
+      setError(requireError(error).message);
     } finally {
       historyLoading.current = false;
     }
@@ -100,7 +99,7 @@ export function useMatchHistory({
           snapshotRef.current = next;
           setData(next);
         }
-        setError(error instanceof Error ? error.message : '暂时无法读取记录。');
+        setError(requireError(error).message);
       } finally {
         historyLoading.current = false;
       }

@@ -3,6 +3,7 @@ import {useState} from 'react';
 import {useApp} from '../state';
 import {Button, CopyText, Field} from '../ui';
 import {ManagementForm} from './judge';
+import {requireError} from '@darkforest/contracts';
 
 /** 在本场权限范围内展示账号管理，凭据只通过专用交付入口读取。 */
 export function AccountsManagement() {
@@ -90,7 +91,7 @@ export function AccountsManagement() {
               );
               setError('');
             } catch (e) {
-              setError(e instanceof Error ? e.message : '暂时无法读取新口令。');
+              setError(requireError(e).message);
             }
           }, reportError)}
         >

@@ -27,6 +27,7 @@ import {
   savePending,
   type PendingRecord,
 } from './state_storage';
+import {requireError} from '@darkforest/contracts';
 
 interface AppContext {
   data: Snapshot;
@@ -89,9 +90,7 @@ export function AppProvider({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const reportError = useCallback((error: unknown) => {
-    setError(
-      error instanceof Error ? error.message : '本次操作未完成，请稍后重试。',
-    );
+    setError(requireError(error).message);
   }, []);
   const [result, setResult] = useState<OperationResult | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -189,9 +188,7 @@ export function AppProvider({
         persistPending(null);
       }
       readError.current = true;
-      setError(
-        error instanceof Error ? error.message : '连接已中断，正在重新连接。',
-      );
+      setError(requireError(error).message);
     } finally {
       if (request === sequence.current) {
         setLoading(false);
@@ -243,7 +240,7 @@ export function AppProvider({
       if (mine !== generation.current) {
         return;
       }
-      setError(e instanceof Error ? e.message : '退出登录未完成，请重试。');
+      setError(requireError(e).message);
     }
   };
   useEffect(() => {

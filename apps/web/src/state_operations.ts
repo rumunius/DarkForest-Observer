@@ -12,6 +12,7 @@ import {
 } from 'react';
 import {ApiError} from './data/http';
 import {readPending, type PendingRecord} from './state_storage';
+import {requireError} from '@darkforest/contracts';
 
 interface MatchOperationContext {
   readonly source: DataSource;
@@ -78,11 +79,7 @@ export function useMatchOperations({
       if (mine !== generation.current) {
         return;
       }
-      setError(
-        error instanceof Error
-          ? error.message
-          : '暂时无法取得操作结果，请稍后查询。',
-      );
+      setError(requireError(error).message);
     } finally {
       if (mine === generation.current) {
         submitting.current = false;
@@ -161,11 +158,7 @@ export function useMatchOperations({
             return;
           }
         }
-        setError(
-          error instanceof Error
-            ? error.message
-            : '操作结果尚未取得，正在确认上一次操作结果。',
-        );
+        setError(requireError(error).message);
       } finally {
         if (mine === generation.current) {
           submitting.current = false;

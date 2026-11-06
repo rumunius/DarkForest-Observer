@@ -11,6 +11,7 @@ import {requireThat} from '../storage/store';
 import type {DarkForestPlatform} from './platform';
 import {platformKey} from './security';
 import type {Login} from './types';
+import {requireError} from '@darkforest/contracts';
 
 /** 建立长期账号和一次性邀请，原始口令不直接进入账号表或普通审计。 */
 export async function createAccount(
@@ -125,7 +126,7 @@ export async function importAccounts(
         name: '',
         kind: 'player',
         accountId: null,
-        error: error instanceof Error ? error.message : '格式错误',
+        error: requireError(error).message,
       };
     }
   });

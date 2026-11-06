@@ -1,5 +1,13 @@
 import type {DomainPhase} from './backend';
 
+/** 保留原异常及其子类信息；非Error抛出值违反项目契约，立即暴露该错误。 */
+export function requireError(error: unknown): Error {
+  if (!(error instanceof Error)) {
+    throw new TypeError('Caught value must be an Error instance.');
+  }
+  return error;
+}
+
 /** Public frontend contracts. Server implementations must enforce every permission. */
 export const COLORS = [
   {id: 'BK', name: '黑色'},

@@ -7,6 +7,20 @@ import {
   stringArray,
 } from '../../packages/contracts/src/backend';
 import {handleAsync} from '../../apps/web/src/data/async_event';
+import {requireError} from '@darkforest/contracts';
+
+it('retains caught error identity and rejects values that violate the throwing contract', () => {
+  for (const error of [
+    new Error('request failed'),
+    new ContractError(),
+    new DOMException('aborted', 'AbortError'),
+  ]) {
+    expect(requireError(error)).toBe(error);
+  }
+  for (const value of [undefined, null, 'failed', 1, {message: 'failed'}]) {
+    expect(() => requireError(value)).toThrow(TypeError);
+  }
+});
 
 it('keeps scalar conversion and leading zeroes while rejecting object coercion', () => {
   expect(scalarText('000001')).toBe('000001');

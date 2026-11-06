@@ -8,6 +8,7 @@ import {
 import type {TaskData} from './command_runtime';
 import {actualTargets, commandState} from './command_runtime';
 import {autoFinish} from './life';
+import {requireError} from '@darkforest/contracts';
 
 /** 按原时间和迟到策略执行单次授权任务，保留失败并清理目标快照。 */
 export function executeCommandTask(context: CommandEventContext): void {
@@ -94,7 +95,7 @@ export function executeCommandTask(context: CommandEventContext): void {
       null,
     );
   } catch (error) {
-    data.error = error instanceof Error ? error.message : '定时操作失败';
+    data.error = requireError(error).message;
     updateCommandObject(commandContext, row, data, 'failed');
     recordCommand(
       engine,

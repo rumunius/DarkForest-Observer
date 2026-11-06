@@ -4,6 +4,7 @@ import {object, parseJson} from '../../../../packages/contracts/src/backend';
 import type {PlatformClient} from '../data/platform';
 import {HumanData} from '../platform_copy';
 import {Button, type FeedbackMessage} from '../ui';
+import {requireError} from '@darkforest/contracts';
 
 /** 平台目录状态的用户可读标签，不改变后端状态机。 */
 export const states: Record<string, string> = {
@@ -155,7 +156,7 @@ export function useRows<T>(client: PlatformClient, path: string, tick: number) {
       })
       .catch(e => {
         if (active) {
-          setError(e instanceof Error ? e.message : '读取失败。');
+          setError(requireError(e).message);
         }
       });
     return () => {

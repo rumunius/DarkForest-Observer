@@ -3,6 +3,7 @@ import {useState} from 'react';
 import {useApp} from '../state';
 import {Button} from '../ui';
 import {ManagementForm} from './judge';
+import {requireError} from '@darkforest/contracts';
 
 /** 展示受限检查点和恢复核对流程，要求保存材料及证据后再继续。 */
 export function RecoveryTools() {
@@ -31,7 +32,7 @@ export function RecoveryTools() {
             URL.revokeObjectURL(url);
             setError('');
           } catch (e) {
-            setError(e instanceof Error ? e.message : '恢复文件导出失败。');
+            setError(requireError(e).message);
           }
         }, reportError)}
       >

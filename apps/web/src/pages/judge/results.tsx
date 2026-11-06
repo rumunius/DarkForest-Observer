@@ -4,6 +4,7 @@ import {judgeCan} from '../../permissions';
 import {useApp} from '../../state';
 import {Button, Empty, Field, Icon, Link, PageTitle} from '../../ui';
 import {ReportCorrection} from '../report_correction';
+import {requireError} from '@darkforest/contracts';
 
 /** 下载和展示赛事结果及版本，更正另经专用流程保存依据。 */
 export function ResultsManagement() {
@@ -24,9 +25,7 @@ export function ResultsManagement() {
         URL.revokeObjectURL(url);
         setExportError('');
       } catch (error) {
-        setExportError(
-          error instanceof Error ? error.message : '导出失败，请稍后重试。',
-        );
+        setExportError(requireError(error).message);
       }
       return;
     }
@@ -101,11 +100,7 @@ export function ResultsManagement() {
                 URL.revokeObjectURL(url);
                 setExportError('');
               } catch (error) {
-                setExportError(
-                  error instanceof Error
-                    ? error.message
-                    : '导出失败，请稍后重试。',
-                );
+                setExportError(requireError(error).message);
               }
             }, reportError)}
           >

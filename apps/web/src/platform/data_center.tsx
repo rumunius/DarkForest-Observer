@@ -12,6 +12,7 @@ import {Button, Field} from '../ui';
 import {Matches} from './matches';
 import type {Run} from './shared';
 import {Header, Label, states, useRows} from './shared';
+import {requireError} from '@darkforest/contracts';
 
 /** 展示持久平台操作及收据，未知结果要求查询原操作而不重复提交。 */
 export function Operations({
@@ -243,11 +244,7 @@ export function History({client, id}: {client: PlatformClient; id: string}) {
       })
       .catch(e => {
         if (active) {
-          setError(
-            e instanceof Error
-              ? e.message
-              : '暂时无法读取赛后资料，请刷新重试。',
-          );
+          setError(requireError(e).message);
         }
       });
     return () => {
@@ -260,9 +257,10 @@ export function History({client, id}: {client: PlatformClient; id: string}) {
     try {
       await work();
     } catch (e) {
+      const error = requireError(e);
       setError(
-        e instanceof Error && e.name !== 'AbortError'
-          ? e.message
+        error.name !== 'AbortError'
+          ? error.message
           : '操作未完成，请稍后重试。',
       );
     } finally {

@@ -16,6 +16,7 @@ import {
   states,
   useRows,
 } from './shared';
+import {requireError} from '@darkforest/contracts';
 
 const membershipStates: Record<MatchMember['state'], string> = {
   invited: '待接受',
@@ -350,11 +351,7 @@ export function MatchManagement({
     void client
       .load()
       .then(() => setReady(true))
-      .catch((error: unknown) =>
-        setError(
-          error instanceof Error ? error.message : '暂时无法读取账号信息。',
-        ),
-      );
+      .catch((error: unknown) => setError(requireError(error).message));
   }, [client]);
   const run: Run = async work => {
     if (running.current) {
@@ -372,7 +369,7 @@ export function MatchManagement({
       setNotice('操作已完成。');
     } catch (e) {
       setNotice('');
-      setError(e instanceof Error ? e.message : '操作未完成，请查询原操作。');
+      setError(requireError(e).message);
     } finally {
       setTick(t => t + 1);
       running.current = false;
