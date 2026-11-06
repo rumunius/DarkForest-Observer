@@ -701,6 +701,35 @@ it('binds macro target parameters once and rejects recursive definitions', async
     (await command('/macro define "循环" run { macro run "循环" }')).status,
   ).toBe(400);
 });
+it('restores outer target bindings after a nested macro with the same parameter name', async () => {
+  await forest();
+  expect(
+    (
+      await command(
+        '/macro define "内层" params (who:target) run { photon grant $who; tell $who "内层通知" }',
+      )
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await command(
+        '/macro define "外层" params (who:target) run { macro run "内层" (C02); photon grant $who; tell $who "外层通知" }',
+      )
+    ).status,
+  ).toBe(200);
+  const preview = await plan('/macro run "外层" (C01)');
+  expect(await sql('SELECT SUM(photons) n FROM players')).toEqual([{n: 0}]);
+  const result = await confirm(preview.token);
+  expect(result.status, JSON.stringify(result.body)).toBe(200);
+  expect(
+    await sql('SELECT id FROM players WHERE photons=1 ORDER BY id'),
+  ).toEqual([{id: 'C01'}, {id: 'C02'}]);
+  expect(
+    await sql(
+      "SELECT owner FROM event_log WHERE title='赛事通知' ORDER BY seq",
+    ),
+  ).toEqual([{owner: 'C02'}, {owner: 'C01'}]);
+});
 it('schedules persistent UTC messages and game tasks freeze while paused', async () => {
   await forest();
   const p = await plan(

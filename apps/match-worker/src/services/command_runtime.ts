@@ -1,9 +1,5 @@
 import type {ManagementPreview, OperationResult} from '@darkforest/contracts';
-import {
-  integer,
-  parseJson,
-  text,
-} from '../../../../packages/contracts/src/backend';
+import {integer, parseJson} from '../../../../packages/contracts/src/backend';
 import {
   COMMAND_LIMITS,
   commandSpec,
@@ -12,38 +8,34 @@ import {
   type CommandNode,
 } from '../../../../packages/contracts/src/commands';
 import {Fault, permission, type Actor} from '../storage/store';
-import {condition} from './command_conditions';
+import {runBatch, runConditional} from './command_composition';
 import type {CommandContext} from './command_context';
 import {
-  validateCommandArguments,
   captureCommandDependencies,
+  commandObject,
+  commandValue,
+  eventDependencies,
+  namedCommandObject,
   recordChange,
   recordDependency,
-  eventDependencies,
-  requireHeadJudge,
-  namedCommandObject,
   requireCommandArgument,
-  commandObject,
-  validateCommandOptions,
-  requireObjectOwner,
   saveCommandObject,
-  selectTargets,
   unquoteArgument,
-  updateCommandObject,
-  commandValue,
+  validateCommandArguments,
+  validateCommandOptions,
 } from './command_context';
-import {dispatchCommandAction} from './command_dispatch';
+import {cancelCommandTask, executeCommandAction} from './command_execution';
+import {
+  defineMacro,
+  retireMacro,
+  runMacro,
+  type MacroData,
+} from './command_macros';
 import {query} from './command_query';
 import {targets} from './command_targets';
 import {type Engine, type PreparedCode} from './engine';
-import {logEvent, survivors} from './life';
+import {survivors} from './life';
 import {managementState} from './management_impact';
-
-interface MacroData {
-  name: string;
-  params: Array<{name: string; type: string}>;
-  block: CommandNode[];
-}
 
 /** 固定组合命令所引用的宏版本，避免确认前模板变化悄然改变执行内容。 */
 export function pin(
@@ -134,299 +126,27 @@ export function run(
       return query(commandContext, commandNode);
     }
     if (spec.path === 'batch run') {
-      requireCommandArgument(
-        commandNode.words.length === 2 && commandNode.block?.length,
-        '用法：batch run { 操作; ... }',
-      );
-      if (commandNode.options.mode) {
-        requireCommandArgument(
-          ['atomic', 'sequential'].includes(commandNode.options.mode),
-          'mode须为atomic或sequential',
-        );
-      }
-      if (commandNode.options.mode === 'sequential') {
-        return createJob(commandContext, commandNode.block);
-      }
-      const results = [];
-      for (const child of commandNode.block) {
-        results.push(run(commandContext, child));
-      }
-      return results;
+      return runBatch(commandContext, commandNode, run, createJob);
     }
     if (spec.path === 'execute') {
-      requireCommandArgument(
-        commandNode.block?.length && commandNode.words.at(-1) === 'run',
-        'execute需要run操作块',
-      );
-      let index = 1;
-      let ids: Array<string | undefined> = [commandContext.self];
-      if (commandNode.words[index] === 'as') {
-        ids = selectTargets(commandContext, commandNode.words[index + 1]!);
-        index += 2;
-      }
-      const steps: Array<{unless: boolean; words: string[]}> = [];
-      while (index < commandNode.words.length - 1) {
-        const kind = commandNode.words[index++];
-        requireCommandArgument(
-          kind === 'if' || kind === 'unless',
-          'execute需要as/if/unless/run',
-        );
-        const start = index;
-        let depth = 0;
-        while (index < commandNode.words.length - 1) {
-          const currentWord = commandNode.words[index]!;
-          if (currentWord === '(') {
-            depth++;
-          }
-          if (currentWord === ')') {
-            depth--;
-          }
-          if (!depth && ['if', 'unless'].includes(currentWord)) {
-            break;
-          }
-          index++;
-        }
-        steps.push({
-          unless: kind === 'unless',
-          words: commandNode.words.slice(start, index),
-        });
-      }
-      const out = [];
-      for (const id of ids) {
-        commandContext.self = id;
-        let enabled = true;
-        for (const step of steps) {
-          const matches = condition(commandContext, step.words);
-          enabled = enabled && (step.unless ? !matches : matches);
-        }
-        if (enabled) {
-          for (const child of commandNode.block) {
-            out.push(run(commandContext, child));
-          }
-        } else {
-          commandContext.notes.push(`条件为假：${id ?? '全局'}，无操作。`);
-        }
-      }
-      return out;
+      return runConditional(commandContext, commandNode, run);
     }
     if (spec.path === 'macro define') {
-      requireHeadJudge(commandContext);
-      requireCommandArgument(
-        commandNode.block?.length && commandNode.words.at(-1) === 'run',
-        '宏定义需要run操作块',
-      );
-      const name = commandValue(commandNode.words[2], commandContext);
-      text(name, 200);
-      const params: Array<{name: string; type: string}> = [];
-      if (commandNode.words.length > 4) {
-        requireCommandArgument(
-          commandNode.words[3] === 'params' &&
-            commandNode.words[4] === '(' &&
-            commandNode.words.at(-2) === ')',
-          '宏参数须使用params (...)',
-        );
-        const declarations = commandNode.words.slice(5, -2).join('').split(',');
-        for (const decl of declarations) {
-          const match =
-            /^([A-Za-z][A-Za-z0-9_]*):(target|int|duration|text|bool)$/.exec(
-              decl,
-            );
-          requireCommandArgument(
-            match && !params.some(p => p.name === match[1]),
-            '宏参数类型、名称或重复声明不正确',
-          );
-          params.push({name: match[1]!, type: match[2]!});
-        }
-      }
-      const block = structuredClone(commandNode.block);
-      for (const node of block) {
-        requireCommandArgument(
-          !(
-            node.words[0] === 'macro' && unquoteArgument(node.words[2]) === name
-          ),
-          '宏不能递归',
-        );
-        pin(commandContext, node, [name]);
-      }
-      const versions = commandContext.engine.db.all<{version: number}>(
-        "SELECT version FROM command_objects WHERE kind='macro' AND json_extract(data,'$.name')=?",
-        name,
-      );
-      const version = Math.max(0, ...versions.map(v => v.version)) + 1;
-      const id = saveCommandObject(
-        commandContext,
-        'macro',
-        {name, params, block},
-        'MAC',
-      );
-      commandContext.engine.db.exec(
-        'UPDATE command_objects SET version=? WHERE id=?',
-        version,
-        id,
-      );
-      recordChange(
-        commandContext,
-        id,
-        '原版本保留',
-        `宏「${name}」版本${version}已保存，尚未执行`,
-      );
-      return {id, version};
+      return defineMacro(commandContext, commandNode, pin);
     }
     if (spec.path === 'macro run') {
-      const name = commandValue(commandNode.words[2], commandContext);
-      const versionIndex = commandNode.words.indexOf('version');
-      const row = namedCommandObject(
-        commandContext,
-        'macro',
-        name,
-        versionIndex >= 0
-          ? Number(commandNode.words[versionIndex + 1])
-          : undefined,
-      );
-      const data = parseJson(row.data) as MacroData;
-      recordDependency(commandContext, 'object:' + row.id, row);
-      requireCommandArgument(
-        !commandContext.macroStack.includes(row.id),
-        '宏不能递归',
-      );
-      const rest = commandNode.words.slice(
-        3,
-        versionIndex >= 0 ? versionIndex : undefined,
-      );
-      const args: string[] = [];
-      if (rest.length) {
-        requireCommandArgument(
-          rest[0] === '(' && rest.at(-1) === ')',
-          '宏参数须在括号内',
-        );
-        let current: string[] = [];
-        for (const word of rest.slice(1, -1)) {
-          if (word === ',') {
-            args.push(current.join(''));
-            current = [];
-          } else {
-            current.push(word);
-          }
-        }
-        if (current.length) {
-          args.push(current.join(''));
-        }
-      }
-      requireCommandArgument(
-        args.length === data.params.length,
-        '宏实参数量与声明不一致',
-      );
-      commandContext.bindings = {...commandContext.bindings};
-      commandContext.scalars = {...commandContext.scalars};
-      for (const [parameterIndex, parameter] of data.params.entries()) {
-        const arg = commandValue(args[parameterIndex], commandContext);
-        const key = '$' + parameter.name;
-        if (parameter.type === 'target') {
-          commandContext.bindings[key] = selectTargets(commandContext, arg);
-        } else {
-          if (parameter.type === 'int') {
-            integer(Number(arg), Number.MIN_SAFE_INTEGER);
-          }
-          if (parameter.type === 'duration') {
-            durationMs(arg);
-          }
-          if (parameter.type === 'bool') {
-            requireCommandArgument(
-              ['true', 'false'].includes(arg),
-              '宏布尔参数须为true/false',
-            );
-          }
-          commandContext.scalars[key] = arg;
-        }
-      }
-      commandContext.macroStack.push(row.id);
-      try {
-        return data.block.map(child => run(commandContext, child));
-      } finally {
-        commandContext.macroStack.pop();
-      }
+      return runMacro(commandContext, commandNode, run);
     }
     if (spec.path === 'macro retire') {
-      requireHeadJudge(commandContext);
-      validateCommandArguments(commandNode);
-      const row = namedCommandObject(
-        commandContext,
-        'macro',
-        commandValue(commandNode.words[2], commandContext),
-        integer(Number(commandNode.words[4]), 1),
-      );
-      updateCommandObject(commandContext, row, parseJson(row.data), 'retired');
-      recordChange(commandContext, row.id, 'active', 'retired');
-      return;
+      return retireMacro(commandContext, commandNode);
     }
     if (spec.path === 'schedule create') {
       return createSchedule(commandContext, commandNode);
     }
     if (spec.path === 'schedule cancel' || spec.path === 'job cancel') {
-      validateCommandArguments(commandNode);
-      const row = commandObject(
-        commandContext.engine,
-        commandValue(commandNode.words[2], commandContext),
-        spec.path.startsWith('job') ? 'job' : 'schedule',
-      );
-      requireObjectOwner(commandContext, row);
-      if (['complete', 'cancelled'].includes(row.status)) {
-        return parseJson(row.data);
-      }
-      updateCommandObject(
-        commandContext,
-        row,
-        parseJson(row.data),
-        'cancelled',
-      );
-      commandContext.engine.db.exec(
-        "UPDATE scheduled_events SET status='cancelled' WHERE (id=? OR json_extract(payload,'$.job')=?) AND status='pending'",
-        row.id,
-        row.id,
-      );
-      recordChange(
-        commandContext,
-        row.id,
-        row.status,
-        'cancelled；已提交步骤不回滚',
-      );
-      return;
+      return cancelCommandTask(commandContext, commandNode, spec.path);
     }
-    const offset = commandContext.changes.length;
-    const result = dispatchCommandAction(commandContext, commandNode);
-    const changes = commandContext.changes.slice(offset);
-    const ids = [
-      ...new Set(
-        changes.map(p => p.target).filter(id => /^C\d{2,3}$/.test(id)),
-      ),
-    ];
-    commandContext.engine.audit(
-      commandContext.actor.id,
-      'command:' + spec.path,
-      ids.length === 1 ? ids[0]! : commandContext.engine.db.match().id,
-      commandContext.reason,
-      {
-        requestId: commandContext.id,
-        source: commandContext.source,
-        caseId: commandContext.caseId ?? null,
-        status: 'executed',
-        changes,
-      },
-    );
-    if (changes.length) {
-      logEvent(
-        commandContext.engine,
-        `command:${commandContext.actor.id}:${commandContext.id}:${commandContext.work}`,
-        'review',
-        /^(resource|photon|tech) /.test(spec.path) ? '资源调整' : '裁判指令',
-        commandContext.reason,
-        'global',
-        ids,
-        commandContext.engine.game(),
-        commandContext.engine.now(),
-      );
-    }
-    return result;
+    return executeCommandAction(commandContext, commandNode, spec.path);
   } finally {
     Object.assign(commandContext, prior);
     commandContext.depth--;
