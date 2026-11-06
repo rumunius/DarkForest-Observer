@@ -19,6 +19,7 @@ import {useBrowserEvents, useSnapshotPolling} from './state_browser';
 import {useMatchHistory} from './state_history';
 import {useMessageReadState} from './state_messages';
 import {useMatchNavigation} from './state_navigation';
+import {useMatchOperations} from './state_operations';
 import {EMPTY_SNAPSHOT as empty, mergeSnapshotHistory} from './state_snapshot';
 import {
   PENDING_OPERATION_KEY as pendingKey,
@@ -204,116 +205,24 @@ export function AppProvider({
     setData,
     setError,
   });
-  const recover = useCallback(async () => {
-    const stored = pendingRecord.current ?? readPending(storageKey);
-    if (!stored || submitting.current) {
-      return;
-    }
-    const mine = generation.current;
-    submitting.current = true;
-    setBusy(true);
-    try {
-      const response = await source.result(stored.id);
-      if (mine !== generation.current) {
-        return;
-      }
-      setResult(response);
-      if (response.status === 'complete') {
-        persistPending(null);
-        setPending(null);
-        if (stored.path === '/action/sighting') {
-          setDraft([[], []]);
-          setSelectedArm(0);
-        }
-        timelineKey.current = '';
-        await refresh();
-      }
-    } catch (error) {
-      if (mine !== generation.current) {
-        return;
-      }
-      setError(
-        error instanceof Error
-          ? error.message
-          : '暂时无法取得操作结果，请稍后查询。',
-      );
-    } finally {
-      if (mine === generation.current) {
-        submitting.current = false;
-        setBusy(false);
-      }
-    }
-  }, [source, refresh, persistPending, storageKey]);
-  const operate = useCallback(
-    async (path: string, payload: Record<string, unknown> = {}) => {
-      if (
-        submitting.current ||
-        pendingRecord.current ||
-        readPending(storageKey)
-      ) {
-        setError('正在确认上一次操作结果。');
-        return;
-      }
-      if (!navigator.onLine) {
-        setError('连接已中断，请恢复网络后再提交。');
-        return;
-      }
-      const session = snapshotRef.current.session;
-      if (!session) {
-        return;
-      }
-      const id = crypto.randomUUID();
-      const mine = generation.current;
-      submitting.current = true;
-      setBusy(true);
-      setError('');
-      readError.current = false;
-      setResult(null);
-      persistPending({id, account: session.id, match: session.matchId, path});
-      setPending(id);
-      try {
-        const response = await source.submit({path, payload, requestId: id});
-        if (mine !== generation.current) {
-          return;
-        }
-        setResult(response);
-        if (response.status === 'complete') {
-          persistPending(null);
-          setPending(null);
-          timelineKey.current = '';
-          await refresh();
-          if (mine !== generation.current) {
-            return;
-          }
-        }
-        return response;
-      } catch (error) {
-        if (mine !== generation.current) {
-          return;
-        }
-        const definitive = error instanceof ApiError && error.definitive;
-        if (definitive) {
-          persistPending(null);
-          setPending(null);
-          await refresh();
-          if (mine !== generation.current) {
-            return;
-          }
-        }
-        setError(
-          error instanceof Error
-            ? error.message
-            : '操作结果尚未取得，正在确认上一次操作结果。',
-        );
-      } finally {
-        if (mine === generation.current) {
-          submitting.current = false;
-          setBusy(false);
-        }
-      }
-    },
-    [source, refresh, persistPending, storageKey],
-  );
+  const {recover, operate} = useMatchOperations({
+    source,
+    refresh,
+    persistPending,
+    storageKey,
+    pendingRecord,
+    submitting,
+    generation,
+    setBusy,
+    setResult,
+    setPending,
+    setDraft,
+    setSelectedArm,
+    timelineKey,
+    setError,
+    snapshotRef,
+    readError,
+  });
   const logout = async () => {
     const mine = generation.current;
     try {
