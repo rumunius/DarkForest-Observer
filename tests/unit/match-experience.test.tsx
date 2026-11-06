@@ -21,7 +21,6 @@ const session: PlatformSession = {
   },
   roles: [],
   csrfToken: 'csrf',
-  recent: true,
   secondFactor: false,
 };
 const entry: MatchEntry = {
@@ -68,6 +67,85 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 describe('登录、邀请与场内体验', () => {
+  it.each([false, true])('账号安全页无近期认证入口，已验证第二因素=%s', async (verified) => {
+    history.replaceState({}, '', '/account');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url === '/api/auth/session')
+          return Response.json({
+            ...session,
+            secondFactorEnabled: verified,
+            secondFactor: verified,
+          });
+        if (url === '/api/me/sessions') return Response.json([]);
+        throw new Error(`Unexpected request ${url}`);
+      }),
+    );
+    await mount(<PlatformApp />);
+    expect(document.body.textContent).not.toContain('重新认证');
+    expect(document.querySelector('input[type="password"]')).toBeNull();
+    const control = [...document.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes(verified ? '关闭第二因素验证' : '生成认证器密钥'),
+    );
+    expect(control).toBeDefined();
+    expect(control!.disabled).toBe(false);
+  });
+  it('仅未验证第二因素的会话显示补充验证表单', async () => {
+    history.replaceState({}, '', '/account');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url === '/api/auth/session')
+          return Response.json({ ...session, secondFactorEnabled: true, secondFactor: false });
+        if (url === '/api/me/sessions') return Response.json([]);
+        throw new Error(`Unexpected request ${url}`);
+      }),
+    );
+    await mount(<PlatformApp />);
+    expect(document.body.textContent).toContain('验证第二因素');
+    expect(document.body.textContent).not.toContain('有效10分钟');
+    expect(document.querySelector('input[type="password"]')).not.toBeNull();
+    const disable = [...document.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('关闭第二因素验证'),
+    );
+    expect(disable!.disabled).toBe(true);
+  });
+  it('启用第二因素时可在设置区域输入验证码并确认', async () => {
+    history.replaceState({}, '', '/account');
+    let enabled = false;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/auth/session')
+        return Response.json({ ...session, secondFactorEnabled: enabled, secondFactor: enabled });
+      if (url === '/api/me/sessions') return Response.json([]);
+      if (url === '/api/me/security/setup') return Response.json({ secret: 'test-secret' });
+      if (url === '/api/me/security/confirm') {
+        expect(JSON.parse(String(init?.body))).toEqual({ code: '123456' });
+        enabled = true;
+        return Response.json({ recoveryCodes: ['test-recovery'] });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    await mount(<PlatformApp />);
+    const button = (label: string) =>
+      [...document.querySelectorAll('button')].find((value) => value.textContent === label)!;
+    await act(async () => button('生成认证器密钥').click());
+    const input = document.querySelector<HTMLInputElement>('input[autocomplete="one-time-code"]')!;
+    expect(input).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+        input,
+        '123456',
+      );
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(button('确认验证码').disabled).toBe(false);
+    await act(async () => button('确认验证码').click());
+    expect(document.body.textContent).toContain('test-recovery');
+    expect(document.body.textContent).toContain('第二因素验证已启用');
+    expect(button('关闭第二因素验证').disabled).toBe(false);
+  });
   it('显式选择玩家账号优先于先前保存的工作人员类别', async () => {
     sessionStorage.setItem('df.portal.audience', 'staff');
     history.replaceState({}, '', '/matches?audience=player');
@@ -144,6 +222,102 @@ describe('登录、邀请与场内体验', () => {
     expect(document.body.textContent).toContain('已接受邀请，等待安排裁判岗位');
     expect(document.body.textContent).not.toContain('进入比赛');
     expect(document.body.textContent).not.toContain('确认本场文明');
+  });
+  it.each([true, false])('邀请与裁判设置独立选择账号（平台管理员：%s）', async (admin) => {
+    history.replaceState({}, '', '/m/match-a/manage');
+    const accounts = [
+      { id: 'player-a', kind: 'player', status: 'active' },
+      { id: 'staff-a', kind: 'staff', status: 'active' },
+      { id: 'staff-b', kind: 'staff', status: 'active' },
+      { id: 'staff-invited', kind: 'staff', status: 'active' },
+      { id: 'staff-disabled', kind: 'staff', status: 'disabled' },
+    ].map((a) => ({ ...session.account, ...a, name: a.id }));
+    const fetcher = vi.fn<(...args: [string, RequestInit?]) => Promise<Response>>(async (url) => {
+      if (url === '/api/auth/session')
+        return Response.json({
+          ...session,
+          account: { ...session.account, kind: 'staff' },
+          roles: admin ? ['owner'] : [],
+        });
+      if (url === '/api/me/matches') return Response.json([entry]);
+      if (url === '/api/matches/match-a/manage')
+        return Response.json({
+          match: entry,
+          current: {
+            players: 0,
+            phase: 'setup',
+            assignments: [],
+            members: accounts.map((a) => ({
+              ...entry.membership,
+              account_id: a.id,
+              name: a.name,
+              kind: a.kind,
+              state: a.id === 'staff-invited' ? 'invited' : 'accepted',
+            })),
+          },
+        });
+      if (url === (admin ? '/api/platform/accounts' : '/api/matches/match-a/eligible'))
+        return Response.json(accounts);
+      if (url.endsWith('/members/invite')) return Response.json({ operationId: 'invitation' });
+      if (url.endsWith('/preview')) return Response.json({ previewToken: 'judge-preview' });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    await mount(<MatchApp id="match-a" />);
+    const sections = [...document.querySelectorAll('section.platform-detail')];
+    const invitation = sections.find((s) => s.querySelector('h2')?.textContent === '邀请账号')!;
+    const judge = sections.find((s) => s.querySelector('h2')?.textContent === '裁判设置')!;
+    expect(invitation.textContent).not.toContain('操作原因');
+    expect(invitation.textContent).not.toContain('裁判设置');
+    const inviteSelect = invitation.querySelector('select')!;
+    const [judgeSelect, seatSelect] = [...judge.querySelectorAll('select')];
+    const reason = judge.querySelector('input')!;
+    const preview = [...judge.querySelectorAll('button')].find(
+      (button) => button.textContent === '预览影响',
+    )!;
+    expect([...judgeSelect!.options].map((o) => o.value)).toEqual(['', 'staff-a', 'staff-b']);
+    await act(async () => {
+      inviteSelect.value = 'player-a';
+      inviteSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const invite = invitation.querySelector('button')!;
+    expect(invite.disabled).toBe(false);
+    expect(judgeSelect!.value).toBe('');
+    expect(preview.disabled).toBe(true);
+    await act(async () => invite.click());
+    const inviteRequest = fetcher.mock.calls.find(([url]) => url.endsWith('/members/invite'))!;
+    expect(JSON.parse(String(inviteRequest[1]?.body))).toMatchObject({
+      accountId: 'player-a',
+      reason: '邀请账号加入本场比赛',
+    });
+    await act(async () => {
+      judgeSelect!.value = 'staff-a';
+      judgeSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+        reason,
+        '现场换班',
+      );
+      reason.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(inviteSelect.value).toBe('player-a');
+    expect(preview.disabled).toBe(false);
+    await act(async () => preview.click());
+    const previewRequest = fetcher.mock.calls.find(([url]) => url.endsWith('/preview'))!;
+    expect(JSON.parse(String(previewRequest[1]?.body))).toMatchObject({
+      path: '/matches/match-a/staff/assign',
+      payload: { accountId: 'staff-a', reason: '现场换班', seat: 'J01' },
+    });
+    await act(async () => {
+      inviteSelect.value = 'staff-b';
+      inviteSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(judgeSelect!.value).toBe('staff-a');
+    expect(judge.textContent).toContain('确认交接');
+    await act(async () => {
+      seatSelect!.value = 'J02';
+      seatSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(judge.textContent).not.toContain('确认交接');
   });
   it('旧比赛地址的访客返回统一登录页，不出现旧口令表单', async () => {
     history.replaceState({}, '', '/m/match-a/');

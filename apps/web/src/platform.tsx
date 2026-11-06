@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import type {
   MatchEntry,
   MatchDownload,
@@ -8,7 +16,7 @@ import type {
   PlatformOperation,
 } from '@darkforest/contracts';
 import { PlatformClient, saveDownload, type PlatformReview } from './data/platform';
-import { Button, Field, Icon } from './ui';
+import { Button, Feedback, Field, Icon, type FeedbackMessage } from './ui';
 import { App } from './app';
 import { HttpSource } from './data/http';
 import { HumanData, OPERATION_NAMES, PHASE_NAMES } from './platform-copy';
@@ -55,12 +63,30 @@ function Header({ title, children }: { title: string; children?: ReactNode }) {
     </header>
   );
 }
-function Notice({ children }: { children: ReactNode }) {
-  return (
-    <div className="platform-notice" role="status">
-      {children}
-    </div>
-  );
+function platformFeedbackMessages(
+  client: PlatformClient,
+  run: Run,
+  error: string,
+  notice: string,
+  busy: boolean,
+  clear: () => void,
+): FeedbackMessage[] {
+  const pending = client.session && client.pending();
+  if (!error && !notice && !pending) return [];
+  return [
+    {
+      tone: error ? 'error' : busy || pending ? 'pending' : 'result',
+      ...(busy ? {} : { onClose: clear }),
+      content: (
+        <>
+          <p>{error || notice || '正在确认上一次操作结果。取得处理结果后再提交新的操作。'}</p>
+          {pending && !busy && (
+            <Button onClick={() => void run(() => client.resolvePending())}>查询原操作结果</Button>
+          )}
+        </>
+      ),
+    },
+  ];
 }
 function Delivery({ value }: { value: Record<string, unknown> | null }) {
   if (!value) return null;
@@ -112,6 +138,7 @@ export function PlatformApp() {
     [tick, setTick] = useState(0),
     [delivery, setDelivery] = useState<Record<string, unknown> | null>(null),
     [review, setReview] = useState<PlatformReview | null>(null);
+  const running = useRef(false);
   const refresh = useCallback(async () => {
     try {
       await client.load();
@@ -131,24 +158,27 @@ export function PlatformApp() {
     return () => clearInterval(timer);
   }, [client, ready]);
   const run = async (work: () => Promise<unknown>) => {
-    if (busy) return;
+    if (running.current) return;
+    running.current = true;
     setBusy(true);
     setError('');
-    setNotice('');
+    setNotice('正在提交操作，请稍候。');
     try {
       const result = (await work()) as Record<string, unknown> | undefined;
       if (result?.review && result.previewToken) {
         setReview(result as PlatformReview);
+        setNotice('');
         return;
       }
       if (result?.invitation || result?.credential) setDelivery(result);
-      else if (result?.operationId)
-        setNotice(`操作已受理，编号 ${String(result.operationId)}。请在任务中心查看逐项结果。`);
-      else setNotice('操作已完成。');
-      setTick((t) => t + 1);
+      await client.completeOperation(result, () => setNotice('操作正在处理中，请稍候。'));
+      setNotice('操作已完成。');
     } catch (e) {
+      setNotice('');
       setError(e instanceof Error ? e.message : '操作结果未知，请查询原操作。');
     } finally {
+      setTick((t) => t + 1);
+      running.current = false;
       setBusy(false);
     }
   };
@@ -209,14 +239,14 @@ export function PlatformApp() {
         </div>
       </aside>
       <main id="platform-main" className="platform-main">
-        {error && (
-          <p className="danger platform-notice" role="alert">
-            {error}
-          </p>
-        )}
-        {notice && <Notice>{notice}</Notice>}
+        <Feedback
+          messages={platformFeedbackMessages(client, run, error, notice, busy, () => {
+            setError('');
+            setNotice('');
+          })}
+        />
         {review && (
-          <Notice>
+          <section className="platform-detail">
             <h2>确认管理操作</h2>
             <HumanData value={review} />
             <HumanData value={review.review.body} />
@@ -237,51 +267,47 @@ export function PlatformApp() {
               >
                 确认执行本次操作
               </Button>
-              <Button onClick={() => setReview(null)}>返回继续核对</Button>
+              <Button disabled={busy} onClick={() => setReview(null)}>
+                返回继续核对
+              </Button>
             </div>
-          </Notice>
+          </section>
         )}
-        {session && client.pending() && (
-          <Notice>
-            <p>正在确认上一次操作结果。取得处理结果后再提交新的操作。</p>
-            <Button disabled={busy} onClick={() => void run(() => client.resolvePending())}>
-              查询原操作结果
-            </Button>
-          </Notice>
-        )}
-        {!ready ? (
-          <p role="status">正在连接赛事中心</p>
-        ) : route === '/claim' ? (
-          <Claim client={client} run={run} busy={busy} />
-        ) : !session ? (
-          <Login
-            client={client}
-            audience={audience}
-            setAudience={(v) => {
-              sessionStorage.setItem('df.portal.audience', v);
-              setAudience(v);
-            }}
-            refresh={refresh}
-            run={run}
-            busy={busy}
-          />
-        ) : route === '/account' ? (
-          <Security client={client} run={run} refresh={refresh} />
-        ) : route === '/manage/accounts' && manage ? (
-          <Accounts client={client} tick={tick} run={run} />
-        ) : route === '/manage/matches/new' && manage ? (
-          <NewMatch client={client} run={run} />
-        ) : route.startsWith('/manage/matches/') && manage ? (
-          <ManageMatch client={client} id={route.split('/')[3]!} tick={tick} run={run} />
-        ) : route === '/manage/data' && archive ? (
-          <DataCenter client={client} tick={tick} run={run} />
-        ) : route === '/manage/security' && session.roles.includes('owner') ? (
-          <RoleManager client={client} tick={tick} run={run} />
-        ) : route === '/manage' && manage ? (
-          <Operations client={client} tick={tick} run={run} />
-        ) : (
-          <Matches client={client} tick={tick} run={run} manage={!!manage} />
-        )}
+        <fieldset className="platform-action-scope" disabled={busy} aria-busy={busy}>
+          {!ready ? (
+            <p role="status">正在连接赛事中心</p>
+          ) : route === '/claim' ? (
+            <Claim client={client} run={run} busy={busy} />
+          ) : !session ? (
+            <Login
+              client={client}
+              audience={audience}
+              setAudience={(v) => {
+                sessionStorage.setItem('df.portal.audience', v);
+                setAudience(v);
+              }}
+              refresh={refresh}
+              run={run}
+              busy={busy}
+            />
+          ) : route === '/account' ? (
+            <Security client={client} run={run} refresh={refresh} />
+          ) : route === '/manage/accounts' && manage ? (
+            <Accounts client={client} tick={tick} run={run} />
+          ) : route === '/manage/matches/new' && manage ? (
+            <NewMatch client={client} run={run} />
+          ) : route.startsWith('/manage/matches/') && manage ? (
+            <ManageMatch client={client} id={route.split('/')[3]!} tick={tick} run={run} />
+          ) : route === '/manage/data' && archive ? (
+            <DataCenter client={client} tick={tick} run={run} />
+          ) : route === '/manage/security' && session.roles.includes('owner') ? (
+            <RoleManager client={client} tick={tick} run={run} />
+          ) : route === '/manage' && manage ? (
+            <Operations client={client} tick={tick} run={run} />
+          ) : (
+            <Matches client={client} tick={tick} run={run} manage={!!manage} />
+          )}
+        </fieldset>
         <Delivery value={delivery} />
       </main>
     </div>
@@ -492,7 +518,6 @@ function Matches({
           </a>
         )}
       </Header>
-      <p className="secondary">每场比赛都有永久地址。更改推荐入口不会改变已打开的比赛。</p>
       <Field label="比赛类型">
         <select value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="all">全部类型</option>
@@ -559,7 +584,9 @@ function Matches({
             </article>
           ))}
       </div>
-      {data?.length === 0 && <Notice>暂无可访问比赛。请联系主办方取得本场邀请。</Notice>}
+      {data?.length === 0 && (
+        <section className="platform-detail">暂无可访问比赛。请联系主办方取得本场邀请。</section>
+      )}
     </>
   );
 }
@@ -599,10 +626,10 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
     return (
       <>
         <Header title="比赛草稿已受理" />
-        <Notice>
+        <section className="platform-detail">
           <p>{name}的创建任务已保存，离开页面后继续执行。</p>
           <a href={`/manage/matches/${created}`}>查看本场成员与裁判岗位</a>
-        </Notice>
+        </section>
         <a href="/manage">查看创建任务处理结果</a>
       </>
     );
@@ -683,7 +710,7 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
             </label>
           </>
         ) : (
-          <Notice>
+          <section className="platform-detail">
             <h2>{name}</h2>
             <p>
               {kind === 'trial' ? '试玩' : '正式比赛'}，完整复盘 {days} 天，战报与审计 {auditDays}{' '}
@@ -693,7 +720,7 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
               创建后进入草稿；在管理页面邀请玩家并任命总裁判，再发布准备入口。玩家接受邀请后自动获得本场文明，通讯与事件裁判可按需增设。复制时采用活动说明、七色色值和比赛参数。
             </p>
             <Button onClick={() => setStage(0)}>返回修改</Button>
-          </Notice>
+          </section>
         )}
         <Button type="submit" className="primary" disabled={!name || !confirmed}>
           {stage === 0 ? '预览创建' : '确认创建独立草稿'}
@@ -716,7 +743,6 @@ function Accounts({ client, tick, run }: { client: PlatformClient; tick: number;
   return (
     <>
       <Header title="长期账号池" />
-      <p>同名账号不会自动合并。玩家与工作人员使用独立账号；加入账号池不会获得任何比赛权限。</p>
       <form
         className="form-stack platform-form"
         onSubmit={(e) => {
@@ -896,7 +922,8 @@ function ManageMatch({
       platformAdmin ? '/platform/accounts' : `/matches/${id}/eligible`,
       tick,
     ),
-    [account, setAccount] = useState(''),
+    [inviteAccount, setInviteAccount] = useState(''),
+    [judgeAccount, setJudgeAccount] = useState(''),
     [seat, setSeat] = useState('J01'),
     [reason, setReason] = useState(''),
     [preview, setPreview] = useState<{
@@ -909,7 +936,7 @@ function ManageMatch({
     epoch =
       data.current.assignments.find((a) => a.seat_id === seat && a.ended_utc === null)?.epoch ?? 0;
   const assignment = {
-    accountId: account,
+    accountId: judgeAccount,
     seat,
     expectedVersion: epoch,
     reason,
@@ -925,8 +952,7 @@ function ManageMatch({
       </Header>
       <p>
         本场正式名单 {data.current.players} 人。
-        {PHASE_NAMES[data.current.phase] ?? '正在读取比赛阶段'}
-        。
+        {PHASE_NAMES[data.current.phase] ?? '正在读取比赛阶段'}。
       </p>
       <div className="platform-row-actions">
         {data.current.members.find((m) => m.account_id === client.session?.account.id)?.state ===
@@ -943,13 +969,7 @@ function ManageMatch({
       <section className="platform-detail">
         <h2>邀请账号</h2>
         <Field label="从长期池选择">
-          <select
-            value={account}
-            onChange={(e) => {
-              setAccount(e.target.value);
-              setPreview(null);
-            }}
-          >
+          <select value={inviteAccount} onChange={(e) => setInviteAccount(e.target.value)}>
             <option value="">请选择</option>
             {accounts
               ?.filter((a) => a.status !== 'disabled')
@@ -960,38 +980,53 @@ function ManageMatch({
               ))}
           </select>
         </Field>
-        <Field label="操作原因">
-          <input
-            value={reason}
-            onChange={(e) => {
-              setReason(e.target.value);
-              setPreview(null);
-            }}
-          />
-        </Field>
         {!platformAdmin && (
           <Field label="新成员长期账号编号">
-            <input
-              value={account}
-              onChange={(e) => {
-                setAccount(e.target.value);
-                setPreview(null);
-              }}
-            />
+            <input value={inviteAccount} onChange={(e) => setInviteAccount(e.target.value)} />
           </Field>
         )}
         <Button
-          disabled={!account || !reason}
+          disabled={!inviteAccount}
           onClick={() =>
             void run(() =>
-              client.mutate(`/matches/${id}/members/invite`, { accountId: account, reason }),
+              client.mutate(`/matches/${id}/members/invite`, {
+                accountId: inviteAccount,
+                reason: '邀请账号加入本场比赛',
+              }),
             )
           }
         >
           邀请到本场
         </Button>
         <p>对方需用自己的账号接受邀请。玩家接受时自动确认本场文明；总裁判在场内选择正式名单。</p>
-        <h2>裁判交接与失联接管</h2>
+      </section>
+      <section className="platform-detail">
+        <h2>裁判设置</h2>
+        <Field label="裁判账号">
+          <select
+            value={judgeAccount}
+            onChange={(e) => {
+              setJudgeAccount(e.target.value);
+              setPreview(null);
+            }}
+          >
+            <option value="">请选择已接受邀请的工作人员</option>
+            {accounts
+              ?.filter(
+                (a) =>
+                  a.kind === 'staff' &&
+                  a.status === 'active' &&
+                  data.current.members.some(
+                    (m) => m.account_id === a.id && (m.state === 'accepted' || m.state === 'bound'),
+                  ),
+              )
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}，{a.id.slice(0, 8)}
+                </option>
+              ))}
+          </select>
+        </Field>
         <Field label="裁判岗位">
           <select
             value={seat}
@@ -1005,8 +1040,17 @@ function ManageMatch({
             <option value="J03">J03 事件</option>
           </select>
         </Field>
+        <Field label="操作原因">
+          <input
+            value={reason}
+            onChange={(e) => {
+              setReason(e.target.value);
+              setPreview(null);
+            }}
+          />
+        </Field>
         <Button
-          disabled={!account || !reason}
+          disabled={!judgeAccount || !reason.trim()}
           onClick={() =>
             void run(async () => {
               const result = await client.request<{ previewToken: string }>(
@@ -1024,10 +1068,10 @@ function ManageMatch({
             })
           }
         >
-          预览席位、待办与任务影响
+          预览影响
         </Button>
         {preview && (
-          <Notice>
+          <section className="platform-detail">
             <HumanData value={preview.details} />
             <p>确认后旧任职结束，旧预览失效；旧管理任务进入待核对。</p>
             <Button
@@ -1043,7 +1087,7 @@ function ManageMatch({
             >
               确认交接 {d.name}，{seat}
             </Button>
-          </Notice>
+          </section>
         )}
       </section>
       <section className="platform-detail">
@@ -1085,7 +1129,6 @@ function Operations({ client, tick, run }: { client: PlatformClient; tick: numbe
   return (
     <>
       <Header title="管理待办" />
-      <p>任务离开页面后继续。部分完成会保留各比赛的处理结果；重试使用原任务编号。</p>
       <Button onClick={() => void run(async () => {})}>刷新任务</Button>
       {error && <p role="alert">{error}</p>}
       {data?.map((op) => (
@@ -1145,36 +1188,40 @@ function Security({
       <p>
         {client.session?.account.name}，{client.audience === 'staff' ? '工作人员' : '玩家'}
       </p>
-      <form
-        className="form-stack platform-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void run(async () => {
-            await client.request('/auth/reauth', { credential, code });
-            setCredential('');
-            await refresh();
-          });
-        }}
-      >
-        <Field label="长期口令">
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={credential}
-            onChange={(e) => setCredential(e.target.value)}
-          />
-        </Field>
-        <Field label="第二因素验证码或恢复码（已启用时填写）">
-          <input
-            autoComplete="one-time-code"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-          />
-        </Field>
-        <Button type="submit" disabled={!credential}>
-          重新认证（有效10分钟）
-        </Button>
-      </form>
+      {client.session?.secondFactorEnabled && !client.session.secondFactor && (
+        <form
+          className="form-stack platform-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(async () => {
+              await client.request('/auth/reauth', { credential, code });
+              setCredential('');
+              setCode('');
+              await refresh();
+            });
+          }}
+        >
+          <p>关闭第二因素验证前，请先在当前设备验证第二因素。</p>
+          <Field label="长期口令">
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={credential}
+              onChange={(e) => setCredential(e.target.value)}
+            />
+          </Field>
+          <Field label="第二因素验证码或恢复码">
+            <input
+              autoComplete="one-time-code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
+          </Field>
+          <Button type="submit" disabled={!credential || !code}>
+            验证第二因素
+          </Button>
+        </form>
+      )}
       {!client.session?.secondFactorEnabled && (
         <section className="platform-detail">
           <h2>设置第二因素</h2>
@@ -1193,6 +1240,13 @@ function Security({
           {setup && (
             <>
               <code className="credential-text">{setup.secret}</code>
+              <Field label="认证器验证码">
+                <input
+                  autoComplete="one-time-code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                />
+              </Field>
               <Button
                 disabled={!code}
                 onClick={() =>
@@ -1217,7 +1271,7 @@ function Security({
         <section className="platform-detail">
           <h2>第二因素验证已启用</h2>
           <Button
-            disabled={!client.session.recent || !client.session.secondFactor}
+            disabled={!client.session.secondFactor}
             onClick={() =>
               void run(async () => {
                 await client.request('/me/security/disable', {});
@@ -1228,7 +1282,6 @@ function Security({
           >
             关闭第二因素验证
           </Button>
-          {!client.session.recent && <p>关闭前请先重新认证。</p>}
         </section>
       )}
       {recovery.length > 0 && (
@@ -1343,7 +1396,7 @@ function DataCenter({ client, tick, run }: { client: PlatformClient; tick: numbe
         </Button>
       </div>
       {preview && (
-        <Notice>
+        <section className="platform-detail">
           <HumanData value={preview.details} />
           <Button
             onClick={() =>
@@ -1358,7 +1411,7 @@ function DataCenter({ client, tick, run }: { client: PlatformClient; tick: numbe
           >
             确认安排清理
           </Button>
-        </Notice>
+        </section>
       )}
       <details>
         <summary>查看申诉保留和清理记录</summary>
@@ -1380,7 +1433,6 @@ function RoleManager({ client, tick, run }: { client: PlatformClient; tick: numb
   return (
     <>
       <Header title="平台权限与所有权" />
-      <p>平台管理身份不自动成为比赛裁判。交接所有者时先增设新人，确认恢复方式后再撤销旧任职。</p>
       <Field label="已激活工作人员">
         <select value={id} onChange={(e) => setId(e.target.value)}>
           <option value="">请选择</option>
@@ -1557,7 +1609,9 @@ function MatchManagement({ client, id }: { client: PlatformClient; id: string })
   const [tick, setTick] = useState(0),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
-    [ready, setReady] = useState(false);
+    [ready, setReady] = useState(false),
+    [busy, setBusy] = useState(false);
+  const running = useRef(false);
   useEffect(() => {
     void client
       .load()
@@ -1565,38 +1619,42 @@ function MatchManagement({ client, id }: { client: PlatformClient; id: string })
       .catch((e) => setError(e.message));
   }, [client]);
   const run: Run = async (work) => {
+    if (running.current) return;
+    running.current = true;
+    setBusy(true);
     setError('');
+    setNotice('正在提交操作，请稍候。');
     try {
-      const result = (await work()) as { operationId?: string };
-      setTick((t) => t + 1);
-      setNotice(
-        result?.operationId
-          ? `操作已受理。编号：${result.operationId}。请刷新成员列表核对处理结果。`
-          : '已完成本次操作。',
-      );
+      const result = await work();
+      await client.completeOperation(result, () => setNotice('操作正在处理中，请稍候。'));
+      setNotice('操作已完成。');
     } catch (e) {
+      setNotice('');
       setError(e instanceof Error ? e.message : '操作未完成，请查询原操作。');
+    } finally {
+      setTick((t) => t + 1);
+      running.current = false;
+      setBusy(false);
     }
   };
   return (
     <main className="platform-history">
-      {error && (
-        <p role="alert" className="danger">
-          {error}
-        </p>
-      )}
-      {notice && <Notice>{notice}</Notice>}
-      {client.pending() && (
-        <Button onClick={() => void run(() => client.resolvePending())}>查询原操作结果</Button>
-      )}
-      {ready ? (
-        <>
-          <Button onClick={() => setTick((t) => t + 1)}>刷新本场成员</Button>
-          <ManageMatch client={client} id={id} tick={tick} run={run} />
-        </>
-      ) : (
-        <p>正在读取本场管理权限</p>
-      )}
+      <Feedback
+        messages={platformFeedbackMessages(client, run, error, notice, busy, () => {
+          setError('');
+          setNotice('');
+        })}
+      />
+      <fieldset className="platform-action-scope" disabled={busy} aria-busy={busy}>
+        {ready ? (
+          <>
+            <Button onClick={() => setTick((t) => t + 1)}>刷新本场成员</Button>
+            <ManageMatch client={client} id={id} tick={tick} run={run} />
+          </>
+        ) : (
+          <p>正在读取本场管理权限</p>
+        )}
+      </fieldset>
     </main>
   );
 }
@@ -1662,9 +1720,11 @@ function History({ client, id }: { client: PlatformClient; id: string }) {
         </p>
       )}
       {!history && !error && <p role="status">正在读取赛后资料。</p>}
-      {history && history.phase !== 'ended' && <Notice>比赛结束后可以在这里查看战报。</Notice>}
+      {history && history.phase !== 'ended' && (
+        <section className="platform-detail">比赛结束后可以在这里查看战报。</section>
+      )}
       {history?.phase === 'ended' && history.versions.length === 0 && (
-        <Notice>目前没有可查看的战报。</Notice>
+        <section className="platform-detail">目前没有可查看的战报。</section>
       )}
       {history?.versions.map((row) => (
         <article key={row.version} className="platform-match-row">
@@ -1700,11 +1760,6 @@ function History({ client, id }: { client: PlatformClient; id: string }) {
         <section className="platform-detail">
           <h2>主办方留存资料</h2>
           <p>文件下载后由主办方自行保管。请把包含比赛秘密的资料放在仅授权人员可访问的位置。</p>
-          {history.downloads.includes('audit') && (
-            <p>
-              下载裁判操作记录或加密备份前，请到<a href="/account">账号与安全</a>重新验证身份。
-            </p>
-          )}
           <div className="platform-row-actions">
             {history.downloads
               .filter((kind) => kind !== 'report')

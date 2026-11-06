@@ -6,6 +6,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   COLORS,
   FLIGHT_NAMES,
@@ -109,6 +110,39 @@ export function Icon({ name, size = 24 }: { name: string; size?: number }) {
     >
       {paths[name] ?? paths.current}
     </svg>
+  );
+}
+
+export type FeedbackMessage = {
+  tone: 'error' | 'pending' | 'result';
+  content: ReactNode;
+  onClose?: () => void;
+};
+export function Feedback({ messages }: { messages: FeedbackMessage[] }) {
+  if (!messages.length) return null;
+  return createPortal(
+    <div className="feedback-stack">
+      {messages.map(({ tone, content, onClose }, index) => (
+        <div
+          key={`${tone}:${index}`}
+          className={`global-feedback ${tone}-feedback`}
+          role={tone === 'error' ? 'alert' : 'status'}
+          aria-atomic="true"
+        >
+          <Icon
+            name={tone === 'error' ? 'alert' : tone === 'pending' ? 'clock' : 'check'}
+            size={20}
+          />
+          <div>{content}</div>
+          {onClose && (
+            <button className="icon-button" aria-label="关闭本次操作结果" onClick={onClose}>
+              <Icon name="close" size={18} />
+            </button>
+          )}
+        </div>
+      ))}
+    </div>,
+    document.body,
   );
 }
 

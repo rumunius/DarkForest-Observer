@@ -37,7 +37,6 @@ type Login = {
   csrf: string;
   created_utc: number;
   expires: number;
-  reauth_utc: number;
   second_factor: number;
   revoked: number;
 };
@@ -143,12 +142,11 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       account: this.safeAccount(this.account(s.account_id)),
       roles: this.roles(s.account_id),
       csrfToken: s.csrf,
-      recent: s.reauth_utc > this.now() - 600000,
       secondFactor: !!s.second_factor,
       secondFactorEnabled: !!this.account(s.account_id).totp_ciphertext,
     };
   }
-  admin(s: Login, roles: PlatformRole[] = ['owner', 'admin'], recent = false) {
+  admin(s: Login, roles: PlatformRole[] = ['owner', 'admin']) {
     this.login(s.token_hash);
     requireThat(
       this.roles(s.account_id).some((r) => roles.includes(r)),
@@ -156,13 +154,6 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       '当前账号没有平台管理权限。',
       403,
     );
-    if (recent)
-      requireThat(
-        s.reauth_utc > this.now() - 600000,
-        'REAUTH_REQUIRED',
-        '请先在账号安全页重新认证。',
-        403,
-      );
   }
   directory(id: string): Directory {
     const d = this.db.one<Directory>('SELECT * FROM match_directory WHERE id=?', id);
@@ -726,7 +717,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
           csrf,
           this.now(),
           this.now() + 43200000,
-          this.now(),
+          0, // Retain the unused reauth_utc column for existing platform databases.
           factor ? 1 : 0,
         );
       });
@@ -821,19 +812,17 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         401,
       );
       this.db.exec(
-        'UPDATE platform_sessions SET reauth_utc=?,second_factor=? WHERE token_hash=?',
-        this.now(),
+        'UPDATE platform_sessions SET second_factor=? WHERE token_hash=?',
         factor ? 1 : 0,
         hash,
       );
       return { status: 200, body: this.view(this.login(hash)) };
     }
     if (path === '/me/security/disable' && input.method === 'POST') {
-      requireThat(s.reauth_utc > this.now() - 600000, 'REAUTH_REQUIRED', '请先重新认证。', 403);
       requireThat(
         s.second_factor === 1,
         'SECOND_FACTOR_REQUIRED',
-        '请先使用验证码或恢复码重新认证。',
+        '请先使用验证码或恢复码验证第二因素。',
         403,
       );
       this.db.tx(() => {
@@ -852,7 +841,6 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       return { status: 200, body: this.view(this.login(hash)) };
     }
     if (path === '/me/security/setup' && input.method === 'POST') {
-      requireThat(s.reauth_utc > this.now() - 600000, 'REAUTH_REQUIRED', '请先重新认证。', 403);
       requireThat(
         !this.account(s.account_id).totp_ciphertext,
         'ALREADY_CONFIGURED',
@@ -984,14 +972,14 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     this.admin(s, ['owner', 'admin', 'archivist']);
     if (input.method === 'GET') return this.readPlatform(path, input, s);
     if (path === '/platform/preview') {
-      this.admin(s, ['owner', 'admin', 'archivist'], true);
+      this.admin(s, ['owner', 'admin', 'archivist']);
       const target = text(p.path, 200),
         payload = object(p.payload),
         id = token(),
         bodyHash = await digest(stableJson(payload));
       if (target.startsWith('/platform/data/')) {
         requireThat(DATA_ACTIONS.includes(target), 'NOT_FOUND', '该操作已不再提供。', 404);
-        this.admin(s, ['owner', 'archivist'], true);
+        this.admin(s, ['owner', 'archivist']);
         if (payload.matchId)
           requireThat(
             this.dataScope(s.account_id, String(payload.matchId)),
@@ -999,7 +987,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
             '当前账号未获本场数据管理权限。',
             403,
           );
-      } else this.admin(s, ['owner', 'admin'], true);
+      } else this.admin(s, ['owner', 'admin']);
       const preview = await this.previewDetails(target, payload, s);
       this.db.exec(
         'INSERT INTO platform_previews VALUES(?,?,?,?,?)',
@@ -1028,7 +1016,6 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         : path.startsWith('/platform/roles')
           ? ['owner']
           : ['owner', 'admin'],
-      sensitive,
     );
     const id = requestId(p.request_id),
       reason = text(p.reason, 500),
@@ -1464,7 +1451,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       };
     }
     if (path.startsWith('/platform/invitations/')) {
-      this.admin(s, ['owner', 'admin'], true);
+      this.admin(s, ['owner', 'admin']);
       const row = this.db.one<{
         id: string;
         ciphertext: string | null;
@@ -1482,7 +1469,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         row.ciphertext,
         `invitation|${row.id}`,
       );
-      this.admin(this.login(s.token_hash), ['owner', 'admin'], true);
+      this.admin(this.login(s.token_hash), ['owner', 'admin']);
       return { status: 200, body: { invitation } };
     }
     throw new Fault(404, 'NOT_FOUND', '页面数据不存在。');
@@ -1839,12 +1826,6 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
             .map((m) => ({ id: m.account_id, name: m.name, kind: 'staff', status: 'active' })),
         };
       if (path === '/preview') {
-        requireThat(
-          s.reauth_utc > this.now() - 600000,
-          'REAUTH_REQUIRED',
-          '请先在账号安全页面重新认证。',
-          403,
-        );
         const body = object(input.body),
           payload = object(body.payload),
           target = text(body.path, 200);
@@ -1900,7 +1881,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       const actor = s.account_id;
       if (self) requireThat(indexed, 'FORBIDDEN', '请先取得本场邀请。', 403);
       else {
-        if (admin) this.admin(s, ['owner', 'admin'], path === '/staff/assign');
+        if (admin) this.admin(s, ['owner', 'admin']);
         else {
           const current = await this.summary(d, s.account_id);
           const member = (
@@ -2015,7 +1996,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       404,
     );
     if (download) {
-      this.admin(s, ['owner', 'archivist'], kind === 'audit' || kind === 'backup');
+      this.admin(s, ['owner', 'archivist']);
       requireThat(staffScope(), 'ARCHIVE_SCOPE_REQUIRED', '当前账号不能下载本场资料。', 403);
     }
     const indexed = this.db.one(
@@ -2032,7 +2013,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       );
     const authorize = () => {
       this.login(s.token_hash);
-      if (download) this.admin(s, ['owner', 'archivist'], kind === 'audit' || kind === 'backup');
+      if (download) this.admin(s, ['owner', 'archivist']);
       else if (!localReader) this.admin(s, ['owner', 'archivist']);
       requireThat(
         download ? staffScope() : localReader || staffScope(),

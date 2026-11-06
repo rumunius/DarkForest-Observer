@@ -50,6 +50,12 @@
   width: min(100%, 1100px);
   padding: 50px 52px 100px;
 }
+.platform-action-scope {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
 .platform-heading {
   display: flex;
   align-items: center;
@@ -114,16 +120,12 @@
 .platform-row-actions a {
   padding: 12px 0;
 }
-.platform-notice,
 .platform-detail,
 .platform-delivery {
   padding: 24px;
   border: 1px solid var(--control);
   margin: 28px 0;
   line-height: 1.8;
-}
-.platform-notice p:last-child {
-  margin-bottom: 0;
 }
 .platform-main pre,
 .platform-history pre {
@@ -276,7 +278,6 @@
     align-items: flex-start;
     gap: 22px;
   }
-  .platform-notice,
   .platform-detail,
   .platform-delivery {
     padding: 18px;
@@ -449,8 +450,14 @@ button:disabled {
 }
 a {
   color: inherit;
-  text-decoration: underline;
+  text-decoration: none;
   text-underline-offset: 0.25em;
+}
+/* Underline only links whose text is the sole cue that they are interactive. */
+a:not(:has(svg)):not(.text-button):not(.row-link):not(.platform-brand):not(.judge-brand):not(
+    .site-name
+  ):not(.back-link):not(.skip-link):not(.judge-sidebar nav a):not(.platform-sidebar nav a) {
+  text-decoration: underline;
 }
 button {
   background: none;
@@ -705,7 +712,6 @@ textarea::placeholder {
   min-height: 44px;
   padding: 8px 0;
   font-size: 14px;
-  text-decoration: underline;
   text-underline-offset: 5px;
 }
 .text-button:hover,
@@ -714,7 +720,6 @@ textarea::placeholder {
   color: var(--info);
 }
 .text-link {
-  text-decoration: underline;
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -1707,6 +1712,24 @@ textarea::placeholder {
   padding: 32px 0;
   color: var(--secondary);
 }
+.feedback-stack {
+  position: fixed;
+  z-index: 90;
+  top: max(16px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(760px, calc(100% - 32px));
+  max-height: 50dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: none;
+}
+.feedback-stack:empty {
+  display: none;
+}
+.feedback-stack > * + * {
+  margin-top: 12px;
+}
 .global-feedback {
   display: flex;
   align-items: flex-start;
@@ -1714,8 +1737,11 @@ textarea::placeholder {
   background: var(--surface);
   border-left: 2px solid var(--control);
   padding: 16px;
-  margin-bottom: 24px;
+  margin: 0;
   font-size: 14px;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+  box-shadow: 0 6px 24px #0005;
 }
 .global-feedback > svg {
   flex-shrink: 0;
@@ -2400,7 +2426,6 @@ td a {
 .preview-extra a {
   min-height: 36px;
   font-size: 13px;
-  text-decoration: underline;
   text-underline-offset: 4px;
   padding: 4px 0;
 }

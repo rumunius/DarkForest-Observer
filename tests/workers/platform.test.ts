@@ -21,6 +21,18 @@ const bindings = env as unknown as BackendEnv;
 const platform = () => bindings.PLATFORM_DO!.getByName('platform:primary');
 type Login = { token: string; session: PlatformSession; credential: string };
 let owner: Login;
+async function ageSession(login = owner, age = 3600000) {
+  const hash = await digest(login.token),
+    created = Date.now() - age;
+  await runInDurableObject(platform(), (_instance, state) =>
+    new Store(state.storage).exec(
+      'UPDATE platform_sessions SET created_utc=?,expires=?,reauth_utc=0 WHERE token_hash=?',
+      created,
+      created + 43200000,
+      hash,
+    ),
+  );
+}
 async function call(path: string, body?: unknown, login = owner) {
   const input: RpcInput = {
     method: body === undefined ? 'GET' : 'POST',
@@ -148,6 +160,63 @@ beforeEach(async () => {
   owner = await activate(installed.invitation);
 });
 describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待）', () => {
+  it('登录超过10分钟仍可读取邀请、预览和执行管理操作，预览有效期继续检查', async () => {
+    const target = await account('待停用工作人员');
+    await ageSession(owner, 11 * 3600000);
+    expect((await call('/auth/session')).body).not.toHaveProperty('recent');
+    const created = await call('/platform/accounts/create', {
+      request_id: crypto.randomUUID(),
+      name: '待交付邀请',
+      kind: 'staff',
+      reason: '核对长期登录下的邀请交付',
+    });
+    const invitation = await call(`/platform/invitations/${created.body.invitationId}`);
+    expect(invitation.status, JSON.stringify(invitation.body)).toBe(200);
+    expect(invitation.body.invitation).toBe(created.body.invitation);
+    const path = '/platform/accounts/status',
+      payload = {
+        accountId: target.session.account.id,
+        status: 'disabled',
+        expected_version: target.session.account.version,
+        reason: '核对取消近期认证后的管理操作',
+      };
+    const missing = await call(path, { ...payload, request_id: crypto.randomUUID() });
+    expect(missing.body.code).toBe('PREVIEW_REQUIRED');
+    const preview = await call('/platform/preview', { path, payload });
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    await runInDurableObject(platform(), (_instance, state) =>
+      new Store(state.storage).exec(
+        'UPDATE platform_previews SET expires=? WHERE id=?',
+        Date.now() - 1,
+        preview.body.previewToken,
+      ),
+    );
+    const expired = await call(path, {
+      ...payload,
+      request_id: crypto.randomUUID(),
+      preview_token: preview.body.previewToken,
+    });
+    expect(expired.body.code).toBe('PREVIEW_REQUIRED');
+    const fresh = await call('/platform/preview', { path, payload });
+    const result = await call(path, {
+      ...payload,
+      request_id: crypto.randomUUID(),
+      preview_token: fresh.body.previewToken,
+    });
+    expect(result.status, JSON.stringify(result.body)).toBe(202);
+    await drain();
+    expect((await call(`/me/operations/${result.body.operationId}`)).body.status).toBe('succeeded');
+    expect((await call('/auth/session', undefined, target)).status).toBe(401);
+  });
+  it('登录会话超过12小时仍需重新登录', async () => {
+    await ageSession(owner, 43200001);
+    const result = await call('/platform/preview', {
+      path: '/platform/accounts/status',
+      payload: {},
+    });
+    expect(result.status).toBe(401);
+    expect(result.body.code).toBe('UNAUTHENTICATED');
+  });
   it('安装一次、邀请只领取一次，数据库只保存摘要', async () => {
     await runInDurableObject(platform(), async (instance) => {
       await expect(
@@ -329,6 +398,7 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     const { id } = await running(),
       next = await account('新总裁判');
     await invite(id, next);
+    await ageSession();
     await assign(id, next, 'J01', 1);
     expect((await call(`/matches/${id}/snapshot?route=/judge`, undefined, owner)).status).toBe(403);
     const fresh = await call(`/matches/${id}/snapshot?route=/judge`, undefined, next);
@@ -340,6 +410,21 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
           a.seat_id === 'J01' && a.ended_utc === null,
       ),
     ).toHaveLength(1);
+    await ageSession(next);
+    const preview = await call(
+      `/matches/${id}/preview`,
+      {
+        path: `/matches/${id}/staff/assign`,
+        payload: {
+          accountId: owner.session.account.id,
+          seat: 'J01',
+          expectedVersion: 2,
+          reason: '总裁判长期登录后预览交接',
+        },
+      },
+      next,
+    );
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
   });
   it('全局停用拒绝旧会话，逐场收据完成，不淘汰文明', async () => {
     const { id, p1 } = await running(),
@@ -419,6 +504,7 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     expect(playerView.body.downloads).toEqual([]);
     expect((await call(`${history}/replay`, undefined, p1)).status).toBe(200);
     expect((await call(`${history}/download/replay`, undefined, p1)).status).toBe(403);
+    await ageSession();
     expect((await call(history)).body.downloads).toEqual(['report', 'audit', 'replay', 'backup']);
     const report = await call(`${history}/download/report?version=1`);
     expect(report.status, JSON.stringify(report.body)).toBe(200);
@@ -427,6 +513,7 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     expect(data.report.version).toBe(1);
     expect(data.report.standings[0]).not.toHaveProperty('homeworld');
     expect(report.body.text).not.toContain('credential_hash');
+    expect((await call(`${history}/download/audit`)).status).toBe(200);
     const backup = await call(`${history}/download/backup`);
     expect(backup.status, JSON.stringify(backup.body)).toBe(200);
     const envelope = JSON.parse(backup.body.text);
@@ -778,6 +865,7 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     ).toBe(401);
   });
   it('自愿启用第二因素后可以关闭，关闭后长期口令可以独立登录', async () => {
+    await ageSession();
     const setup = await call('/me/security/setup', {});
     const code = await totp(setup.body.secret, Math.floor(Date.now() / 30000));
     expect((await call('/me/security/confirm', { code })).status).toBe(200);
@@ -792,5 +880,35 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
         new Store(state.storage).all('SELECT * FROM recovery_codes'),
       ),
     ).toEqual([]);
+  });
+  it('会话未验证第二因素时仍不能关闭，验证成功后不设置近期认证时限', async () => {
+    const login = owner;
+    const setup = await call('/me/security/setup', {});
+    const code = await totp(setup.body.secret, Math.floor(Date.now() / 30000));
+    const confirmed = await call('/me/security/confirm', { code });
+    expect(confirmed.status).toBe(200);
+    const hash = await digest(login.token);
+    await runInDurableObject(platform(), (_instance, state) =>
+      new Store(state.storage).exec(
+        'UPDATE platform_sessions SET second_factor=0 WHERE token_hash=?',
+        hash,
+      ),
+    );
+    await ageSession(login);
+    const denied = await call('/me/security/disable', {}, login);
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe('SECOND_FACTOR_REQUIRED');
+    expect(
+      (await call('/auth/reauth', { credential: owner.credential, code: 'invalid' }, login)).status,
+    ).toBe(401);
+    const verified = await call(
+      '/auth/reauth',
+      { credential: owner.credential, code: confirmed.body.recoveryCodes[0] },
+      login,
+    );
+    expect(verified.status, JSON.stringify(verified.body)).toBe(200);
+    expect(verified.body.secondFactor).toBe(true);
+    await ageSession(login, 11 * 3600000);
+    expect((await call('/me/security/disable', {}, login)).status).toBe(200);
   });
 });

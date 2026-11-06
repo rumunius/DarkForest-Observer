@@ -2,7 +2,18 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { DataSource } from '@darkforest/contracts';
 import { AppProvider, useApp } from './state';
 import { judgeCan } from './permissions';
-import { Button, Empty, Field, Icon, Identity, Link, MatchSummary, PageTitle } from './ui';
+import {
+  Button,
+  Empty,
+  Feedback,
+  type FeedbackMessage,
+  Field,
+  Icon,
+  Identity,
+  Link,
+  MatchSummary,
+  PageTitle,
+} from './ui';
 import { PlayerPages, Rules } from './pages/player';
 import { Display, ObserverPages, ResultsPages } from './pages/observe';
 import { JUDGE_NAV, JudgePages } from './pages/judge';
@@ -115,56 +126,55 @@ function Login() {
     </>
   );
 }
-function Feedback() {
+function useFeedbackMessages() {
   const { error, result, pending, busy, refresh, recover, clearFeedback, data, online } = useApp();
-  return (
-    <>
-      {(!online || error) && (
-        <div className="global-feedback error-feedback" role="alert">
-          <Icon name="alert" size={20} />
-          <div>
-            <strong>{!online ? '连接已中断，保留当前草稿。' : error}</strong>
-            {data.match && (
-              <small>
-                最近同步：
-                {new Date(data.match.serverUtcMs).toLocaleTimeString('zh-CN', {
-                  timeZone: data.site.timezone,
-                })}
-              </small>
-            )}
-            <button className="text-button" onClick={() => void refresh()}>
-              重新连接
-            </button>
-          </div>
-        </div>
-      )}
-      {pending && (
-        <div className="global-feedback pending-feedback" role="status">
-          <Icon name="clock" size={20} />
-          <div>
-            <strong>正在确认上一次操作结果</strong>
-            <p>保留本次请求，取得明确结果后再进行新的操作。</p>
-            <button className="text-button" disabled={busy} onClick={() => void recover()}>
-              查询原操作结果
-            </button>
-          </div>
-        </div>
-      )}
-      {result?.status === 'complete' && !result.preview && (
-        <div className="global-feedback result-feedback" role="status">
-          <Icon name="check" size={20} />
-          <div>
-            <strong>{result.title}</strong>
-            <p>{result.message}</p>
-            {result.code && <strong className="numeric feedback-code">{result.code}</strong>}
-          </div>
-          <button className="icon-button" aria-label="关闭本次操作结果" onClick={clearFeedback}>
-            <Icon name="close" size={18} />
+  const messages: FeedbackMessage[] = [];
+  if (!online || error)
+    messages.push({
+      tone: 'error',
+      content: (
+        <>
+          <strong>{!online ? '连接已中断，保留当前草稿。' : error}</strong>
+          {data.match && (
+            <small>
+              最近同步：
+              {new Date(data.match.serverUtcMs).toLocaleTimeString('zh-CN', {
+                timeZone: data.site.timezone,
+              })}
+            </small>
+          )}
+          <button className="text-button" onClick={() => void refresh()}>
+            重新连接
           </button>
-        </div>
-      )}
-    </>
-  );
+        </>
+      ),
+    });
+  if (pending)
+    messages.push({
+      tone: 'pending',
+      content: (
+        <>
+          <strong>正在确认上一次操作结果</strong>
+          <p>保留本次请求，取得明确结果后再进行新的操作。</p>
+          <button className="text-button" disabled={busy} onClick={() => void recover()}>
+            查询原操作结果
+          </button>
+        </>
+      ),
+    });
+  if (result?.status === 'complete' && !result.preview)
+    messages.push({
+      tone: 'result',
+      onClose: clearFeedback,
+      content: (
+        <>
+          <strong>{result.title}</strong>
+          <p>{result.message}</p>
+          {result.code && <strong className="numeric feedback-code">{result.code}</strong>}
+        </>
+      ),
+    });
+  return messages;
 }
 function Navigation() {
   const { data, route, unread } = useApp();
@@ -283,6 +293,7 @@ function Sidebar() {
 }
 function Screen() {
   const { data, route, loading, go, base } = useApp();
+  const feedback = useFeedbackMessages();
   const main = useRef<HTMLElement>(null);
   const judge = data.session?.role === 'judge' && route.startsWith('/judge');
   const display = route === '/display';
@@ -392,7 +403,7 @@ function Screen() {
       )}
       <main ref={main} id="main-content" className="main-content">
         {!display && <MatchHeading />}
-        <Feedback />
+        <Feedback messages={feedback} />
         <div className="page-content" key={`${route}${location.search}`}>
           {content}
         </div>

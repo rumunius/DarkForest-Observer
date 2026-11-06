@@ -23,7 +23,6 @@ export interface PlatformSession {
   account: PlatformAccount;
   roles: PlatformRole[];
   csrfToken: string;
-  recent: boolean;
   secondFactor: boolean;
   secondFactorEnabled?: boolean;
 }
