@@ -1,29 +1,25 @@
 import {
   RULES,
-  validCode,
-  type Action,
   type DataSource,
   type Operation,
   type OperationResult,
   type Snapshot,
 } from '@darkforest/contracts';
-import {scalarText} from '../../../../packages/contracts/src/backend';
 import {
-  broadcastCopy,
-  clearingCopy,
-  eliminationCopy,
   eventBody,
   gameTimeCopy,
   qqCopy,
 } from '../../../../packages/contracts/src/message_copy';
 import {ApiError} from '../data/http';
+import type {
+  PreviewActionContext,
+  PreviewFeedback,
+  SavedPreview,
+} from './preview_action_context';
 import type {PreviewRole} from './preview_fixtures';
-import {buildArms, createPreviewSnapshot} from './preview_fixtures';
-import {
-  previewEliminations,
-  previewSite,
-  validPreviewArms,
-} from './preview_input';
+import {createPreviewSnapshot} from './preview_fixtures';
+import {applyPreviewJudgeAction} from './preview_judge_actions';
+import {applyPreviewPlayerAction} from './preview_player_actions';
 
 function delay() {
   return new Promise<void>(resolve => setTimeout(resolve, 180));
@@ -34,10 +30,7 @@ export class MockSource implements DataSource {
   private state!: Snapshot;
   private origin = performance.now();
   private readonly results = new Map<string, OperationResult>();
-  private readonly previews = new Map<
-    string,
-    {revision: number; path: string; payload: Record<string, unknown>}
-  >();
+  private readonly previews = new Map<string, SavedPreview>();
   private sightingResult = 'hit';
   private fault = 'none';
   private pendingOperation: Operation | null = null;
@@ -260,477 +253,29 @@ export class MockSource implements DataSource {
 
   private apply(operation: Operation): OperationResult {
     this.reconcile();
-    const playerState = this.state.player;
     const match = this.state.match!;
     const path = operation.path;
-    const payload = operation.payload;
-    let title = '操作已完成';
-    let message = '比赛状态已更新。';
-    let code: string | undefined;
-    const action = path.split('/').pop() as Action;
+    const feedback: PreviewFeedback = {
+      title: '操作已完成',
+      message: '比赛状态已更新。',
+      code: undefined,
+    };
+    const context: PreviewActionContext = {
+      state: this.state,
+      match,
+      operation,
+      previews: this.previews,
+      sightingResult: this.sightingResult,
+    };
     if (path.startsWith('/action/') || path === '/player/nickname') {
-      if (
-        !playerState ||
-        !playerState.actions.includes(
-          action === 'nickname' ? 'nickname' : action,
-        )
-      ) {
-        throw new ApiError('比赛状态已更新，请查看当前可用行动。', 409);
-      }
-      if (
-        ['homeworld-submit', 'broadcast', 'photon'].includes(action) &&
-        !validCode(scalarText(payload.code ?? ''))
-      ) {
-        throw new ApiError('请输入6位数字', 422);
-      }
-      switch (action) {
-        case 'nickname': {
-          const name = scalarText(payload.nickname ?? '').trim();
-          if ([...name].length < 2 || [...name].length > 8) {
-            throw new ApiError('昵称需要2至8个字符。', 422);
-          }
-          playerState.nickname = name;
-          playerState.flight = 'unregistered';
-          playerState.actions = ['homeworld-submit'];
-          title = '昵称已确认';
-          break;
-        }
-        case 'homeworld-submit':
-          playerState.homeworld = String(payload.code);
-          playerState.homeVersion++;
-          playerState.flight = 'pending';
-          title = '母星口令已保存';
-          message = '请复制登记消息，发送给裁判并附上现场照片。';
-          break;
-        case 'preflight-depart':
-          playerState.flight = 'departed';
-          playerState.actions = ['preflight-stage'];
-          title = '已确认离开母星';
-          break;
-        case 'preflight-stage':
-          playerState.flight = 'staged';
-          playerState.actions = [];
-          match.releaseAt = Date.now() + 30000;
-          title = '准备完成，等待发码';
-          break;
-        case 'preflight-issue-code':
-          playerState.flight = 'outfitting';
-          playerState.arms = [['BK', 'OR'], ['WH']];
-          playerState.actions = ['preflight-ready'];
-          title = '手环配置已领取';
-          break;
-        case 'preflight-ready':
-          playerState.flight = 'ready';
-          playerState.actions = [];
-          match.startAt = Date.now() + 30000;
-          title = '已确认穿戴就绪';
-          break;
-        case 'return-confirm':
-          playerState.flight = 'preparing';
-          playerState.actions = ['issue-code'];
-          title = '照片发送情况已确认';
-          break;
-        case 'issue-code':
-          playerState.flight = 'issued';
-          playerState.arms = [['BK', 'OR', 'SB'], ['GY']];
-          playerState.actions = ['launch'];
-          title = '新手环配置已领取';
-          break;
-        case 'launch':
-          playerState.flight = 'active';
-          playerState.flightNumber++;
-          playerState.respawnDeadline = null;
-          playerState.actions = [
-            'sighting',
-            ...(playerState.broadcasts > 0 ? ['broadcast' as const] : []),
-            ...(playerState.photons > 0 ? ['photon' as const] : []),
-            'withdraw',
-          ];
-          title = '出航完成';
-          break;
-        case 'withdraw':
-          playerState.flight = 'eliminated';
-          playerState.homeAlive = false;
-          playerState.actions = [];
-          playerState.arms = null;
-          playerState.eliminatedAt = Date.now();
-          playerState.eliminationReason = '主动退出比赛';
-          title = '已退出比赛';
-          break;
-        case 'broadcast': {
-          code = String(payload.code);
-          if (
-            this.state.events.some(
-              e => e.kind === 'broadcast' && e.code === code,
-            )
-          ) {
-            throw new ApiError('这组六位口令已被广播。', 409);
-          }
-          playerState.broadcasts--;
-          if (!playerState.broadcasts) {
-            playerState.actions = playerState.actions.filter(
-              a => a !== 'broadcast',
-            );
-          }
-          title = '广播已发布';
-          message = `广播剩余${playerState.broadcasts}次。`;
-          this.state.events.unshift({
-            id: `EVT-${crypto.randomUUID()}`,
-            kind: 'broadcast',
-            title: '坐标广播',
-            body: broadcastCopy(
-              `${playerState.id}（${playerState.nickname}）`,
-              code,
-            ),
-            code,
-            audience: 'public',
-            gameMs: match.gameMs,
-            utcMs: Date.now(),
-            civilizationIds: [playerState.id],
-          });
-          break;
-        }
-        case 'photon':
-          playerState.photons--;
-          playerState.actions = playerState.actions.filter(a => a !== 'photon');
-          title = '光粒已发射';
-          code = String(payload.code);
-          message = clearingCopy('photon', code);
-          break;
-        case 'sighting': {
-          if (!validPreviewArms(payload.arm_a, payload.arm_b)) {
-            throw new ApiError('手环颜色组合不完整。', 422);
-          }
-          if (this.sightingResult === 'hit') {
-            title = '已击毁目标飞船';
-            message = 'C12（漂流者）的母星情报已加入你的记录。';
-            code = '739216';
-          } else {
-            title = '本次目击未产生击毁';
-            message = '本次目击未产生击毁。';
-            if (this.sightingResult === 'wrong') {
-              playerState.wrongCount++;
-              if (playerState.wrongCount >= 3) {
-                playerState.flight = 'eliminated';
-                playerState.homeAlive = false;
-                playerState.arms = null;
-                playerState.actions = [];
-                playerState.eliminatedAt = Date.now();
-                playerState.eliminationReason = '第三次提交错误的手环颜色';
-                title = '直接出局';
-                message = eliminationCopy(
-                  `${playerState.id}（${playerState.nickname}）`,
-                  180,
-                  true,
-                );
-              } else {
-                const minutes = playerState.wrongCount === 1 ? 5 : 15;
-                playerState.attackLockedUntil = Date.now() + minutes * 60000;
-                playerState.actions = playerState.actions.filter(
-                  a => a !== 'sighting',
-                );
-                title = '禁止攻击';
-                message = `本次提交的手环颜色有误。\n累计错误：${playerState.wrongCount}次。禁止目击攻击：${minutes}分钟。\n恢复攻击时间：${new Date(playerState.attackLockedUntil).toLocaleTimeString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false})}。`;
-              }
-            }
-          }
-          break;
-        }
-
-        default:
-          // Validated actions outside this preview switch retain the existing no-op.
-          break;
-      }
+      applyPreviewPlayerAction(context, feedback);
     } else {
-      if (this.state.session?.role !== 'judge') {
-        throw new ApiError('当前账号不能执行这项操作。', 403);
+      const preview = applyPreviewJudgeAction(context, feedback);
+      if (preview) {
+        return preview;
       }
-      const permitted = this.state.session.permissions;
-      const area = path.includes('/notices/')
-        ? 'notices'
-        : path.includes('/homeworld/')
-          ? 'homeworlds'
-          : path.includes('equipment')
-            ? 'equipment'
-            : '*';
-      if (!permitted.includes('*') && !permitted.includes(area)) {
-        throw new ApiError('当前职责不能执行这项操作。', 403);
-      }
-      if (path.endsWith('/preview')) {
-        const token = crypto.randomUUID();
-        this.previews.set(token, {
-          revision: match.revision,
-          path: scalarText(payload.path ?? '/judge/command/execute'),
-          payload,
-        });
-        const preview = {
-          token,
-          revision: match.revision,
-          title: '操作影响预览',
-          changes: [
-            {
-              target: scalarText(
-                payload.target ?? payload.command ?? '本场比赛',
-              ),
-              before: '当前已保存状态',
-              after: scalarText(
-                payload.change ?? payload.command ?? '按本次表单变更',
-              ),
-            },
-          ],
-          consequences: [
-            '执行时将再次核验权限与记录版本。',
-            '相关操作保留原因和审计记录。',
-          ],
-        };
-        if (Array.isArray(payload.eliminations)) {
-          preview.changes = previewEliminations(payload.eliminations).map(
-            item => {
-              const c = this.state.civilizations.find(c => c.id === item.id);
-              return {
-                target: `${item.id}（${c?.nickname ?? ''}）`,
-                before: '存活文明',
-                after:
-                  item.reason === 'outside_at_cutoff'
-                    ? '截止时未进入终局圈，永久淘汰'
-                    : '未按时加入位置共享，永久淘汰',
-              };
-            },
-          );
-          if (!preview.changes.length) {
-            preview.changes.push({
-              target: '全部存活文明',
-              before: '资格核验等待',
-              after: '保留资格并结束核验暂停',
-            });
-          }
-        }
-        return {
-          requestId: operation.requestId,
-          status: 'complete',
-          title: '请核对操作影响',
-          message: '预览尚未改变比赛。',
-          preview,
-        };
-      }
-      if (payload.preview_token) {
-        const preview = this.previews.get(scalarText(payload.preview_token));
-        if (!preview || preview.revision !== match.revision) {
-          throw new ApiError('记录已更新，请重新预览并核对。', 409);
-        }
-        Object.assign(payload, preview.payload);
-        this.previews.delete(scalarText(payload.preview_token));
-      }
-      if (path.includes('/homeworld/')) {
-        const target = this.state.civilizations.find(
-          c => c.id === path.split('/')[3],
-        );
-        if (
-          !target ||
-          target.homeVersion !== payload.expected_version ||
-          target.homeworld !== payload.expected_code ||
-          target.flight !== 'pending'
-        ) {
-          throw new ApiError('这条登记已更新，请核对最新版本。', 409);
-        }
-        target.flight =
-          payload.decision === 'approve' ? 'verified' : 'rejected';
-        target.rejection = scalarText(payload.reason ?? '');
-        title = payload.decision === 'approve' ? '母星审核通过' : '已退回修改';
-      } else if (path.includes('/notices/')) {
-        const notice = this.state.judge!.notices.find(
-          n => n.id === path.split('/')[3],
-        );
-        if (!notice || notice.version !== payload.expected_version) {
-          throw new ApiError('通知已更新，请核对最新状态。', 409);
-        }
-        notice.status = path.endsWith('/sent')
-          ? 'sent'
-          : path.endsWith('/error')
-            ? 'error'
-            : 'copied';
-        notice.version++;
-        notice.operator = this.state.session.name;
-        title =
-          notice.status === 'sent'
-            ? '已标记发送'
-            : notice.status === 'copied'
-              ? '已记录复制'
-              : '已记录发送异常';
-      } else if (path === '/judge/pause' || path === '/judge/resume') {
-        if (match.verification) {
-          throw new ApiError('请先完成终局资格核验。', 409);
-        }
-        match.paused = path.endsWith('/pause');
-        match.pauseReason = scalarText(payload.reason ?? '');
-        title = match.paused ? '比赛已暂停' : '比赛已恢复';
-      } else if (path === '/judge/hunt-finalize') {
-        const eliminations = previewEliminations(payload.eliminations);
-        for (const item of eliminations) {
-          const c = this.state.civilizations.find(c => c.id === item.id);
-          if (c) {
-            c.flight = 'eliminated';
-            c.arms = null;
-            c.eliminationReason = item.reason;
-          }
-        }
-        match.verification = false;
-        match.paused = false;
-        match.pauseReason = '';
-        title = '终局资格核验已完成';
-        match.survivors = this.state.civilizations.filter(
-          c => c.flight !== 'eliminated',
-        ).length;
-        if (match.survivors <= 1) {
-          match.stage = 'ended';
-          match.running = false;
-          const living = this.state.civilizations.filter(
-            c => c.flight !== 'eliminated',
-          );
-          const standings = [
-            ...living,
-            ...this.state.civilizations.filter(c => c.flight === 'eliminated'),
-          ].map((c, i) => ({...c, rank: i + 1, tied: false}));
-          this.state.results = {
-            version: 1,
-            reason: living.length
-              ? '本场仅余一个存活文明，提前完赛'
-              : '全部文明已永久淘汰',
-            champions: living.map(c => c.id),
-            standings,
-          };
-        }
-      } else if (path === '/judge/hunt-eliminate') {
-        const target = this.state.civilizations.find(
-          c => c.id === payload.target,
-        );
-        if (!target || target.flight === 'eliminated') {
-          throw new ApiError('该文明状态已更新，请重新核对。', 409);
-        }
-        target.flight = 'eliminated';
-        target.arms = null;
-        target.eliminatedAt = Date.now();
-        target.eliminationReason = String(payload.reason_code);
-        match.survivors--;
-        title = '终局裁决已记录';
-      } else if (path === '/judge/correction') {
-        const target = this.state.civilizations.find(
-          c => c.id === payload.target,
-        );
-        if (!target) {
-          throw new ApiError('请选择需要处理的文明。', 422);
-        }
-        const field = String(payload.field);
-        const value = scalarText(payload.value ?? '');
-        if (field === 'nickname') {
-          if ([...value.trim()].length < 2 || [...value.trim()].length > 8) {
-            throw new ApiError('昵称需要2至8个字符。', 422);
-          }
-          target.nickname = value;
-        } else if (field === 'photons' || field === 'broadcasts') {
-          if (!/^\d+$/.test(value)) {
-            throw new ApiError('资源数量必须是非负整数。', 422);
-          }
-          if (field === 'photons') {
-            target.photons = Number(value);
-          } else {
-            target.broadcasts = Number(value);
-          }
-        } else if (field === 'restore') {
-          target.flight = 'returning';
-          target.observerAllowed = false;
-          target.eliminatedAt = null;
-          target.respawnDeadline = Math.min(
-            match.gameMs + 15 * 60000,
-            RULES.apocalypseMs,
-          );
-          target.arms = null;
-        }
-        title = '文明信息已修正';
-      } else if (/\/roster\/.+\/withdraw$/.test(path)) {
-        const target = this.state.civilizations.find(
-          c => c.id === path.split('/')[3],
-        );
-        if (
-          !target ||
-          !['setup', 'outfitting', 'countdown'].includes(match.stage)
-        ) {
-          throw new ApiError('当前不能登记赛前缺席。', 409);
-        }
-        target.flight = 'absent';
-        target.arms = null;
-        match.total--;
-        title = '已登记赛前缺席';
-      } else if (path === '/judge/equipment-correction') {
-        const target = this.state.civilizations.find(
-          c => c.id === payload.target,
-        );
-        if (!target) {
-          throw new ApiError('请选择需要处理的文明。', 422);
-        }
-        if (payload.mode === 'reissue') {
-          if (!match.paused) {
-            throw new ApiError('请先暂停比赛。', 409);
-          }
-          target.arms = buildArms(this.state.judge!.issuedCodes);
-          target.flight = 'issued';
-          this.state.judge!.issuedCodes++;
-          title = '旧配置已注销，新配置待核对佩戴';
-        } else {
-          title = '同色同款手环替换已记录';
-        }
-      } else if (path === '/judge/site-config') {
-        this.state.site = {
-          ...this.state.site,
-          ...previewSite(payload.site),
-          version: this.state.site.version + 1,
-        };
-        title = '活动设置已保存';
-      } else if (path.includes('/effects') && payload.revoke) {
-        const effect = this.state.judge!.effects.find(
-          e => e.id === payload.revoke,
-        );
-        if (effect) {
-          effect.active = false;
-        }
-        title = '临时效果已撤销';
-      } else if (path.includes('/effects')) {
-        this.state.judge!.effects.unshift({
-          id: crypto.randomUUID(),
-          target: String(payload.target),
-          reason: String(payload.reason),
-          untilUtcMs: Date.now() + Number(payload.seconds ?? 60) * 1000,
-          operator: this.state.session.name,
-          active: true,
-        });
-        title = '临时效果已建立';
-      } else if (path.includes('/command/execute')) {
-        title = '指令已执行';
-        message = scalarText(payload.command ?? '查询完成');
-      } else if (path.includes('/scheduler') || path.includes('/settle-due')) {
-        this.state.judge!.scheduler.backlog = 0;
-        this.state.judge!.scheduler.lastSuccessUtcMs = Date.now();
-        title = '调度处理已完成';
-      } else if (path.includes('arm-code-release')) {
-        match.releaseAt = Date.parse(String(payload.time));
-        title = '发码时间已安排';
-      } else if (path.includes('arm-start')) {
-        match.startAt = Date.parse(String(payload.time));
-        title = '开赛时间已安排';
-      } else {
-        title = '管理操作已记录';
-        message = '已保存本次变更原因及影响。';
-      }
-      this.state.judge!.audits.unshift({
-        id: `AUD-${crypto.randomUUID()}`,
-        title,
-        operator: this.state.session.name,
-        reason: scalarText(payload.reason ?? '按流程确认'),
-        before: '操作前状态',
-        after: message,
-        gameMs: match.gameMs,
-      });
     }
+    const {title, message, code} = feedback;
     match.revision++;
     const result: OperationResult = {
       requestId: operation.requestId,
@@ -743,4 +288,4 @@ export class MockSource implements DataSource {
     return result;
   }
 }
-export {PREVIEW_ROLES, type PreviewRole, SCENARIOS} from './preview_fixtures';
+export {PREVIEW_ROLES, SCENARIOS, type PreviewRole} from './preview_fixtures';
