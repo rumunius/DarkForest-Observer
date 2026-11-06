@@ -97,6 +97,36 @@ export function platformFeedbackMessages(
   ];
 }
 
+/** A keyed delivery keeps pending clipboard results attached to the original link. */
+function InvitationCopy({invitation}: {invitation: string}) {
+  const link = `${location.origin}/claim#${invitation}`;
+  const [feedback, setFeedback] = useState('');
+  const [copying, setCopying] = useState(false);
+  const copy = async () => {
+    setCopying(true);
+    setFeedback('');
+    try {
+      await navigator.clipboard.writeText(link);
+      setFeedback('领取链接已复制。');
+    } catch {
+      setFeedback('复制未完成，请选择上方领取链接手动复制。');
+    } finally {
+      setCopying(false);
+    }
+  };
+  return (
+    <>
+      <code className="credential-text" tabIndex={0}>
+        {link}
+      </code>
+      <Button onClick={() => void copy()} disabled={copying}>
+        {copying ? '正在复制' : '复制领取链接'}
+      </Button>
+      {feedback && <p role="status">{feedback}</p>}
+    </>
+  );
+}
+
 /** 仅展示本次获授权的邀请或口令交付，其余结果使用可读字段投影。 */
 export function Delivery({value}: {value: Record<string, unknown> | null}) {
   if (!value) {
@@ -110,18 +140,7 @@ export function Delivery({value}: {value: Record<string, unknown> | null}) {
         请单人复制或打印交付；长期口令只在领取时显示。邀请7天有效，交付原文24小时后清除。
       </p>
       {typeof invitation === 'string' && (
-        <>
-          <code className="credential-text">{`${location.origin}/claim#${invitation}`}</code>
-          <Button
-            onClick={() =>
-              void navigator.clipboard.writeText(
-                `${location.origin}/claim#${invitation}`,
-              )
-            }
-          >
-            复制领取链接
-          </Button>
-        </>
+        <InvitationCopy key={invitation} invitation={invitation} />
       )}
       {typeof value.credential === 'string' && (
         <code className="credential-text">{value.credential}</code>
