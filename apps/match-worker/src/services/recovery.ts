@@ -338,6 +338,269 @@ export function restoreCheckpointTables(engine: Engine, tables: Tables): void {
     }
   });
 }
+/** 保全最新凭据和权限并推进账号版本，缺失账号时由外层事务回滚。 */
+function mergeRecoveryAccounts(engine: Engine, tables: Tables): void {
+  const db = engine.db;
+  for (const row of tables.accounts ?? []) {
+    const account = db.one<Actor>(
+      'SELECT * FROM accounts WHERE id=?',
+      scalarText(row.id),
+    );
+    requireThat(
+      account,
+      'RECOVERY_ACCOUNT_MISSING',
+      '恢复后的账号名单不完整。',
+    );
+    db.exec(
+      'UPDATE accounts SET credential_hash=?,enabled=?,permissions=?,version=MAX(version,?)+1 WHERE id=?',
+      row.credential_hash!,
+      row.enabled!,
+      row.permissions!,
+      row.version!,
+      row.id!,
+    );
+  }
+}
+
+/** 合并永久发行证据；冲突拒绝恢复，检查点之后的新码一律退役。 */
+function mergeRecoveryCodes(engine: Engine, tables: Tables): void {
+  const db = engine.db;
+  for (const rawCode of tables.sighting_codes ?? []) {
+    const latest = {
+      id: text(rawCode.id, 100),
+      mac: text(rawCode.mac, 100),
+      ciphertext: text(rawCode.ciphertext, 16_000_000),
+      status: text(rawCode.status, 100),
+      retired_game:
+        rawCode.retired_game === null ? null : integer(rawCode.retired_game),
+      retired_utc:
+        rawCode.retired_utc === null ? null : integer(rawCode.retired_utc),
+      retired_reason:
+        rawCode.retired_reason === null
+          ? null
+          : text(rawCode.retired_reason, 1000, 0),
+    };
+    const current = db.one<CodeRow>(
+      'SELECT * FROM sighting_codes WHERE mac=?',
+      latest.mac,
+    );
+    if (current) {
+      requireThat(
+        current.id === latest.id && current.ciphertext === latest.ciphertext,
+        'CODEBOOK_CONFLICT',
+        '历史手环配置存在冲突，请保持暂停。',
+      );
+      if (latest.status === 'retired') {
+        db.exec(
+          "UPDATE sighting_codes SET status='retired',retired_game=?,retired_utc=?,retired_reason=? WHERE id=?",
+          latest.retired_game,
+          latest.retired_utc,
+          latest.retired_reason,
+          latest.id,
+        );
+        db.exec('UPDATE flights SET code_id=NULL WHERE code_id=?', latest.id);
+      }
+    } else {
+      insertRow(engine, 'sighting_codes', {
+        ...rawCode,
+        status: 'retired',
+        retired_utc: latest.retired_utc ?? engine.now(),
+        retired_game: latest.retired_game ?? engine.game(),
+        retired_reason: 'recovery_preserved',
+      });
+    }
+  }
+}
+
+/** 保留恢复前请求收据、已传播情报和事件事实，避免重发旧操作。 */
+function mergeRecoveryFacts(engine: Engine, tables: Tables): void {
+  const db = engine.db;
+  for (const row of tables.request_journal ?? []) {
+    if (
+      !db.one<Record<string, SqlStorageValue>>(
+        'SELECT actor FROM request_journal WHERE actor=? AND request_id=?',
+        row.actor!,
+        row.request_id!,
+      )
+    ) {
+      insertRow(engine, 'request_journal', {
+        ...row,
+        result_json: JSON.stringify({
+          requestId: row.request_id,
+          status: 'complete',
+          code: 'CANCELLED_BY_RECOVERY',
+          title: '比赛已恢复',
+          message: '该操作已随比赛恢复结束，请查看当前状态。',
+        }),
+        cancelled: 1,
+      });
+    }
+  }
+  for (const row of tables.intel_grants ?? []) {
+    if (
+      !db.one<Record<string, SqlStorageValue>>(
+        'SELECT id FROM intel_grants WHERE id=? OR (owner=? AND target=? AND source=?)',
+        row.id!,
+        row.owner!,
+        row.target!,
+        row.source!,
+      )
+    ) {
+      insertRow(engine, 'intel_grants', row);
+    }
+  }
+  for (const row of tables.event_log ?? []) {
+    if (
+      !db.one<Record<string, SqlStorageValue>>(
+        'SELECT id FROM event_log WHERE id=?',
+        row.id!,
+      )
+    ) {
+      const {seq, ...rest} = row;
+      void seq;
+      insertRow(engine, 'event_log', {
+        ...rest,
+        audience: 'global',
+        body: `${scalarText(row.body)}（恢复前记录）`,
+      });
+    }
+  }
+}
+
+/** 保全通知复制与发送履历，新恢复的未发送正文必须重新核对。 */
+function mergeRecoveryNotices(engine: Engine, tables: Tables): void {
+  const db = engine.db;
+  for (const row of tables.notice_queue ?? []) {
+    const current = db.one<Record<string, SqlStorageValue>>(
+      'SELECT id FROM notice_queue WHERE id=?',
+      row.id!,
+    );
+    if (current) {
+      db.exec(
+        'UPDATE notice_queue SET status=?,version=MAX(version,?)+1,operator=?,error=?,copied_by=?,copied_utc=?,sent_by=?,sent_utc=? WHERE id=?',
+        row.status!,
+        row.version!,
+        row.operator!,
+        row.error!,
+        row.copied_by ?? null,
+        row.copied_utc ?? null,
+        row.sent_by ?? null,
+        row.sent_utc ?? null,
+        row.id!,
+      );
+    } else {
+      const copy = {...row};
+      delete copy.ordering_seq;
+      copy.ordering_seq = db.one<{value: number}>(
+        'SELECT COALESCE(MAX(ordering_seq),0)+1 AS value FROM notice_queue',
+      )!.value;
+      copy.status = row.status === 'sent' ? 'sent' : 'error';
+      copy.error = '请核对比赛恢复后的通知内容。';
+      insertRow(engine, 'notice_queue', copy);
+    }
+  }
+  for (const row of tables.notice_actions ?? []) {
+    if (
+      !db.one<Record<string, SqlStorageValue>>(
+        'SELECT id FROM notice_actions WHERE id=?',
+        row.id!,
+      )
+    ) {
+      insertRow(engine, 'notice_actions', row);
+    }
+  }
+}
+
+/** 按原身份保存裁判裁决与审计证据，数据库序列由恢复后的库重新分配。 */
+function mergeRecoveryAudits(engine: Engine, tables: Tables): void {
+  const db = engine.db;
+  for (const row of tables.judge_eliminations ?? []) {
+    if (
+      !db.one<Record<string, SqlStorageValue>>(
+        'SELECT source FROM judge_eliminations WHERE source=? AND player_id=?',
+        row.source!,
+        row.player_id!,
+      )
+    ) {
+      insertRow(engine, 'judge_eliminations', row);
+    }
+  }
+  for (const row of tables.audit_logs ?? []) {
+    if (
+      !db.one<Record<string, SqlStorageValue>>(
+        'SELECT id FROM audit_logs WHERE id=?',
+        row.id!,
+      )
+    ) {
+      const {seq, ...rest} = row;
+      void seq;
+      insertRow(engine, 'audit_logs', rest);
+    }
+  }
+  // Carry the latest authorization and progress, preserving original due times and late policy.
+  for (const row of tables.judge_command_log ?? []) {
+    if (
+      !db.one<Record<string, SqlStorageValue>>(
+        'SELECT id FROM judge_command_log WHERE id=?',
+        row.id!,
+      )
+    ) {
+      const {seq, ...rest} = row;
+      void seq;
+      insertRow(engine, 'judge_command_log', rest);
+    }
+  }
+}
+
+/** 沿用最新任务进度和原到期时刻，取消过时计划并替换命令事件。 */
+function mergeRecoveryCommands(engine: Engine, tables: Tables): void {
+  const db = engine.db;
+  for (const row of tables.command_objects ?? []) {
+    db.exec('DELETE FROM command_objects WHERE id=?', row.id!);
+    insertRow(engine, 'command_objects', row);
+  }
+  db.exec(
+    "UPDATE command_objects SET status='cancelled' WHERE kind='plan' AND status='pending'",
+  );
+  db.exec(
+    "DELETE FROM scheduled_events WHERE kind IN ('judge_command_task','judge_command_job')",
+  );
+  for (const row of tables.scheduled_events ?? []) {
+    if (
+      ['judge_command_task', 'judge_command_job'].includes(scalarText(row.kind))
+    ) {
+      insertRow(engine, 'scheduled_events', row);
+    }
+  }
+}
+
+/** 撤销旧会话，合并最新任职与授权栅栏，恢复和清理代次只前进。 */
+function mergeRecoveryAuthorization(engine: Engine, tables: Tables): void {
+  const db = engine.db;
+  db.exec('UPDATE sessions SET revoked=1');
+  if (tables.match_identity?.length) {
+    for (const table of [
+      'memberships',
+      'staff_assignments',
+      'authorization_fences',
+      'participation_history',
+    ] as const) {
+      db.exec(`DELETE FROM ${table}`);
+      for (const row of tables[table] ?? []) {
+        insertRow(engine, table, row);
+      }
+    }
+    db.exec(
+      'UPDATE memberships SET epoch=(SELECT version FROM accounts WHERE id=memberships.local_id) WHERE local_id IS NOT NULL',
+    );
+    db.exec(
+      'UPDATE match_identity SET recovery_generation=MAX(recovery_generation,?)+1,erasure_generation=MAX(erasure_generation,?)',
+      Number(tables.match_identity[0]!.recovery_generation ?? 0),
+      Number(tables.match_identity[0]!.erasure_generation ?? 0),
+    );
+  }
+}
+
 /** 恢复后重放必须保留的事实并撤销旧会话，等待网站人工核对。 */
 export async function completeRecovery(
   engine: Engine,
@@ -381,236 +644,13 @@ export async function completeRecovery(
     '恢复后的发行记录与目标时间点不一致。',
   );
   db.tx(() => {
-    for (const row of data.latest.accounts ?? []) {
-      const account = db.one<Actor>(
-        'SELECT * FROM accounts WHERE id=?',
-        scalarText(row.id),
-      );
-      requireThat(
-        account,
-        'RECOVERY_ACCOUNT_MISSING',
-        '恢复后的账号名单不完整。',
-      );
-      db.exec(
-        'UPDATE accounts SET credential_hash=?,enabled=?,permissions=?,version=MAX(version,?)+1 WHERE id=?',
-        row.credential_hash!,
-        row.enabled!,
-        row.permissions!,
-        row.version!,
-        row.id!,
-      );
-    }
-    for (const rawCode of data.latest.sighting_codes ?? []) {
-      const latest = {
-        id: text(rawCode.id, 100),
-        mac: text(rawCode.mac, 100),
-        ciphertext: text(rawCode.ciphertext, 16_000_000),
-        status: text(rawCode.status, 100),
-        retired_game:
-          rawCode.retired_game === null ? null : integer(rawCode.retired_game),
-        retired_utc:
-          rawCode.retired_utc === null ? null : integer(rawCode.retired_utc),
-        retired_reason:
-          rawCode.retired_reason === null
-            ? null
-            : text(rawCode.retired_reason, 1000, 0),
-      };
-      const current = db.one<CodeRow>(
-        'SELECT * FROM sighting_codes WHERE mac=?',
-        latest.mac,
-      );
-      if (current) {
-        requireThat(
-          current.id === latest.id && current.ciphertext === latest.ciphertext,
-          'CODEBOOK_CONFLICT',
-          '历史手环配置存在冲突，请保持暂停。',
-        );
-        if (latest.status === 'retired') {
-          db.exec(
-            "UPDATE sighting_codes SET status='retired',retired_game=?,retired_utc=?,retired_reason=? WHERE id=?",
-            latest.retired_game,
-            latest.retired_utc,
-            latest.retired_reason,
-            latest.id,
-          );
-          db.exec('UPDATE flights SET code_id=NULL WHERE code_id=?', latest.id);
-        }
-      } else {
-        insertRow(engine, 'sighting_codes', {
-          ...rawCode,
-          status: 'retired',
-          retired_utc: latest.retired_utc ?? engine.now(),
-          retired_game: latest.retired_game ?? engine.game(),
-          retired_reason: 'recovery_preserved',
-        });
-      }
-    }
-    for (const row of data.latest.request_journal ?? []) {
-      if (
-        !db.one<Record<string, SqlStorageValue>>(
-          'SELECT actor FROM request_journal WHERE actor=? AND request_id=?',
-          row.actor!,
-          row.request_id!,
-        )
-      ) {
-        insertRow(engine, 'request_journal', {
-          ...row,
-          result_json: JSON.stringify({
-            requestId: row.request_id,
-            status: 'complete',
-            code: 'CANCELLED_BY_RECOVERY',
-            title: '比赛已恢复',
-            message: '该操作已随比赛恢复结束，请查看当前状态。',
-          }),
-          cancelled: 1,
-        });
-      }
-    }
-    for (const row of data.latest.intel_grants ?? []) {
-      if (
-        !db.one<Record<string, SqlStorageValue>>(
-          'SELECT id FROM intel_grants WHERE id=? OR (owner=? AND target=? AND source=?)',
-          row.id!,
-          row.owner!,
-          row.target!,
-          row.source!,
-        )
-      ) {
-        insertRow(engine, 'intel_grants', row);
-      }
-    }
-    for (const row of data.latest.event_log ?? []) {
-      if (
-        !db.one<Record<string, SqlStorageValue>>(
-          'SELECT id FROM event_log WHERE id=?',
-          row.id!,
-        )
-      ) {
-        const {seq, ...rest} = row;
-        void seq;
-        insertRow(engine, 'event_log', {
-          ...rest,
-          audience: 'global',
-          body: `${scalarText(row.body)}（恢复前记录）`,
-        });
-      }
-    }
-    for (const row of data.latest.notice_queue ?? []) {
-      const current = db.one<Record<string, SqlStorageValue>>(
-        'SELECT id FROM notice_queue WHERE id=?',
-        row.id!,
-      );
-      if (current) {
-        db.exec(
-          'UPDATE notice_queue SET status=?,version=MAX(version,?)+1,operator=?,error=?,copied_by=?,copied_utc=?,sent_by=?,sent_utc=? WHERE id=?',
-          row.status!,
-          row.version!,
-          row.operator!,
-          row.error!,
-          row.copied_by ?? null,
-          row.copied_utc ?? null,
-          row.sent_by ?? null,
-          row.sent_utc ?? null,
-          row.id!,
-        );
-      } else {
-        const copy = {...row};
-        delete copy.ordering_seq;
-        copy.ordering_seq = db.one<{value: number}>(
-          'SELECT COALESCE(MAX(ordering_seq),0)+1 AS value FROM notice_queue',
-        )!.value;
-        copy.status = row.status === 'sent' ? 'sent' : 'error';
-        copy.error = '请核对比赛恢复后的通知内容。';
-        insertRow(engine, 'notice_queue', copy);
-      }
-    }
-    for (const row of data.latest.notice_actions ?? []) {
-      if (
-        !db.one<Record<string, SqlStorageValue>>(
-          'SELECT id FROM notice_actions WHERE id=?',
-          row.id!,
-        )
-      ) {
-        insertRow(engine, 'notice_actions', row);
-      }
-    }
-    for (const row of data.latest.judge_eliminations ?? []) {
-      if (
-        !db.one<Record<string, SqlStorageValue>>(
-          'SELECT source FROM judge_eliminations WHERE source=? AND player_id=?',
-          row.source!,
-          row.player_id!,
-        )
-      ) {
-        insertRow(engine, 'judge_eliminations', row);
-      }
-    }
-    for (const row of data.latest.audit_logs ?? []) {
-      if (
-        !db.one<Record<string, SqlStorageValue>>(
-          'SELECT id FROM audit_logs WHERE id=?',
-          row.id!,
-        )
-      ) {
-        const {seq, ...rest} = row;
-        void seq;
-        insertRow(engine, 'audit_logs', rest);
-      }
-    }
-    // Carry the latest authorization and progress, preserving original due times and late policy.
-    for (const row of data.latest.judge_command_log ?? []) {
-      if (
-        !db.one<Record<string, SqlStorageValue>>(
-          'SELECT id FROM judge_command_log WHERE id=?',
-          row.id!,
-        )
-      ) {
-        const {seq, ...rest} = row;
-        void seq;
-        insertRow(engine, 'judge_command_log', rest);
-      }
-    }
-    for (const row of data.latest.command_objects ?? []) {
-      db.exec('DELETE FROM command_objects WHERE id=?', row.id!);
-      insertRow(engine, 'command_objects', row);
-    }
-    db.exec(
-      "UPDATE command_objects SET status='cancelled' WHERE kind='plan' AND status='pending'",
-    );
-    db.exec(
-      "DELETE FROM scheduled_events WHERE kind IN ('judge_command_task','judge_command_job')",
-    );
-    for (const row of data.latest.scheduled_events ?? []) {
-      if (
-        ['judge_command_task', 'judge_command_job'].includes(
-          scalarText(row.kind),
-        )
-      ) {
-        insertRow(engine, 'scheduled_events', row);
-      }
-    }
-    db.exec('UPDATE sessions SET revoked=1');
-    if (data.latest.match_identity?.length) {
-      for (const table of [
-        'memberships',
-        'staff_assignments',
-        'authorization_fences',
-        'participation_history',
-      ] as const) {
-        db.exec(`DELETE FROM ${table}`);
-        for (const row of data.latest[table] ?? []) {
-          insertRow(engine, table, row);
-        }
-      }
-      db.exec(
-        'UPDATE memberships SET epoch=(SELECT version FROM accounts WHERE id=memberships.local_id) WHERE local_id IS NOT NULL',
-      );
-      db.exec(
-        'UPDATE match_identity SET recovery_generation=MAX(recovery_generation,?)+1,erasure_generation=MAX(erasure_generation,?)',
-        Number(data.latest.match_identity[0]!.recovery_generation ?? 0),
-        Number(data.latest.match_identity[0]!.erasure_generation ?? 0),
-      );
-    }
+    mergeRecoveryAccounts(engine, data.latest);
+    mergeRecoveryCodes(engine, data.latest);
+    mergeRecoveryFacts(engine, data.latest);
+    mergeRecoveryNotices(engine, data.latest);
+    mergeRecoveryAudits(engine, data.latest);
+    mergeRecoveryCommands(engine, data.latest);
+    mergeRecoveryAuthorization(engine, data.latest);
     db.exec('DELETE FROM previews');
     db.exec(
       'UPDATE matches SET recovery_state=?,revision=MAX(revision,?)+1',

@@ -26,6 +26,7 @@ import {rearm} from '../../apps/match-worker/src/scheduler/events';
 import {migrate} from '../../apps/match-worker/src/storage/schema';
 import {SCHEMA_VERSION} from '../../apps/match-worker/src/storage/schema';
 import {
+  capture,
   createCheckpoint,
   openCheckpoint,
   openCarry,
@@ -590,6 +591,30 @@ it('paginates all notice and audit records without duplicates under concurrent i
       .status,
   ).toBe(403);
 });
+it('rolls back every recovery merge when preserved code evidence conflicts with the checkpoint', async () => {
+  await runInDurableObject(stub(), async (_instance, state) => {
+    const engine = new Engine(new Store(state.storage), bindings);
+    await engine.keys();
+    engine.issue('C01', 'before-conflict', await engine.prepareCode());
+    const checkpoint = await createCheckpoint(engine);
+    const target = await openCheckpoint(engine, checkpoint);
+    engine.db.exec(
+      "UPDATE accounts SET credential_hash='changed-before-recovery',enabled=0,version=version+1 WHERE id='C01'",
+    );
+    engine.db.exec("UPDATE sighting_codes SET ciphertext='conflicting-code'");
+    const carry = await prepareRecovery(engine, {
+      target: checkpoint,
+      reason: '验证保全冲突时整个合并事务回滚',
+    });
+    restoreCheckpointTables(engine, target.tables);
+    const before = capture(engine);
+    await expect(completeRecovery(engine, carry)).rejects.toThrow(
+      '历史手环配置存在冲突',
+    );
+    expect(capture(engine)).toEqual(before);
+  });
+});
+
 it('restores checkpoint data, preserves every issued code, invalidates late requests and sessions, and reauthenticates evidence', async () => {
   await runInDurableObject(stub(), async (_i, state) => {
     const e = new Engine(new Store(state.storage), bindings);
