@@ -15,6 +15,32 @@ import {
 } from '../../packages/contracts/src/backend';
 
 describe('backend contracts and rules', () => {
+  it('rejects malformed mask pairs instead of silently coercing them to colors', () => {
+    for (const key of [
+      '',
+      '1',
+      '1:2:4',
+      ':2',
+      '1:',
+      'NaN:2',
+      'Infinity:2',
+      '-1:2',
+      '1.5:2',
+      '128:2',
+      '9007199254740992:2',
+      `${'9'.repeat(400)}:2`,
+      '1:0x02',
+      '1:2x',
+    ]) {
+      expect(() => decodeArms(key), key).toThrow();
+    }
+    // Enumeration also decodes masks outside legal wearable group sizes.
+    expect(decodeArms('0:127')).toEqual([
+      [],
+      ['BK', 'WH', 'GY', 'YL', 'OR', 'SB', 'PU'],
+    ]);
+  });
+
   it('enumerates exactly 350 disjoint codes with the required distribution', () => {
     const codes = enumerateCodes();
     expect(new Set(codes).size).toBe(350);

@@ -1,4 +1,9 @@
-import {COLORS, validArms, type Arms} from '@darkforest/contracts';
+import {
+  COLORS,
+  validArms,
+  type Arms,
+  type ColorId,
+} from '@darkforest/contracts';
 import {ContractError} from '../../../../packages/contracts/src/backend';
 
 /** 有效比赛时钟上的阶段边界；暂停期间这些时间点不向前推进。 */
@@ -29,13 +34,25 @@ export function normalizeArms(leftArm: unknown, rightArm: unknown): string {
     .sort((x, y) => x - y);
   return masks.join(':');
 }
-/** 将服务器规范码还原为七色分组，保留两臂交换等价的表示。 */
+/** Decode one decimal seven-bit mask without silently truncating invalid numbers. */
+function decodeArmMask(value: string): ColorId[] {
+  const mask = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(mask) || mask > 127) {
+    throw new Error('INVALID_CODE_MASK');
+  }
+  return COLORS.filter((_, index) => mask & (1 << index)).map(
+    color => color.id,
+  );
+}
+
+/** 将双掩码还原为七色分组；拒绝坏编码，合法佩戴数量仍由validArms检查。 */
 export function decodeArms(key: string): Arms {
-  return key
-    .split(':')
-    .map(n =>
-      COLORS.filter((_, i) => Number(n) & (1 << i)).map(c => c.id),
-    ) as Arms;
+  const parts = key.split(':');
+  if (parts.length !== 2) {
+    throw new Error('INVALID_CODE_KEY');
+  }
+  // The checked pair has both positions; construction retains the tuple shape.
+  return [decodeArmMask(parts[0]!), decodeArmMask(parts[1]!)];
 }
 /** 枚举本场可发行的完整合法码本，发行历史仍由持久化存储保证不复用。 */
 export function enumerateCodes(): string[] {
