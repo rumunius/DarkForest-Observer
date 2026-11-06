@@ -632,33 +632,7 @@ export class Engine {
                     `command|${this.matchId}|${actor.id}|${id}`,
                   )
                 : null;
-            let rejectedPath = 'unparsed';
-            try {
-              rejectedPath =
-                commandSpec(parseCommandTree(String(body.command)))?.path ??
-                rejectedPath;
-            } catch {
-              // Syntax rejection remains unparsed.
-            }
-            recordCommand(
-              this,
-              actor,
-              id,
-              rejectedPath,
-              'rejected',
-              {
-                code: error instanceof Fault ? error.code : 'BAD_REQUEST',
-                reason:
-                  typeof body.reason === 'string'
-                    ? body.reason
-                    : '裁判指令被拒绝',
-                reference:
-                  typeof body.preview_token === 'string'
-                    ? body.preview_token
-                    : null,
-              },
-              cipher,
-            );
+            this.recordRejectedCommand(actor, id, body, cipher, error);
           }
         } catch {
           // Preserve the original authentication or command error.
@@ -673,33 +647,7 @@ export class Engine {
         try {
           const actor = this.actor(await digest(input.token));
           if (actor.role === 'judge') {
-            const body =
-              input.body && typeof input.body === 'object'
-                ? (input.body as Record<string, unknown>)
-                : {};
-            this.audit(
-              actor.id,
-              input.path,
-              typeof body.target === 'string'
-                ? body.target.slice(0, 180)
-                : this.matchId,
-              typeof body.reason === 'string'
-                ? body.reason.slice(0, 500)
-                : '管理操作失败',
-              {
-                requestId:
-                  typeof body.request_id === 'string'
-                    ? body.request_id.slice(0, 100)
-                    : null,
-                status: 'failed',
-                error:
-                  error instanceof Fault
-                    ? error.code
-                    : error instanceof ContractError
-                      ? 'BAD_REQUEST'
-                      : 'SERVICE_UNAVAILABLE',
-              },
-            );
+            this.recordRejectedManagement(actor, input, error);
           }
         } catch {
           // A failed authentication must not expose or overwrite the original error.
@@ -737,6 +685,74 @@ export class Engine {
         },
       };
     }
+  }
+
+  /** Records a command rejection; the caller keeps audit failures from replacing the original error. */
+  private recordRejectedCommand(
+    actor: Actor,
+    id: string,
+    body: Record<string, unknown>,
+    cipher: string | null,
+    error: unknown,
+  ): void {
+    let rejectedPath = 'unparsed';
+    try {
+      rejectedPath =
+        commandSpec(parseCommandTree(String(body.command)))?.path ??
+        rejectedPath;
+    } catch {
+      // Syntax rejection remains unparsed.
+    }
+    recordCommand(
+      this,
+      actor,
+      id,
+      rejectedPath,
+      'rejected',
+      {
+        code: error instanceof Fault ? error.code : 'BAD_REQUEST',
+        reason:
+          typeof body.reason === 'string' ? body.reason : '裁判指令被拒绝',
+        reference:
+          typeof body.preview_token === 'string' ? body.preview_token : null,
+      },
+      cipher,
+    );
+  }
+
+  /** Projects only allowed failure fields after the caller has authenticated the judge. */
+  private recordRejectedManagement(
+    actor: Actor,
+    input: RpcInput,
+    error: unknown,
+  ): void {
+    const body =
+      input.body && typeof input.body === 'object'
+        ? (input.body as Record<string, unknown>)
+        : {};
+    this.audit(
+      actor.id,
+      input.path,
+      typeof body.target === 'string'
+        ? body.target.slice(0, 180)
+        : this.matchId,
+      typeof body.reason === 'string'
+        ? body.reason.slice(0, 500)
+        : '管理操作失败',
+      {
+        requestId:
+          typeof body.request_id === 'string'
+            ? body.request_id.slice(0, 100)
+            : null,
+        status: 'failed',
+        error:
+          error instanceof Fault
+            ? error.code
+            : error instanceof ContractError
+              ? 'BAD_REQUEST'
+              : 'SERVICE_UNAVAILABLE',
+      },
+    );
   }
 
   /** 先结算到期事件；持续故障时只允许明确列出的查询和救援操作。 */
