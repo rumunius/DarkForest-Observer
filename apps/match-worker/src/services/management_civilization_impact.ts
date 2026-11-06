@@ -12,6 +12,7 @@ import {
   restorationImpact,
   type ManagementImpactContext,
 } from './management_impact_context';
+
 /** 预览文明昵称、资源或恢复资格的更正。 */
 export function correctionImpact(context: ManagementImpactContext): void {
   const {db, target, body} = context;

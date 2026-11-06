@@ -3,6 +3,7 @@ import process from 'node:process';
 import console from 'node:console';
 import {mkdir, readFile, writeFile, access} from 'node:fs/promises';
 import {resolve} from 'node:path';
+
 const root = resolve(import.meta.dirname, '..');
 const flags = process.argv.slice(2);
 const countIndex = flags.indexOf('--players');

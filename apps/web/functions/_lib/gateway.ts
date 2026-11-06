@@ -5,6 +5,7 @@ import {
 import type {DarkForestMatch} from '../../../match-worker/src/index';
 import type {RpcInput} from '../../../match-worker/src/rpc/types';
 import type {DarkForestPlatform} from '../../../match-worker/src/platform/platform';
+
 /** Pages网关可用的内部绑定和环境，不向前端打包其秘密。 */
 export interface GatewayEnv {
   APP_ENV: string;

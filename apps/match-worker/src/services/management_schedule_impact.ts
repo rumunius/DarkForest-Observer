@@ -7,6 +7,7 @@ import {
   eliminationImpact,
   type ManagementImpactContext,
 } from './management_impact_context';
+
 /** 预览原事件取消或补结算，保留原定时刻。 */
 export function eventControlImpact(context: ManagementImpactContext): void {
   const {db, body, consequences} = context;

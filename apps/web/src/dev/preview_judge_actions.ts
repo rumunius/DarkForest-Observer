@@ -7,6 +7,7 @@ import type {
 } from './preview_action_context';
 import {buildArms} from './preview_fixtures';
 import {previewEliminations, previewSite} from './preview_input';
+
 /** Simulate judge forms after role checks; previews return before mutation and audit. */
 export function applyPreviewJudgeAction(
   context: PreviewActionContext,

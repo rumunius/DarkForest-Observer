@@ -1,5 +1,6 @@
 import type {DarkForestMatch} from '../index';
 import type {DarkForestPlatform} from '../platform/platform';
+
 /** Worker绑定、环境和秘密的服务端类型；不能传递到前端公共契约。 */
 export interface BackendEnv {
   CF_VERSION_METADATA?: WorkerVersionMetadata;

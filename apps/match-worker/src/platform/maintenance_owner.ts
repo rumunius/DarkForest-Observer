@@ -3,6 +3,7 @@ import {decrypt, digest, encrypt, token} from '../security/crypto';
 import {requireThat} from '../storage/store';
 import type {MaintenanceContext} from './maintenance_context';
 import {platformKey} from './security';
+
 /** Recover owner access under the independent maintenance secret and retain the original rescue receipt. */
 export async function rescuePlatformOwner(
   context: MaintenanceContext,

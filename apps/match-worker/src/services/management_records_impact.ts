@@ -5,6 +5,7 @@ import {
   addChange,
   type ManagementImpactContext,
 } from './management_impact_context';
+
 /** 预览账号版本、权限及会话撤销，不暴露凭据。 */
 export function accountImpact(context: ManagementImpactContext): void {
   const {engine, db, target, body, consequences} = context;

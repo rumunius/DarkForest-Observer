@@ -11,6 +11,7 @@ import {
 } from './command_context';
 import {dispatchCommandAction} from './command_dispatch';
 import {logEvent} from './life';
+
 /** 按原归属和状态取消后续任务，保留已提交步骤及完成结果。 */
 export function cancelCommandTask(
   commandContext: CommandContext,

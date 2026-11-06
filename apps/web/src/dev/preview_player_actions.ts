@@ -10,6 +10,7 @@ import type {
   PreviewFeedback,
 } from './preview_action_context';
 import {applyPreviewSighting} from './preview_sighting';
+
 /** Simulate the player's next permitted step; the source owns revision and receipt storage. */
 export function applyPreviewPlayerAction(
   context: PreviewActionContext,

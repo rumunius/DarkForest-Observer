@@ -10,6 +10,7 @@ import type {MaintenanceContext} from './maintenance_context';
 import {erasureFloor} from './retention';
 import {controlSignature} from './security';
 import type {Directory} from './types';
+
 /** Persist the locally read-back carry digest before permitting recovery launch. */
 export async function recordCarryReceipt(
   context: MaintenanceContext,

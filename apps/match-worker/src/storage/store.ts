@@ -5,6 +5,7 @@ import {
 } from '../../../../packages/contracts/src/backend';
 import type {DomainPhase} from '../../../../packages/contracts/src/backend';
 import type {SiteConfig} from '@darkforest/contracts';
+
 /** 本场权威比赛行；UTC节点、暂停累计和有效时间字段不能混用。 */
 export interface Match {
   recovery_state: string;

@@ -5,6 +5,7 @@ import {
   nextRecoveryAction,
   assertReleaseSafe,
 } from '../../scripts/admin_protocol.mjs';
+
 describe('中文运维向导的恢复协议', () => {
   it('摘要不受JSON属性顺序影响，内容变化可检测', () => {
     expect(checksum({b: 2, a: 1})).toBe(checksum({a: 1, b: 2}));

@@ -1,6 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import console from 'node:console';
+
 const {fetch} = globalThis;
 const directory = resolve(import.meta.dirname, '../.private/preview-rehearsal');
 const {BOOTSTRAP_SECRET} = JSON.parse(

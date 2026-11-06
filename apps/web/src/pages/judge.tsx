@@ -18,6 +18,7 @@ import {JudgeAccount, Settings} from './judge/settings';
 import {Commands, SystemStatus} from './judge/system';
 import {CivilizationList, EventExplorer} from './observe';
 import {ScheduledEvents} from './scheduled_events';
+
 export {ManagementForm} from './judge/management_form';
 
 /** 按本场路径与职责分派裁判页面，不因直接访问地址绕过页面门禁。 */

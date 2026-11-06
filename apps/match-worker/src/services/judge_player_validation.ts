@@ -8,6 +8,7 @@ import {survivors} from './life';
 import {restoration} from './player_correction';
 
 import type {JudgeValidationContext} from './judge_validation_context';
+
 /** 只允许在正式比赛中淘汰当前存活文明。 */
 export function validatePlayerElimination(
   context: JudgeValidationContext,

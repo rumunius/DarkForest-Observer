@@ -9,6 +9,7 @@ import type {Scheduled} from '../storage/store';
 import {requireThat} from '../storage/store';
 
 import type {JudgeValidationContext} from './judge_validation_context';
+
 /** 核对公告受众及消息正文长度。 */
 export function validateAnnouncement(context: JudgeValidationContext): void {
   const {db, body} = context;

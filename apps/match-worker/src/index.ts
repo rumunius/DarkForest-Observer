@@ -14,10 +14,11 @@ import {matchControl, type ControlRequest} from './platform/match_control';
 import {controlSignature} from './platform/security';
 import {Fault, requireThat} from './storage/store';
 import {stableJson} from '../../../packages/contracts/src/backend';
-export {DarkForestPlatform} from './platform/platform';
 import {configureRestore, recoveryRpc} from './services/recovery';
 import {prepareCommandCredentials} from './services/commands';
 import {createCheckpoint} from './services/recovery';
+
+export {DarkForestPlatform} from './platform/platform';
 
 /** 单场唯一的权威Durable Object；持有SQLite状态并串行结算入口与Alarm。 */
 export class DarkForestMatch extends DurableObject<BackendEnv> {

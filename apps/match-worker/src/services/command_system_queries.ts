@@ -10,6 +10,7 @@ import type {
   CommandQueryContext,
   CommandQueryHandler,
 } from './command_query_context';
+
 /** 读取服务端比赛与时钟投影。 */
 function queryMatchStatus(context: CommandQueryContext): unknown {
   const {engine} = context;

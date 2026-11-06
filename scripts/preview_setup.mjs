@@ -3,6 +3,7 @@ import {mkdir, writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import process from 'node:process';
 import console from 'node:console';
+
 const root = resolve(import.meta.dirname, '..');
 const directory = resolve(root, '.private/preview-rehearsal');
 const count = Number(process.argv[2] ?? 24);

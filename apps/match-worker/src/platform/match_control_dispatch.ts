@@ -15,6 +15,7 @@ import {
   inviteMatchMember,
   removeMatchMember,
 } from './match_members';
+
 /** 在原事务中复核本场生命周期后分派控制动作，保留初始化与普通变更的版本差异。 */
 export function dispatchMatchControl(context: MatchControlContext): unknown {
   const {request, db} = context;

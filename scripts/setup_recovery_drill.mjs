@@ -2,6 +2,7 @@ import {mkdir, writeFile, access} from 'node:fs/promises';
 import {randomBytes, createHash} from 'node:crypto';
 import {resolve} from 'node:path';
 import console from 'node:console';
+
 const root = resolve(import.meta.dirname, '..');
 const directory = resolve(root, '.private/recovery-drill');
 const site = resolve(directory, 'site');

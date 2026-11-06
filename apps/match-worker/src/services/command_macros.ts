@@ -25,6 +25,7 @@ import {
   validateCommandArguments,
   validateCommandOptions,
 } from './command_context';
+
 /** 宏定义持久正文，由defineMacro校验参数类型、正文及不可递归引用后保存。 */
 export interface MacroData {
   name: string;

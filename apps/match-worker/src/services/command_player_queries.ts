@@ -9,6 +9,7 @@ import type {
   CommandQueryContext,
   CommandQueryHandler,
 } from './command_query_context';
+
 /** 按正式名单顺序返回文明编号与昵称。 */
 function queryRoster(context: CommandQueryContext): unknown {
   const {engine} = context;

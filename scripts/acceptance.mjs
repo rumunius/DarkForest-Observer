@@ -4,6 +4,7 @@ import process from 'node:process';
 import console from 'node:console';
 import {randomUUID} from 'node:crypto';
 import {setTimeout} from 'node:timers/promises';
+
 const {fetch, performance} = globalThis;
 const preview = process.argv.includes('--preview');
 const drill = process.argv.includes('--drill');

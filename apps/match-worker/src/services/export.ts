@@ -5,6 +5,7 @@ import {events} from '../projections/snapshot';
 import {results} from './life';
 import {SCHEMA_VERSION} from '../storage/schema';
 import {createCheckpoint} from './recovery';
+
 /** 检查点允许捕获的固定表清单；恢复不得从输入扩展到任意表。 */
 export const BACKUP_TABLES = [
   'schema_meta',

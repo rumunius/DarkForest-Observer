@@ -27,6 +27,7 @@ import {autoFinish, eliminate} from './life';
 import {restorePlayer} from './player_correction';
 import {finishRecovery} from './recovery';
 import {correctReport} from './report_correction';
+
 /** 在共同预览和权限检查后执行管理变更；版本、审计仍由入口统一收尾。 */
 export function dispatchJudgeAction(
   context: JudgeMutationContext,

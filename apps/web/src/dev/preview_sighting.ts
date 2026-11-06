@@ -5,6 +5,7 @@ import type {
   PreviewFeedback,
 } from './preview_action_context';
 import {validPreviewArms} from './preview_input';
+
 /** Apply the explicitly selected preview outcome; this does not implement server random selection. */
 export function applyPreviewSighting(
   context: PreviewActionContext,

@@ -1,6 +1,7 @@
 import type {Actor, Match, Store} from '../storage/store';
 import type {CredentialMaterial} from './accounts';
 import type {Engine, PreparedCode} from './engine';
+
 /** 裁判入口一次捕获的请求、时间及比赛快照；处理器沿用调用方权威事务。 */
 export interface JudgeActionContext {
   readonly engine: Engine;

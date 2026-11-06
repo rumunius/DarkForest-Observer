@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {URL} from 'node:url';
+
 /** 规范化运维材料JSON，供回读校验和请求摘要复用。 */
 export function stable(value) {
   if (Array.isArray(value)) {

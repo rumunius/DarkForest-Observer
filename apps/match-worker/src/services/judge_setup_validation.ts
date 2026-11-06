@@ -7,6 +7,7 @@ import {
 import {requireThat} from '../storage/store';
 
 import type {JudgeValidationContext} from './judge_validation_context';
+
 /** 核对统一发码或开赛的阶段、UTC范围和逐人就绪状态。 */
 export function validateArming(
   context: JudgeValidationContext,

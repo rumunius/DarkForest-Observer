@@ -6,6 +6,7 @@ import type {AuditEntry, JudgeState, Notice} from '@darkforest/contracts';
 import type {Engine} from '../services/engine';
 import {integer} from '../../../../packages/contracts/src/backend';
 import {permission, type Actor} from '../storage/store';
+
 /** 裁判分页接口支持的历史集合，各集合有独立权限和游标。 */
 export type JudgeCollection = 'notices' | 'audits' | 'attacks';
 /** 裁判分页响应的公开记录类型，不含存储密钥或会话字段。 */

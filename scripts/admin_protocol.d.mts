@@ -1,4 +1,5 @@
 import type {URL} from 'node:url';
+
 /** 规范化JSON对象键顺序，供请求摘要和材料回读使用。 */
 export function stable(value: unknown): string;
 /** 为运维材料生成校验摘要，不代替远端消息认证。 */

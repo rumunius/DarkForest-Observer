@@ -1,5 +1,6 @@
 import {useEffect, useState, type Dispatch, type SetStateAction} from 'react';
 import {restorePosition} from './state_navigation';
+
 /** Schedule the next visible, online read only after the current poll finishes. */
 export function useSnapshotPolling(
   route: string,

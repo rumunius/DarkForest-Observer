@@ -5,6 +5,7 @@ import {requireThat} from '../storage/store';
 import type {DarkForestPlatform} from './platform';
 import {verifySecondFactor} from './session_requests';
 import type {Account} from './types';
+
 /** 仅分派无需既有会话的长期口令交换和邀请领取，其他路径交回会话入口。 */
 export function publicAuthentication(
   host: DarkForestPlatform,

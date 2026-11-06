@@ -1,4 +1,5 @@
 import type {JudgeState, Notice, AuditEntry} from '@darkforest/contracts';
+
 /** 裁判历史分页集合键，权限分别对应通知、审计与攻击。 */
 export type Collection = 'notices' | 'audits' | 'attacks';
 /** 按稳定记录身份合并裁判历史页，保留已加载记录且不制造重复。 */

@@ -108,3 +108,58 @@ export const namedFunctions = {
     };
   },
 };
+
+/** Keep imports before implementation, separated from its leading documentation. */
+export const moduleLayout = {
+  meta: {
+    type: 'layout',
+    fixable: 'whitespace',
+    schema: [],
+    messages: {
+      late: 'Keep module imports before the file implementation.',
+      separator: 'Separate imports and implementation with one blank line.',
+    },
+  },
+  create(context) {
+    return {
+      Program(node) {
+        let firstImplementation;
+        let lastImport;
+        let lateImport = false;
+        for (const statement of node.body) {
+          if (statement.type === 'ImportDeclaration') {
+            lastImport = statement;
+            if (firstImplementation) {
+              lateImport = true;
+              context.report({node: statement, messageId: 'late'});
+            }
+          } else {
+            firstImplementation ??= statement;
+          }
+        }
+        if (!lastImport || !firstImplementation || lateImport) {
+          return;
+        }
+        const comments = context.sourceCode
+          .getCommentsBefore(firstImplementation)
+          .filter(comment => comment.range[0] >= lastImport.range[1]);
+        const trailing = comments.filter(
+          comment => comment.loc.start.line === lastImport.loc.end.line,
+        );
+        const start = trailing.at(-1)?.range[1] ?? lastImport.range[1];
+        const leading = comments.find(
+          comment => comment.loc.start.line > lastImport.loc.end.line,
+        );
+        const end = leading?.range[0] ?? firstImplementation.range[0];
+        const gap = context.sourceCode.text.slice(start, end);
+        if (/^\s*$/.test(gap) && gap !== '\n\n') {
+          context.report({
+            node: firstImplementation,
+            messageId: 'separator',
+            fix: fixer => fixer.replaceTextRange([start, end], '\n\n'),
+          });
+        }
+      },
+    };
+  },
+};

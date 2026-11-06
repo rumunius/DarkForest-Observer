@@ -14,6 +14,7 @@ import {requireThat, type Actor, type CodeRow} from '../storage/store';
 import {SCHEMA_VERSION} from '../storage/schema';
 import type {Engine} from './engine';
 import {BACKUP_TABLES} from './export';
+
 type Row = Record<string, SqlStorageValue>;
 /** 检查点中的表到SQL行集合；表名仅允许恢复白名单中的固定表。 */
 export type Tables = Record<string, Row[]>;

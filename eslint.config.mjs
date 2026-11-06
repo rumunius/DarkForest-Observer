@@ -6,6 +6,7 @@ import {
   documentedExports,
   spacedClassMethods,
   namedFunctions,
+  moduleLayout,
 } from './scripts/eslint_rules.mjs';
 
 const restrictedTypeScriptSyntax = [
@@ -48,16 +49,19 @@ export default tseslint.config(
   },
   js.configs.recommended,
   {
-    files: ['apps/**/*.{ts,tsx}', 'packages/**/*.ts', 'scripts/*.{mjs,mts}'],
     plugins: {
       project: {
         rules: {
           'documented-exports': documentedExports,
           'spaced-class-methods': spacedClassMethods,
           'named-functions': namedFunctions,
+          'module-layout': moduleLayout,
         },
       },
     },
+  },
+  {
+    files: ['apps/**/*.{ts,tsx}', 'packages/**/*.ts', 'scripts/*.{mjs,mts}'],
     rules: {
       'project/documented-exports': 'error',
       'project/spaced-class-methods': 'error',
@@ -67,6 +71,7 @@ export default tseslint.config(
   {
     linterOptions: {reportUnusedDisableDirectives: 'error'},
     rules: {
+      'project/module-layout': 'error',
       curly: ['error', 'all'],
       'one-var': ['error', 'never'],
       'no-var': 'error',

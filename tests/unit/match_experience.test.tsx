@@ -10,6 +10,7 @@ import {App} from '../../apps/web/src/app';
 import {AppProvider} from '../../apps/web/src/state';
 import {ManagementForm} from '../../apps/web/src/pages/judge';
 import {MockSource} from '../../apps/web/src/dev/mock_source';
+
 let root: Root | undefined;
 const session: PlatformSession = {
   account: {

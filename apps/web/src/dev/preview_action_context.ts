@@ -1,4 +1,5 @@
 import type {Operation, Snapshot} from '@darkforest/contracts';
+
 /** Saved preview form and simulated revision; this never grants server authorization. */
 export interface SavedPreview {
   revision: number;

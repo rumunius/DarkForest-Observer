@@ -7,6 +7,7 @@ import {
   type RefObject,
   type SetStateAction,
 } from 'react';
+
 const positions = new Map<string, number>();
 /** Fragment destinations take precedence over remembered page scroll positions. */
 export function restorePosition() {

@@ -10,6 +10,7 @@ import type {
   CommandQueryContext,
   CommandQueryHandler,
 } from './command_query_context';
+
 /** 按当前职责生成可用命令帮助，不泄露未授权命令内容。 */
 function queryHelp(context: CommandQueryContext): unknown {
   const {commandContext, commandArguments} = context;

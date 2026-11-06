@@ -2,6 +2,7 @@ import type {Snapshot} from '@darkforest/contracts';
 import {useCallback, useEffect, useState} from 'react';
 import {personalMessage} from './data/messages';
 import {readMessageIds} from './state_storage';
+
 /** Scope read preferences to this browser, match and account; count only the recipient's personal messages. */
 export function useMessageReadState(data: Snapshot, base: string) {
   const [readIds, setReadIds] = useState<string[]>([]);

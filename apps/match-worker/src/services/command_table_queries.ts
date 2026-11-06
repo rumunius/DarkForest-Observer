@@ -3,6 +3,7 @@ import {selectTargets, singleTarget} from './command_context';
 
 import {page} from './command_pagination';
 import type {CommandQueryContext} from './command_query_context';
+
 /** 注册查询表及其权限、主键和投影字段；只由固定代码选择。 */
 export interface TableQueryConfiguration {
   table: string;

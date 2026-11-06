@@ -2,6 +2,7 @@ import {type CommandNode} from '../../../../packages/contracts/src/commands';
 import {condition} from './command_conditions';
 import type {CommandContext} from './command_context';
 import {requireCommandArgument, selectTargets} from './command_context';
+
 /** 递归执行同一命令树，沿用上层事务、共享工作预算与深度门禁。 */
 export type CommandRunner = (
   context: CommandContext,

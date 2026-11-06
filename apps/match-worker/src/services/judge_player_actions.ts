@@ -11,6 +11,7 @@ import type {JudgeMutationContext} from './judge_action_context';
 import {closePause} from './judge_clock';
 import {autoFinish, eliminate, retire} from './life';
 import {restorePlayer} from './player_correction';
+
 /** 完成整批截止淘汰并关闭暂停后，再进行一次提前完赛判定。 */
 export function finalizeHunt(context: JudgeMutationContext): void {
   const {raw, engine, matchState, db, now, source, game} = context;

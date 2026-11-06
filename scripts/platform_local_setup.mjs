@@ -2,6 +2,7 @@ import {readFile, writeFile, mkdir} from 'node:fs/promises';
 import {randomBytes} from 'node:crypto';
 import {resolve} from 'node:path';
 import console from 'node:console';
+
 const root = resolve(import.meta.dirname, '..');
 const path = resolve(root, 'apps/match-worker/.dev.vars');
 let vars = await readFile(path, 'utf8').catch(() => '');

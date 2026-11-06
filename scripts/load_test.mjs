@@ -3,6 +3,7 @@ import {resolve} from 'node:path';
 import {setTimeout} from 'node:timers/promises';
 import process from 'node:process';
 import console from 'node:console';
+
 const {fetch, performance} = globalThis;
 const args = process.argv.slice(2);
 function option(name, defaultValue) {

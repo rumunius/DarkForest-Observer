@@ -7,6 +7,58 @@ import {validSourceName} from '../../scripts/check_source_names.mjs';
 const root = resolve(import.meta.dirname, '../..');
 const eslint = new ESLint({cwd: root});
 
+test('module layout rejects late imports without reordering side effects automatically', async () => {
+  const [result] = await eslint.lintText(
+    "import console from 'node:console';\nconsole.log('ready');\nimport 'node:fs';\n",
+    {filePath: 'scripts/local_init.mjs'},
+  );
+  const reports = result.messages.filter(
+    message => message.ruleId === 'project/module-layout',
+  );
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].line, 3);
+  assert.equal(reports[0].messageId, 'late');
+  assert.equal(reports[0].fix, undefined);
+});
+
+test('module section separation preserves documentation, trailing comments and import groups', async () => {
+  const fixer = new ESLint({cwd: root, fix: true});
+  const source =
+    "import console from 'node:console';\n\nimport 'node:fs'; // required side effect\n/** Explains the implementation boundary. */\nconsole.log('ready');\n";
+  const [result] = await fixer.lintText(source, {
+    filePath: 'scripts/local_init.mjs',
+  });
+  assert.equal(
+    result.output,
+    source.replace(
+      '// required side effect\n/**',
+      '// required side effect\n\n/**',
+    ),
+  );
+  const [stable] = await fixer.lintText(result.output, {
+    filePath: 'scripts/local_init.mjs',
+  });
+  assert.equal(stable.output, undefined);
+  assert.equal(stable.messages.length, 0);
+  for (const text of ["import 'node:fs';\n", "console.log('ready');\n"]) {
+    const [singleSection] = await eslint.lintText(text, {
+      filePath: 'scripts/local_init.mjs',
+    });
+    assert.equal(
+      singleSection.messages.filter(
+        message => message.ruleId === 'project/module-layout',
+      ).length,
+      0,
+    );
+  }
+  const [typed] = await fixer.lintText(
+    "import type {Session} from '@darkforest/contracts';\n/** Reads the current account identifier for callers. */\nexport function identity(session: Session) {return session.id;}\n",
+    {filePath: 'apps/web/src/data/http.ts'},
+  );
+  assert.ok(typed.output.includes("from '@darkforest/contracts';\n\n/**"));
+  assert.equal(typed.messages.length, 0);
+});
+
 test('filenames allow documented entry points and reject new kebab/camel names', () => {
   for (const name of [
     'apps/web/src/rule_text.ts',

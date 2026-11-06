@@ -3,6 +3,7 @@ import type {RuleParameters} from '@darkforest/contracts';
 import {useApp} from '../state';
 import {Field} from '../ui';
 import {ManagementForm} from './judge';
+
 const controls: Array<{
   key: keyof RuleParameters;
   label: string;

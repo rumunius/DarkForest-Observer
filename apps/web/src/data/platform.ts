@@ -1,6 +1,7 @@
 import {object, parseJson} from '../../../../packages/contracts/src/backend';
 import type {PlatformSession} from '@darkforest/contracts';
 import {ApiError} from './http';
+
 /** 平台管理预览令牌及其原始请求草稿，确认时不能混用其他草稿。 */
 export type PlatformReview = {
   previewToken: string;

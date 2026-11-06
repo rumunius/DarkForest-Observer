@@ -1,6 +1,7 @@
 import type {Snapshot} from '@darkforest/contracts';
 import {DEFAULT_SITE} from './config';
 import {mergeRecords} from './judge_records';
+
 /** Public empty view used when no authorized match snapshot is available. */
 export const EMPTY_SNAPSHOT: Snapshot = {
   site: DEFAULT_SITE,

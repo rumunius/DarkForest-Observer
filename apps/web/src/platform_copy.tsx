@@ -1,5 +1,6 @@
 import {object, parseJson} from '../../../packages/contracts/src/backend';
 import type {ReactNode} from 'react';
+
 /** 权威比赛阶段的中文显示名称，未知阶段不能据此获得权限。 */
 export const PHASE_NAMES: Record<string, string> = {
   setup: '赛前准备',

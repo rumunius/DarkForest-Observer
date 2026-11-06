@@ -1,4 +1,5 @@
 import type {Action, Snapshot} from '@darkforest/contracts';
+
 /** 按快照控制页面动作可见性；正式提交仍由服务端重新授权。 */
 export function canAct(data: Snapshot, action: Action): boolean {
   const {player: me, match} = data;

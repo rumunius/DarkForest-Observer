@@ -3,6 +3,7 @@ import {coordinate, nickname} from '../../../../packages/contracts/src/backend';
 import {requireThat} from '../storage/store';
 import {completed} from './engine';
 import type {PlayerActionContext} from './player_action_context';
+
 /** 确认赛前昵称并保持同场唯一性，由入口统一保存审计和版本。 */
 export function setPlayerNickname(
   context: PlayerActionContext,

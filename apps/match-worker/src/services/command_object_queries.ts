@@ -10,6 +10,7 @@ import {
 
 import {page} from './command_pagination';
 import type {CommandQueryContext} from './command_query_context';
+
 /** 按对象种类和归属检查读取保存对象、模板预览或个案依赖图。 */
 export function queryObject(context: CommandQueryContext): unknown {
   const {commandContext, commandNode, engine, words, commandArguments, path} =

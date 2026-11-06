@@ -3,6 +3,7 @@ import {resolve} from 'node:path';
 import {URL} from 'node:url';
 import process from 'node:process';
 import console from 'node:console';
+
 const {fetch} = globalThis;
 const args = process.argv.slice(2);
 const operation = args[0];

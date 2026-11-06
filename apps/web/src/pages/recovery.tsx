@@ -3,6 +3,7 @@ import {useState} from 'react';
 import {useApp} from '../state';
 import {Button} from '../ui';
 import {ManagementForm} from './judge';
+
 /** 展示受限检查点和恢复核对流程，要求保存材料及证据后再继续。 */
 export function RecoveryTools() {
   const {reportError, data, source} = useApp();

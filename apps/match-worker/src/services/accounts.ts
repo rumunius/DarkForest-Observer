@@ -4,6 +4,7 @@ import {integer, text} from '../../../../packages/contracts/src/backend';
 import {permission, requireThat, type Actor} from '../storage/store';
 import type {Engine} from './engine';
 import {digest, encrypt, token} from '../security/crypto';
+
 /** 事务外预生成、事务内消费的凭据材料，原口令不进入普通审计。 */
 export interface CredentialMaterial {
   id: string;

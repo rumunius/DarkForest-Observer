@@ -42,6 +42,7 @@ import {
   validateWithdrawal,
 } from './judge_setup_validation';
 import type {JudgeValidationContext} from './judge_validation_context';
+
 const fields: Record<string, string[]> = {
   '/judge/recovery-finalize': [],
   '/judge/report-correction': ['target', 'field', 'value', 'expected_version'],

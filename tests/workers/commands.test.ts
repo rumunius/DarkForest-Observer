@@ -21,6 +21,7 @@ import {
   completeRecovery,
   finishRecovery,
 } from '../../apps/match-worker/src/services/recovery';
+
 const bindings = env as unknown as BackendEnv;
 const stub = () => bindings.MATCH_DO.getByName('match:integration');
 let sequence = 0;

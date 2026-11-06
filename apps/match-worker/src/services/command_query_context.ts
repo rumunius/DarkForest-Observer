@@ -1,6 +1,7 @@
 import type {CommandNode} from '../../../../packages/contracts/src/commands';
 import type {CommandContext} from './command_context';
 import type {Engine} from './engine';
+
 /** 共同授权及参数校验之后的一次只读命令；不另取目标或生成随机结果。 */
 export interface CommandQueryContext {
   readonly commandContext: CommandContext;

@@ -6,6 +6,7 @@ import {
 import {requireThat} from '../storage/store';
 import type {Engine} from './engine';
 import {archiveReport, results} from './life';
+
 /** 校验战报更正的目标、字段与版本，不允许通过更正重开比赛。 */
 export function validateReportCorrection(
   engine: Engine,

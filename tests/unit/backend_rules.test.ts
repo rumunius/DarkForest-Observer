@@ -13,6 +13,7 @@ import {
   coordinate,
   stableJson,
 } from '../../packages/contracts/src/backend';
+
 describe('backend contracts and rules', () => {
   it('enumerates exactly 350 disjoint codes with the required distribution', () => {
     const codes = enumerateCodes();

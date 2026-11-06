@@ -39,6 +39,7 @@ import {
   qqCopy,
   gameTimeCopy,
 } from '../../../../packages/contracts/src/message_copy';
+
 type Keys = Awaited<ReturnType<Engine['keys']>>;
 /** 生成赛事时钟和阶段的客户端投影；客户端不得以此代替写接口授权。 */
 export function matchProjection(engine: Engine): MatchState {

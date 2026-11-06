@@ -1,4 +1,5 @@
 import {Store} from '../storage/store';
+
 /** 初始化平台SQLite表和迁移，再返回其存储访问封装。 */
 export function platformStore(storage: DurableObjectStorage): Store {
   const db = new Store(storage);

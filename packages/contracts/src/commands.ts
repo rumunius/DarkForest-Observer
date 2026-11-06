@@ -1,4 +1,5 @@
 import {parseJson} from './backend';
+
 /** DF-Judge/1: shared, executable command catalogue and syntax. No browser rule engine. */
 export const LANGUAGE_VERSION = 'DF-Judge/1';
 /** 共享命令语法与执行预算，服务端仍必须限制组合深度和输出大小。 */

@@ -14,6 +14,7 @@ import {
 import {setPlayerNickname, submitHomeworld} from './player_registration';
 import {resolveSighting} from './player_sighting';
 import {firePhoton, publishBroadcast} from './player_weapons';
+
 /** 仅在格式与资格门禁之后分派玩家动作，审计和版本更新仍由入口统一完成。 */
 export function dispatchPlayerAction(
   action: string,

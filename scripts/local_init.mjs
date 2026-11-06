@@ -1,7 +1,8 @@
 import {readFile} from 'node:fs/promises';
 import console from 'node:console';
-const {fetch} = globalThis;
 import {resolve} from 'node:path';
+
+const {fetch} = globalThis;
 const root = resolve(import.meta.dirname, '..');
 const vars = await readFile(
   resolve(root, 'apps/match-worker/.dev.vars'),

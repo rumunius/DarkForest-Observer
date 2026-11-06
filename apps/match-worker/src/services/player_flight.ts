@@ -3,6 +3,7 @@ import {requireThat} from '../storage/store';
 import {completed} from './engine';
 import {autoFinish, eliminate, logEvent, retire} from './life';
 import type {PlayerActionContext} from './player_action_context';
+
 /** 记录本人离开母星的首航准备确认。 */
 export function confirmPreflightDeparture(
   context: PlayerActionContext,

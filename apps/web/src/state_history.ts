@@ -9,6 +9,7 @@ import {
 import {ApiError} from './data/http';
 import {mergeRecords, type Collection} from './judge_records';
 import {EMPTY_SNAPSHOT as empty} from './state_snapshot';
+
 interface HistoryContext {
   readonly source: DataSource;
   readonly snapshotRef: RefObject<Snapshot>;

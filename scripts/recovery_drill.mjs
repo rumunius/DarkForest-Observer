@@ -4,6 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {setTimeout} from 'node:timers/promises';
 import console from 'node:console';
 import process from 'node:process';
+
 const {fetch} = globalThis;
 const origin = 'https://recovery-drill.darkforest-pages-dev.pages.dev';
 const folder = '.private/recovery-drill';

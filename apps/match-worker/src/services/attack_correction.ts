@@ -3,6 +3,7 @@ import {text} from '../../../../packages/contracts/src/backend';
 import {requireThat, type CodeRow} from '../storage/store';
 import type {Engine, PreparedCode} from './engine';
 import {retire, logEvent} from './life';
+
 /** 攻击审计持久行，保留原判定、随机结果及纠错所需的前态证据。 */
 export interface AttackRow {
   id: string;

@@ -3,6 +3,7 @@ import {digest} from '../security/crypto';
 import {requireThat} from '../storage/store';
 import type {DarkForestPlatform} from './platform';
 import type {Directory} from './types';
+
 /** Inspect up to fifty current official matches before allowing a release. */
 export async function checkMaintenanceRelease(
   host: DarkForestPlatform,

@@ -1,4 +1,5 @@
 import type {RuleParameters} from '@darkforest/contracts';
+
 /** 未提供可配置项时的默认规则参数，单位在字段名中明确。 */
 export const DEFAULT_PARAMETERS: RuleParameters = {
   singerPercent: 5,

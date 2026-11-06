@@ -8,6 +8,7 @@ import {requireThat} from '../storage/store';
 import type {MaintenanceContext} from './maintenance_context';
 import {controlSignature} from './security';
 import type {Operation} from './types';
+
 /** Save the signed old-match inventory before any adoption or identity remapping. */
 export async function inspectLegacyMatch(
   context: MaintenanceContext,

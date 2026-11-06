@@ -10,6 +10,7 @@ import {requireThat} from '../storage/store';
 import {completed} from './engine';
 import {autoFinish, destroyHome, logEvent} from './life';
 import type {PlayerActionContext} from './player_action_context';
+
 /** 原子登记正式广播、扣额及秘密歌者计划，按原范围授予反向情报。 */
 export function publishBroadcast(
   context: PlayerActionContext,

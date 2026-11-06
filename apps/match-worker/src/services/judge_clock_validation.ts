@@ -3,6 +3,7 @@ import {requireThat} from '../storage/store';
 import {survivors} from './life';
 
 import type {JudgeValidationContext} from './judge_validation_context';
+
 /** 只有已正式开赛且未结束的运行比赛可以暂停。 */
 export function validatePause(context: JudgeValidationContext): void {
   const {matchState} = context;
