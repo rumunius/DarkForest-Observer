@@ -4,9 +4,11 @@ import {
   text,
 } from '../../../../packages/contracts/src/backend';
 import {
+  commandSpec,
   durationMs,
   type CommandNode,
 } from '../../../../packages/contracts/src/commands';
+import {permission} from '../storage/store';
 import type {CommandRunner} from './command_composition';
 import type {CommandContext} from './command_context';
 import {
@@ -21,13 +23,8 @@ import {
   unquoteArgument,
   updateCommandObject,
   validateCommandArguments,
+  validateCommandOptions,
 } from './command_context';
-/** 固定宏引用版本并核对展开权限，调用方显式传入当前调用栈。 */
-export type CommandPinner = (
-  context: CommandContext,
-  node: CommandNode,
-  stack?: string[],
-) => void;
 /** 宏定义持久正文，由defineMacro校验参数类型、正文及不可递归引用后保存。 */
 export interface MacroData {
   name: string;
@@ -39,7 +36,6 @@ export interface MacroData {
 export function defineMacro(
   commandContext: CommandContext,
   commandNode: CommandNode,
-  pinCommand: CommandPinner,
 ): unknown {
   requireHeadJudge(commandContext);
   requireCommandArgument(
@@ -73,7 +69,7 @@ export function defineMacro(
       !(node.words[0] === 'macro' && unquoteArgument(node.words[2]) === name),
       '宏不能递归',
     );
-    pinCommand(commandContext, node, [name]);
+    pin(commandContext, node, [name]);
   }
   const versions = commandContext.engine.db.all<{version: number}>(
     "SELECT version FROM command_objects WHERE kind='macro' AND json_extract(data,'$.name')=?",
@@ -194,4 +190,50 @@ export function retireMacro(
   updateCommandObject(commandContext, row, parseJson(row.data), 'retired');
   recordChange(commandContext, row.id, 'active', 'retired');
   return;
+}
+
+/** 固定组合命令所引用的宏版本，避免确认前模板变化悄然改变执行内容。 */
+export function pin(
+  commandContext: CommandContext,
+  commandNode: CommandNode,
+  stack: string[] = [],
+): void {
+  const spec = commandSpec(commandNode);
+  requireCommandArgument(spec, '未注册的命令');
+  validateCommandOptions(commandNode);
+  permission(commandContext.actor, spec.permission);
+  requireCommandArgument(
+    !['plan', 'confirm', 'request'].includes(commandNode.words[0]!) &&
+      !spec.query,
+    '授权控制及查询不能嵌入操作块',
+  );
+  if (spec.path === 'macro run') {
+    const name = unquoteArgument(commandNode.words[2]);
+    const versionIndex = commandNode.words.indexOf('version');
+    const row = namedCommandObject(
+      commandContext,
+      'macro',
+      name,
+      versionIndex >= 0
+        ? Number(commandNode.words[versionIndex + 1])
+        : undefined,
+    );
+    requireCommandArgument(!stack.includes(name), '宏不能直接或间接递归');
+    const data = parseJson(row.data) as MacroData;
+    if (versionIndex < 0) {
+      commandNode.words.push('version', String(row.version));
+    }
+    for (const node of data.block) {
+      pin(commandContext, node, [...stack, name]);
+    }
+  }
+  for (const child of commandNode.block ?? []) {
+    if (spec.path === 'reveal' && child.words[0] === 'stats') {
+      permission(commandContext.actor, 'overview');
+      validateCommandOptions(child);
+      validateCommandArguments(child);
+    } else {
+      pin(commandContext, child, stack);
+    }
+  }
 }
