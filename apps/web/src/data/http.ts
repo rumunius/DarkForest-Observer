@@ -26,6 +26,9 @@ export class HttpSource implements DataSource {
   ) {}
 
   private session: Session | null = null;
+  private sessionEpoch = 0;
+  private snapshotSequence = 0;
+  private authenticationPending = false;
 
   /** 为本场请求设置私有同源头和超时，错误保留操作结果的确定性。 */
   private async request<T>(path: string, body?: unknown): Promise<T> {
@@ -79,12 +82,22 @@ export class HttpSource implements DataSource {
     }
   }
 
-  /** 取得服务端授权快照并更新本场CSRF会话。 */
+  /** 读取授权快照，仅由当前认证世代的最新读取更新本场CSRF会话。 */
   async read(route: string): Promise<Snapshot> {
+    const epoch = this.sessionEpoch;
+    const sequence = ++this.snapshotSequence;
+    const canUpdateSession = !this.authenticationPending;
     const snapshot = await this.request<Snapshot>(
       `/snapshot?route=${encodeURIComponent(route)}`,
     );
-    this.session = snapshot.session;
+    if (
+      canUpdateSession &&
+      !this.authenticationPending &&
+      epoch === this.sessionEpoch &&
+      sequence === this.snapshotSequence
+    ) {
+      this.session = snapshot.session;
+    }
     return snapshot;
   }
 
@@ -124,16 +137,37 @@ export class HttpSource implements DataSource {
 
   /** 交换本场旧登录凭据并保存返回会话。 */
   async login(credential: string, judge: boolean): Promise<void> {
-    this.session = await this.request<Session>('/auth/exchange', {
-      credential,
-      audience: judge ? 'judge' : 'player',
-    });
+    const epoch = ++this.sessionEpoch;
+    this.authenticationPending = true;
+    try {
+      const session = await this.request<Session>('/auth/exchange', {
+        credential,
+        audience: judge ? 'judge' : 'player',
+      });
+      if (epoch === this.sessionEpoch) {
+        this.session = session;
+      }
+    } finally {
+      if (epoch === this.sessionEpoch) {
+        this.authenticationPending = false;
+      }
+    }
   }
 
   /** 确认服务端退出后清除当前适配器会话。 */
   async logout(): Promise<void> {
-    await this.request<unknown>('/auth/logout', {});
-    this.session = null;
+    const epoch = ++this.sessionEpoch;
+    this.authenticationPending = true;
+    try {
+      await this.request<unknown>('/auth/logout', {});
+      if (epoch === this.sessionEpoch) {
+        this.session = null;
+      }
+    } finally {
+      if (epoch === this.sessionEpoch) {
+        this.authenticationPending = false;
+      }
+    }
   }
 
   /** 提交稳定请求ID和原草稿，网络不确定时由上层查询原结果。 */
