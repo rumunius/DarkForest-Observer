@@ -1,4 +1,4 @@
-import {parseJson} from '../../../../packages/contracts/src/backend';
+import {object, parseJson} from '../../../../packages/contracts/src/backend';
 import type {PlatformSession} from '@darkforest/contracts';
 import {ApiError} from './http';
 /** 平台管理预览令牌及其原始请求草稿，确认时不能混用其他草稿。 */
@@ -26,10 +26,18 @@ export class PlatformClient {
   /** 读取当前入口保存的原操作身份，坏本地记录按未保存处理。 */
   pending(): {id: string; account: string} | null {
     try {
-      return parseJson(sessionStorage.getItem(this.pendingKey) ?? 'null') as {
-        id: string;
-        account: string;
-      } | null;
+      const stored = object(
+        parseJson(sessionStorage.getItem(this.pendingKey) ?? 'null'),
+      );
+      if (
+        typeof stored.id !== 'string' ||
+        !stored.id ||
+        typeof stored.account !== 'string' ||
+        !stored.account
+      ) {
+        return null;
+      }
+      return {id: stored.id, account: stored.account};
     } catch {
       return null;
     }

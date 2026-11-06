@@ -96,6 +96,46 @@ afterEach(async () => {
 });
 
 describe('操作在当前页面反馈实际结果', () => {
+  it('ignores malformed platform pending caches instead of blocking a new write', async () => {
+    const client = new PlatformClient('staff');
+    client.session = session;
+    const fetcher = vi.fn(promiseStub(() => Response.json({saved: true})));
+    vi.stubGlobal('fetch', fetcher);
+    for (const stored of [
+      {id: 42, account: session.account.id},
+      {id: 'old-request'},
+      {id: '', account: session.account.id},
+      {id: 'old-request', account: {}},
+      ['old-request', session.account.id],
+      'old-request',
+    ]) {
+      sessionStorage.setItem(client.pendingKey, JSON.stringify(stored));
+      await expect(
+        client.mutate('/matches/feedback-match/publish', {}),
+      ).resolves.toEqual({saved: true});
+      expect(client.pending()).toBeNull();
+    }
+    expect(fetcher).toHaveBeenCalledTimes(6);
+  });
+
+  it('retains a valid pending platform operation and refuses recovery from another account', async () => {
+    const client = new PlatformClient('staff');
+    client.session = session;
+    const stored = {id: 'original-operation', account: 'another-account'};
+    sessionStorage.setItem(client.pendingKey, JSON.stringify(stored));
+    const fetcher = vi.fn();
+    vi.stubGlobal('fetch', fetcher);
+    expect(client.pending()).toEqual(stored);
+    await expect(
+      client.mutate('/matches/feedback-match/publish', {}),
+    ).rejects.toThrow('请先查询上一次操作结果。');
+    await expect(client.resolvePending()).rejects.toThrow(
+      '待确认操作属于另一账号，请切回原账号。',
+    );
+    expect(client.pending()).toEqual(stored);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it.each(routes)(
     '%s 确认交接后立即收起预览，完成或失败后均不能复用旧确认',
     async route => {
