@@ -57,6 +57,62 @@ afterEach(async () => {
 });
 
 describe('actual React state and forms', () => {
+  it('ignores structurally invalid read-message caches without breaking the page', async () => {
+    const source = new MockSource();
+    const fixture = await source.read('/player');
+    const original = fixture.events.find(
+      event => event.audience === 'personal',
+    )!;
+    fixture.events = [
+      {...original, id: 'unread', recipient: fixture.player!.id},
+    ];
+    vi.spyOn(source, 'read').mockImplementation(
+      promiseStub(() => structuredClone(fixture)),
+    );
+    const session = fixture.session!;
+    const key = `.darkforest.read.${session.matchId}.${session.role}.${session.id}`;
+    localStorage.setItem(key, JSON.stringify({includes: 'invalid cache'}));
+    history.replaceState({}, '', '/player');
+    await mount(source);
+    expect(latest.unread).toBe(1);
+    await act(promiseStub(() => latest.markRead('unread')));
+    expect(latest.unread).toBe(0);
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual(['unread']);
+  });
+
+  it('discards a malformed pending record instead of blocking a new operation', async () => {
+    const source = new MockSource();
+    const fixture = await source.read('/player');
+    vi.spyOn(source, 'read').mockImplementation(
+      promiseStub(() => structuredClone(fixture)),
+    );
+    const submit = vi.spyOn(source, 'submit').mockImplementation(
+      promiseStub(operation => ({
+        requestId: operation.requestId,
+        status: 'complete',
+        title: '已保存',
+        message: '',
+      })),
+    );
+    history.replaceState({}, '', '/player');
+    await mount(source);
+    // A storage event, extension or another script can change the cache after mounting.
+    sessionStorage.setItem(
+      'darkforest.pending-operation',
+      JSON.stringify({
+        id: 42,
+        account: fixture.session!.id,
+        match: fixture.session!.matchId,
+      }),
+    );
+    await act(async () =>
+      latest.operate('/player/nickname', {nickname: '新昵称'}),
+    );
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(latest.pending).toBeNull();
+    expect(latest.error).toBe('');
+  });
+
   it('阅读本人消息后红点消失并跨页面保留，观战中他人私人事件不计入本人未读', async () => {
     const source = new MockSource();
     const fixture = await source.read('/player');

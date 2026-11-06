@@ -1,4 +1,3 @@
-import {parseJson} from '../../../packages/contracts/src/backend';
 import {
   createContext,
   useCallback,
@@ -18,6 +17,13 @@ import {DEFAULT_SITE} from './config';
 import {ApiError} from './data/http';
 import {mergeRecords, type Collection} from './judge_records';
 import {personalMessage} from './data/messages';
+import {
+  PENDING_OPERATION_KEY as pendingKey,
+  readMessageIds,
+  readPending,
+  savePending,
+  type PendingRecord,
+} from './state_storage';
 
 const empty: Snapshot = {
   site: DEFAULT_SITE,
@@ -85,33 +91,6 @@ function restorePosition() {
     window.scrollTo(0, positions.get(location.pathname) ?? 0);
   }
 }
-const pendingKey = 'darkforest.pending-operation';
-interface PendingRecord {
-  id: string;
-  account: string;
-  match: string;
-  path?: string;
-}
-function readPending(key = pendingKey): PendingRecord | null {
-  try {
-    return parseJson(
-      sessionStorage.getItem(key) ?? 'null',
-    ) as PendingRecord | null;
-  } catch {
-    return null;
-  }
-}
-function savePending(value: PendingRecord | null, key = pendingKey) {
-  try {
-    if (value) {
-      sessionStorage.setItem(key, JSON.stringify(value));
-    } else {
-      sessionStorage.removeItem(key);
-    }
-  } catch {
-    /* Memory state remains authoritative for this page. */
-  }
-}
 /** 管理本场快照、轮询、待确认操作和草稿，并隔离过时响应与账号切换。 */
 export function AppProvider({
   source,
@@ -169,17 +148,7 @@ export function AppProvider({
   const historyLoading = useRef(false);
   const accountKey = `${base}.darkforest.read.${data.session?.matchId ?? ''}.${data.session?.role ?? ''}.${data.session?.id ?? 'guest'}`;
   useEffect(() => {
-    try {
-      setReadIds(
-        parseJson(
-          localStorage.getItem(accountKey) ??
-            sessionStorage.getItem(accountKey) ??
-            '[]',
-        ) as string[],
-      );
-    } catch {
-      setReadIds([]);
-    }
+    setReadIds(readMessageIds(accountKey));
   }, [accountKey]);
   const markRead = useCallback(
     (id: string) => {
