@@ -17,7 +17,7 @@ export function base64(bytes: Uint8Array): string {
   return btoa(chunks.join(''));
 }
 /** 解码Base64字节；真实性由上层认证加密或消息认证负责。 */
-export function unbase64(value: string): Uint8Array<ArrayBuffer> {
+function unbase64(value: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(value), c => c.charCodeAt(0));
 }
 /** 计算输入正文的安全摘要，供凭据、幂等和材料回读校验使用。 */

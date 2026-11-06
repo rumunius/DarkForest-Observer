@@ -50,9 +50,6 @@ export function readCommandHistory(
   );
 }
 
-/** 共享命令语法解析入口；解析成功不代表已经授权或执行。 */
-export const parseCommand = parseCommandTree;
-
 /** 处理查询、预览、确认与取消；执行时在权威事务中复核依赖和权限。 */
 export function commandAction(
   engine: Engine,

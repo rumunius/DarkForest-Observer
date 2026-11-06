@@ -5,7 +5,7 @@ import {requireThat} from '../storage/store';
 import type {Engine} from './engine';
 
 /** 按选择器语法拆分过滤条件，保留引号和嵌套表达式中的分隔符。 */
-export function splitFilters(input: string): string[] {
+function splitFilters(input: string): string[] {
   const parts: string[] = [];
   let depth = 0;
   let quoted = false;

@@ -1,7 +1,5 @@
 import type {HomeworldSubmission} from './index';
 
-/** Public wire protocol. No storage types or secrets may be exported here. */
-export const CONTRACT_VERSION = 1;
 /** 服务器使用的完整比赛阶段；前端显示阶段可合并但不能改变该状态机。 */
 export type DomainPhase =
   | 'setup'
@@ -13,12 +11,6 @@ export type DomainPhase =
   | 'transfer'
   | 'hunt'
   | 'ended';
-/** 公共失败响应，definitive区分确定拒绝与需要查询原操作的未知结果。 */
-export interface ApiFailure {
-  code: string;
-  message: string;
-  definitive: boolean;
-}
 /** 输入不符合公共契约时的错误，由网关或服务端转换为400响应。 */
 export class ContractError extends Error {
   constructor(message = '输入内容有误，请检查后重试。') {

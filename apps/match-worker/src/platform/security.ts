@@ -1,4 +1,4 @@
-import {base64, mac, secretKey, unbase64} from '../security/crypto';
+import {mac, secretKey} from '../security/crypto';
 import {requireThat} from '../storage/store';
 import type {BackendEnv} from '../rpc/types';
 
@@ -42,7 +42,7 @@ export function base32(bytes: Uint8Array): string {
   return out;
 }
 /** 校验并解码第二因素Base32密钥；非法长度或字符会被拒绝。 */
-export function decode32(value: string): Uint8Array<ArrayBuffer> {
+function decode32(value: string): Uint8Array<ArrayBuffer> {
   requireThat(
     /^[A-Z2-7]{32}$/.test(value),
     'BAD_TOTP',
@@ -93,10 +93,6 @@ export async function verifyTotp(
   }
   return -1;
 }
-/** 按UTF-8计算JSON传输大小，供响应与备份容量限制使用。 */
-export function jsonBytes(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).length;
-}
 // A versioned per-purpose AES key is never sent to the browser.
 /** 派生平台数据加密密钥；轮换任一根密钥都需要显式重新加密。 */
 export async function platformKey(env: BackendEnv): Promise<CryptoKey> {
@@ -107,12 +103,4 @@ export async function platformKey(env: BackendEnv): Promise<CryptoKey> {
     await derive(env, `platform-encryption|${env.CODE_ENCRYPTION_KEY}`),
     'AES-GCM',
   );
-}
-/** 将UTF-8正文编码成Base64，用于运维材料的可逆传输。 */
-export function utf8Base64(value: string): string {
-  return base64(new TextEncoder().encode(value));
-}
-/** 从Base64还原UTF-8正文；不承担材料签名或真实性校验。 */
-export function fromUtf8Base64(value: string): string {
-  return new TextDecoder().decode(unbase64(value));
 }

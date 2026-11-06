@@ -12,7 +12,7 @@ export const COMMAND_LIMITS = {
   work: 12000,
 };
 /** Count UTF-8 without importing a DOM or Node runtime into the public contracts package. */
-export function commandByteLength(input: string): number {
+function commandByteLength(input: string): number {
   let size = 0;
   for (const ch of input) {
     const cp = ch.codePointAt(0)!;
@@ -145,13 +145,13 @@ export class CommandSyntaxError extends Error {
   }
 }
 /** 命令词法单元及其原文跨度，避免提示丢失准确位置。 */
-export interface Lexeme {
+interface Lexeme {
   value: string;
   start: number;
   end: number;
 }
 /** 按引号、转义和组合括号拆词；不执行或授权任何命令。 */
-export function tokenizeCommand(input: string): Lexeme[] {
+function tokenizeCommand(input: string): Lexeme[] {
   const result: Lexeme[] = [];
   for (let index = 0; index < input.length;) {
     if (/[ \t\r]/.test(input[index]!)) {

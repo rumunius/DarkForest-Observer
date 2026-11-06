@@ -18,7 +18,7 @@ import {permission, requireThat, type Actor} from '../storage/store';
 import type {Engine} from './engine';
 
 /** 文明历史查询允许的分类集合，分类可见性仍逐次按角色验证。 */
-export const HISTORY_KINDS = [
+const HISTORY_KINDS = [
   'all',
   'attack',
   'flight',

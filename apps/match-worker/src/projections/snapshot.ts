@@ -92,7 +92,7 @@ export function observerAllowed(engine: Engine, playerState: Player): boolean {
   );
 }
 /** 组合本人可见状态与可用动作，不向普通玩家泄露他人秘密。 */
-export function playerProjection(
+function playerProjection(
   engine: Engine,
   id: string,
   keys: Keys,
