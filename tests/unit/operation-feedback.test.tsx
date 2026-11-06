@@ -79,6 +79,75 @@ afterEach(async () => {
 });
 
 describe('操作在当前页面反馈实际结果', () => {
+  it.each(routes)('%s 确认交接后立即收起预览，完成或失败后均不能复用旧确认', async (route) => {
+    let finish!: (value: Response) => void;
+    let outcome: Promise<Response>;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/auth/session') return Response.json(session);
+      if (url === '/api/me/matches' || url === '/api/platform/matches')
+        return Response.json([entry]);
+      if (url === '/api/platform/accounts')
+        return Response.json([{ ...session.account, id: 'next-judge', name: '接班裁判' }]);
+      if (url === `/api/matches/${entry.id}/manage`)
+        return Response.json({
+          match: entry,
+          current: {
+            members: [{ account_id: 'next-judge', state: 'accepted' }],
+            assignments: [],
+            phase: 'setup',
+            players: 0,
+          },
+        });
+      if (url === '/api/platform/preview')
+        return Response.json({ previewToken: 'handover-preview' });
+      if (url.endsWith('/staff/assign')) {
+        expect(JSON.parse(init!.body as string).preview_token).toBe('handover-preview');
+        return Response.json({ operationId: 'handover-task', status: 'pending' });
+      }
+      if (url === '/api/me/operations/handover-task') return outcome;
+      throw new Error(`Unexpected request ${url}`);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    await mountManagement(route);
+    const section = [...document.querySelectorAll('h2')].find(
+      (heading) => heading.textContent === '裁判设置',
+    )!.parentElement!;
+    const judge = section.querySelector('select')!;
+    const reason = section.querySelector('input')!;
+    const setReason = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      judge.value = 'next-judge';
+      judge.dispatchEvent(new Event('change', { bubbles: true }));
+      setReason.call(reason, '现场换班');
+      reason.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    for (const status of ['succeeded', 'failed']) {
+      outcome = new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+      await act(async () => button('预览影响').click());
+      const confirm = button(`确认交接 ${entry.name}，J01`);
+      expect(confirm).toBeDefined();
+      await act(async () => {
+        confirm.click();
+        confirm.click();
+      });
+      expect(section.textContent).not.toContain('确认后旧任职结束');
+      expect(button(`确认交接 ${entry.name}，J01`)).toBeUndefined();
+      expect(button('预览影响').closest('fieldset')?.disabled).toBe(true);
+      await act(async () =>
+        finish(Response.json({ status, error: status === 'failed' ? '本场总裁判已变化。' : '' })),
+      );
+      expect(button(`确认交接 ${entry.name}，J01`)).toBeUndefined();
+      expect(button('预览影响').closest('fieldset')?.disabled).toBe(false);
+      expect(document.querySelector('.feedback-stack')?.textContent).toContain(
+        status === 'succeeded' ? '操作已完成。' : '本场总裁判已变化。',
+      );
+    }
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/staff/assign'))).toHaveLength(2);
+    expect(fetcher.mock.calls.filter(([url]) => url === '/api/platform/preview')).toHaveLength(2);
+  });
+
   it.each([
     ['failed', '本场总裁判已变化。', '本场总裁判已变化。'],
     ['partial', '还有一场比赛未处理。', '操作仅部分完成。还有一场比赛未处理。'],

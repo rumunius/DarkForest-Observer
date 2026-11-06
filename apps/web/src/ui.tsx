@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -202,6 +203,60 @@ export function Button({
       <CutOutline />
       <span className="button-content">{children}</span>
     </button>
+  );
+}
+export function ConfirmDialog({
+  title,
+  children,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  children: ReactNode;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const returnFocus = useRef(document.activeElement);
+  const titleId = useId();
+  const descriptionId = useId();
+  useEffect(() => {
+    const element = dialog.current!;
+    const trigger = returnFocus.current;
+    element.showModal();
+    return () => {
+      element.close();
+      if (trigger instanceof HTMLElement && trigger.isConnected)
+        trigger.focus({ preventScroll: true });
+    };
+  }, []);
+  return createPortal(
+    <dialog
+      ref={dialog}
+      className="confirmation-dialog"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      onCancel={(event) => {
+        event.preventDefault();
+        onCancel();
+      }}
+    >
+      <Frame>
+        <h2 id={titleId}>{title}</h2>
+        <div id={descriptionId}>{children}</div>
+        <div className="confirmation-actions">
+          <Button autoFocus onClick={onCancel}>
+            取消
+          </Button>
+          <Button className="danger" onClick={onConfirm}>
+            {confirmLabel}
+          </Button>
+        </div>
+      </Frame>
+    </dialog>,
+    document.body,
   );
 }
 export function Link({

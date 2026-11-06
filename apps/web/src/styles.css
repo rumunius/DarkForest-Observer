@@ -120,6 +120,15 @@
 .platform-row-actions a {
   padding: 12px 0;
 }
+.platform-member-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+.platform-member-row p {
+  overflow-wrap: anywhere;
+}
 .platform-detail,
 .platform-delivery {
   padding: 24px;
@@ -1369,7 +1378,8 @@ textarea::placeholder {
   flex-shrink: 0;
   font-size: 12px;
 }
-.attack-dialog {
+.attack-dialog,
+.confirmation-dialog {
   width: min(480px, calc(100% - 32px));
   max-height: calc(100dvh - 48px);
   padding: 0;
@@ -1378,14 +1388,19 @@ textarea::placeholder {
   color: var(--text);
   overflow: auto;
 }
-.attack-dialog::backdrop {
+.attack-dialog::backdrop,
+.confirmation-dialog::backdrop {
   background: rgb(0 0 0 / 78%);
 }
 .attack-dialog .frame {
   margin: 0;
   --cut-line: var(--attention);
 }
-.attack-dialog h2 {
+.confirmation-dialog .frame {
+  margin: 0;
+}
+.attack-dialog h2,
+.confirmation-dialog h2 {
   margin-top: 8px;
 }
 .confirmation-arm {
@@ -2666,10 +2681,12 @@ td a {
     transform: translateX(3px);
   }
 }
-.attack-dialog[open] {
+.attack-dialog[open],
+.confirmation-dialog[open] {
   animation: dialog-arrive 220ms var(--enter) both;
 }
-.attack-dialog[open]::backdrop {
+.attack-dialog[open]::backdrop,
+.confirmation-dialog[open]::backdrop {
   animation: field-arrive 180ms ease-out both;
 }
 @keyframes dialog-arrive {

@@ -12,7 +12,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run build:web && concurrently --kill-others --names core,pages,web --prefix-colors cyan,magenta,green \"npm run dev:core\" \"npm run dev:pages\" \"npm run dev:web\"",
+    "dev": "npm run build:web && node scripts/dev.mjs",
     "dev:web": "npm run dev --workspace @darkforest/web",
     "dev:preview": "npm run dev --workspace @darkforest/web -- --open /dev-preview/",
     "dev:pages": "npm run dev:pages --workspace @darkforest/web",

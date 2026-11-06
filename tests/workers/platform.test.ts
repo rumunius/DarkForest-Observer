@@ -133,6 +133,25 @@ async function publish(id: string) {
     'succeeded',
   );
 }
+async function removeMember(
+  id: string,
+  target: Login,
+  actor = owner,
+  request_id = crypto.randomUUID(),
+) {
+  const current = (await call(`/matches/${id}/manage`, undefined, actor)).body.current;
+  const body = {
+    request_id,
+    accountId: target.session.account.id,
+    expectedRevision: current.revision,
+    reason: '发布前移除成员并回收编号',
+  };
+  const reply = await call(`/matches/${id}/members/remove`, body, actor);
+  expect(reply.status, JSON.stringify(reply.body)).toBe(202);
+  await drain();
+  const op = await call(`/me/operations/${request_id}`, undefined, actor);
+  return { op: op.body, body };
+}
 async function running() {
   const id = await match('正式场A');
   const p1 = await account('玩家一', 'player'),
@@ -160,6 +179,163 @@ beforeEach(async () => {
   owner = await activate(installed.invitation);
 });
 describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待）', () => {
+  it('草稿可移除未接受、已接受及已绑定成员，释放中间编号且不串用身份数据', async () => {
+    const id = await match('移除成员草稿'),
+      pending = await account('尚未接受', 'player'),
+      accepted = await account('已接受工作人员'),
+      first = await account('首位玩家', 'player'),
+      middle = await account('中间玩家', 'player'),
+      last = await account('末位玩家', 'player');
+    await call(`/matches/${id}/members/invite`, {
+      request_id: crypto.randomUUID(),
+      accountId: pending.session.account.id,
+      reason: '邀请待接受账号',
+    });
+    await drain();
+    await invite(id, accepted);
+    for (const player of [first, middle, last]) await bind(id, player);
+    const other = await match('同账号另一场');
+    await bind(other, middle);
+    for (const target of [pending, accepted]) {
+      expect((await removeMember(id, target)).op.status).toBe('succeeded');
+      expect((await call('/me/matches', undefined, target)).body).toEqual([]);
+      const accept = await call(
+        `/matches/${id}/members/accept`,
+        {
+          request_id: crypto.randomUUID(),
+          consent: true,
+          reason: '尝试接受已撤销邀请',
+        },
+        target,
+      );
+      await drain();
+      expect(
+        (await call(`/me/operations/${accept.body.operationId}`, undefined, target)).body.status,
+      ).toBe('failed');
+    }
+    await runInDurableObject(bindings.MATCH_DO.getByName(`match:${id}`), (_instance, state) => {
+      const db = new Store(state.storage);
+      db.exec("UPDATE players SET nickname='旧昵称',tech=1,photons=1,broadcasts=2 WHERE id='C02'");
+      db.exec("INSERT INTO roster_members VALUES('C02')");
+      db.exec(
+        "INSERT INTO homeworlds(player_id,code,status,version) VALUES('C02','123456','pending',1)",
+      );
+    });
+    const removed = await removeMember(id, middle);
+    expect(removed.op.status, JSON.stringify(removed.op)).toBe('succeeded');
+    // Identical retries return the original receipt, including after the slot is reused.
+    const next = await account('新玩家', 'player');
+    await bind(id, next);
+    await drain();
+    const retry = await call(`/matches/${id}/members/remove`, removed.body);
+    expect(retry.body.status).toBe('succeeded');
+    const current = (await call(`/matches/${id}/manage`)).body.current;
+    expect(current.members.map((m: { local_id: string }) => m.local_id).sort()).toEqual([
+      'C01',
+      'C02',
+      'C03',
+    ]);
+    expect(
+      current.members.find((m: { account_id: string }) => m.account_id === next.session.account.id)
+        .local_id,
+    ).toBe('C02');
+    expect(
+      (await call('/me/matches', undefined, middle)).body.map((m: { id: string }) => m.id),
+    ).toEqual([other]);
+    await runInDurableObject(bindings.MATCH_DO.getByName(`match:${id}`), (_instance, state) => {
+      const db = new Store(state.storage);
+      expect(db.player('C02')).toMatchObject({
+        nickname: null,
+        tech: 0,
+        photons: 0,
+        broadcasts: 0,
+      });
+      expect(db.home('C02')).toBeUndefined();
+      expect(db.roster()).toEqual([]);
+      expect(db.flight('C02')).toMatchObject({ status: 'prelaunch', voyage: 0 });
+    });
+    await bind(id, middle);
+    expect(
+      (await call('/me/matches', undefined, middle)).body.find((m: { id: string }) => m.id === id)
+        .membership.local_id,
+    ).toBe('C04');
+    await invite(id, owner);
+    await assign(id, owner, 'J01');
+    await publish(id);
+    expect((await call(`/matches/${id}/snapshot?route=/player`, undefined, middle)).status).toBe(
+      200,
+    );
+    expect((await call(`/matches/${id}/snapshot?route=/player`, undefined, next)).status).toBe(200);
+  });
+  it('已任职裁判可在发布前移除，岗位结束且同岗位能够重新任命', async () => {
+    const id = await match('移除裁判草稿'),
+      judge = await account('待移除裁判');
+    await invite(id, judge);
+    await assign(id, judge, 'J01');
+    expect((await removeMember(id, judge)).op.status).toBe('succeeded');
+    const current = (await call(`/matches/${id}/manage`)).body.current;
+    expect(current.members).toHaveLength(0);
+    expect(current.assignments[0].ended_utc).toBeTypeOf('number');
+    await invite(id, owner);
+    await assign(id, owner, 'J01', 2);
+    expect((await call(`/matches/${id}/manage`)).body.current.members[0].local_id).toBe('J01');
+  });
+  it('总裁判可移除成员，普通玩家不能移除；已发布、冻结和过时版本均拒绝移除', async () => {
+    const { id, p1, p2, j2 } = await running();
+    const forbidden = await call(
+      `/matches/${id}/members/remove`,
+      {
+        request_id: crypto.randomUUID(),
+        accountId: p2.session.account.id,
+        expectedRevision: 0,
+        reason: '越权移除',
+      },
+      p1,
+    );
+    expect(forbidden.status).toBe(403);
+    expect(
+      (
+        await call(
+          `/matches/${id}/members/remove`,
+          {
+            request_id: crypto.randomUUID(),
+            accountId: p2.session.account.id,
+            expectedRevision: 0,
+            reason: '普通裁判越权移除',
+          },
+          j2,
+        )
+      ).status,
+    ).toBe(403);
+    expect((await removeMember(id, p1)).op.status).toBe('failed');
+    const draft = await match('总裁判管理草稿'),
+      head = await account('本场总裁判');
+    await invite(draft, head);
+    await assign(draft, head, 'J01');
+    await bind(draft, p1);
+    const stale = (await call(`/matches/${draft}/manage`)).body.current.revision;
+    await bind(draft, p2);
+    const conflict = await call(`/matches/${draft}/members/remove`, {
+      request_id: crypto.randomUUID(),
+      accountId: p1.session.account.id,
+      expectedRevision: stale,
+      reason: '过时页面移除',
+    });
+    await drain();
+    expect((await call(`/me/operations/${conflict.body.operationId}`)).body.status).toBe('failed');
+    expect((await removeMember(draft, p1, head)).op.status).toBe('succeeded');
+    await runInDurableObject(bindings.MATCH_DO.getByName(`match:${draft}`), (_instance, state) =>
+      new Store(state.storage).exec(
+        "INSERT INTO settings(key,value) VALUES('parameters_frozen','1')",
+      ),
+    );
+    expect((await removeMember(draft, p2, head)).op.status).toBe('failed');
+    expect(
+      (await call(`/matches/${draft}/manage`)).body.current.members.some(
+        (m: { account_id: string }) => m.account_id === p2.session.account.id,
+      ),
+    ).toBe(true);
+  });
   it('登录超过10分钟仍可读取邀请、预览和执行管理操作，预览有效期继续检查', async () => {
     const target = await account('待停用工作人员');
     await ageSession(owner, 11 * 3600000);

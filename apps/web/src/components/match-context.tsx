@@ -13,7 +13,7 @@ export function MatchHeading() {
   return (
     <header className="match-heading">
       <strong>{context.entry.name}</strong>
-      <span>{context.entry.kind === 'trial' ? '试玩' : '正式比赛'}</span>
+      {/* <span>{context.entry.kind === 'trial' ? '试玩' : '正式比赛'}</span> */}
     </header>
   );
 }

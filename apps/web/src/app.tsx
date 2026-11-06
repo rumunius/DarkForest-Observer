@@ -195,7 +195,7 @@ function Navigation() {
           ['/player/me', '我的', 'me'],
         ]
       : [
-          ['/player', '当前', 'current'],
+          ['/player', '面板', 'current'],
           ['/player/actions', '行动', 'action'],
           ['/player/messages', '消息', 'message'],
           ['/player/me', '我的', 'me'],

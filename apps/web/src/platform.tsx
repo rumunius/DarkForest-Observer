@@ -16,11 +16,11 @@ import type {
   PlatformOperation,
 } from '@darkforest/contracts';
 import { PlatformClient, saveDownload, type PlatformReview } from './data/platform';
-import { Button, Feedback, Field, Icon, type FeedbackMessage } from './ui';
+import { Button, ConfirmDialog, Feedback, Field, Icon, type FeedbackMessage } from './ui';
 import { App } from './app';
 import { HttpSource } from './data/http';
 import { HumanData, OPERATION_NAMES, PHASE_NAMES } from './platform-copy';
-import { accountCsv } from './data/csv';
+import { accountCsv, readAccountCsv } from './data/csv';
 
 const states: Record<string, string> = {
   draft: '草稿',
@@ -56,7 +56,6 @@ function Header({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <header className="platform-heading">
       <div>
-        <p className="secondary">黑暗森林，赛事中心</p>
         <h1 tabIndex={-1}>{title}</h1>
       </div>
       {children}
@@ -334,9 +333,7 @@ function Login({
   return (
     <>
       <Header title="进入赛事中心" />
-      <p className="platform-intro">
-        一个长期账号，查看属于你的每一场比赛。比赛内的文明编号与裁判岗位独立记录。
-      </p>
+      <p className="platform-intro">一个长期账号，查看属于你的每一场比赛。</p>
       <form
         className="form-stack platform-form"
         onSubmit={(e) => {
@@ -367,7 +364,7 @@ function Login({
           />
         </Field>
         {audience === 'staff' && (
-          <Field label="第二因素验证码或恢复码（已设置时填写）">
+          <Field label="第二因素验证码或恢复码（没设置不用填）">
             <input
               autoComplete="one-time-code"
               value={code}
@@ -556,7 +553,6 @@ function Matches({
                     {(d.membership?.state === 'invited' ||
                       (d.membership?.state === 'accepted' && client.audience === 'player')) && (
                       <>
-                        <p className="secondary">接受邀请即确认本场活动说明与上述资料保留期限。</p>
                         <AcceptInvitation
                           key={`${d.id}:${d.membership.state}`}
                           client={client}
@@ -762,7 +758,7 @@ function Accounts({ client, tick, run }: { client: PlatformClient; tick: number;
           </select>
         </Field>
         <Button type="submit" disabled={!name}>
-          创建并交付邀请
+          创建并发送邀请
         </Button>
       </form>
       <details>
@@ -773,7 +769,7 @@ function Accounts({ client, tick, run }: { client: PlatformClient; tick: number;
         </p>
         <Button
           onClick={() =>
-            saveDownload('账号导入模板.csv', 'name,kind,accountId\n示例玩家,player,\n')
+            saveDownload('账号导入模板.csv', 'name,kind,accountId\r\n示例玩家,player,\r\n')
           }
         >
           下载模板
@@ -782,13 +778,16 @@ function Accounts({ client, tick, run }: { client: PlatformClient; tick: number;
           type="file"
           accept=".csv,text/csv"
           aria-label="选择账号CSV"
-          onChange={(e) =>
-            void e.target.files?.[0]?.text().then((value) => {
-              setCsv(value);
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            setCsv('');
+            setReport(null);
+            if (!file) return;
+            void run(async () => {
+              setCsv(await readAccountCsv(file));
               setBatch(crypto.randomUUID());
-              setReport(null);
-            })
-          }
+            });
+          }}
         />
         <Button
           disabled={!csv}
@@ -912,7 +911,9 @@ function ManageMatch({
     current: {
       members: MatchMember[];
       assignments: { seat_id: string; epoch: number; ended_utc: number | null }[];
+      seatVersions?: { id: string; version: number }[];
       phase: string;
+      revision: number;
       players: number;
     };
   }>(client, `/matches/${id}/manage`, tick);
@@ -926,6 +927,7 @@ function ManageMatch({
     [judgeAccount, setJudgeAccount] = useState(''),
     [seat, setSeat] = useState('J01'),
     [reason, setReason] = useState(''),
+    [removal, setRemoval] = useState<{ member: MatchMember; revision: number } | null>(null),
     [preview, setPreview] = useState<{
       previewToken: string;
       payload: Record<string, unknown>;
@@ -934,7 +936,9 @@ function ManageMatch({
   if (!data) return <p role="status">{error || '正在读取本场最新状态'}</p>;
   const d = data.match,
     epoch =
-      data.current.assignments.find((a) => a.seat_id === seat && a.ended_utc === null)?.epoch ?? 0;
+      data.current.seatVersions?.find((s) => s.id === seat)?.version ??
+      data.current.assignments.find((a) => a.seat_id === seat && a.ended_utc === null)?.epoch ??
+      0;
   const assignment = {
     accountId: judgeAccount,
     seat,
@@ -1076,13 +1080,14 @@ function ManageMatch({
             <p>确认后旧任职结束，旧预览失效；旧管理任务进入待核对。</p>
             <Button
               onClick={() =>
-                void run(() =>
-                  client.request(`/matches/${id}/staff/assign`, {
+                void run(async () => {
+                  setPreview(null);
+                  return client.request(`/matches/${id}/staff/assign`, {
                     ...preview.payload,
                     request_id: crypto.randomUUID(),
                     preview_token: preview.previewToken,
-                  }),
-                )
+                  });
+                })
               }
             >
               确认交接 {d.name}，{seat}
@@ -1093,21 +1098,62 @@ function ManageMatch({
       <section className="platform-detail">
         <h2>本场成员</h2>
         {data.current.members.map((m) => (
-          <p key={m.account_id}>
-            <strong>{m.name}</strong>，{m.local_id ?? '尚未确认本场身份'}，
-            {
-              (
-                {
-                  invited: '待接受',
-                  accepted: '已接受',
-                  bound: '已确认本场身份',
-                  revoked: '任职已结束',
-                } as Record<string, string>
-              )[m.state]
-            }
-          </p>
+          <div key={m.account_id} className="platform-member-row">
+            <p>
+              <strong>{m.name}</strong>，{m.local_id ?? '尚未确认本场身份'}，
+              {
+                (
+                  {
+                    invited: '待接受',
+                    accepted: '已接受',
+                    bound: '已确认本场身份',
+                    revoked: '任职已结束',
+                  } as Record<string, string>
+                )[m.state]
+              }
+            </p>
+            {d.state === 'draft' && (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`移除成员 ${m.name}`}
+                title={`移除成员 ${m.name}`}
+                onClick={() => setRemoval({ member: m, revision: data.current.revision })}
+              >
+                <Icon name="close" size={20} />
+              </button>
+            )}
+          </div>
         ))}
       </section>
+      {removal && d.state === 'draft' && (
+        <ConfirmDialog
+          title="移除本场成员？"
+          confirmLabel="确认移除"
+          onCancel={() => setRemoval(null)}
+          onConfirm={() => {
+            const { member, revision } = removal;
+            setRemoval(null);
+            void run(() =>
+              client.mutate(`/matches/${id}/members/remove`, {
+                accountId: member.account_id,
+                expectedRevision: revision,
+                reason: '发布准备入口前移除本场成员',
+              }),
+            );
+          }}
+        >
+          <p>
+            将 <strong>{removal.member.name}</strong> 移出“{d.name}”。
+          </p>
+          <p className="secondary">
+            {removal.member.local_id
+              ? `本场身份 ${removal.member.local_id} 将释放，可重新分配。`
+              : '本场邀请将撤销。'}{' '}
+            长期账号和其他比赛不受影响，之后可重新邀请。
+          </p>
+        </ConfirmDialog>
+      )}
       {d.state === 'draft' && (
         <Button
           onClick={() =>

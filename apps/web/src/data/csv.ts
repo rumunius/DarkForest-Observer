@@ -1,3 +1,17 @@
+/** Prefer UTF-8; Chinese Windows Excel can also save CSV using its legacy encoding. */
+export async function readAccountCsv(file: Blob): Promise<string> {
+  const bytes = await file.arrayBuffer();
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    try {
+      return new TextDecoder('gb18030', { fatal: true }).decode(bytes);
+    } catch {
+      throw new Error('无法识别CSV文件编码，请在Excel中另存为“CSV UTF-8（逗号分隔）”后重试。');
+    }
+  }
+}
+
 /** RFC 4180 field parsing. Imported data is never evaluated as spreadsheet formulas. */
 export function accountCsv(source: string): { name: string; kind: string; accountId?: string }[] {
   const rows: string[][] = [];

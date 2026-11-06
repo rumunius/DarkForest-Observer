@@ -67,6 +67,97 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 describe('登录、邀请与场内体验', () => {
+  it.each(['draft', 'available'] as const)(
+    '成员移除只在发布前显示，并确认后提交与刷新（%s）',
+    async (state) => {
+      history.replaceState({}, '', '/m/match-a/manage');
+      const members = [
+        {
+          ...entry.membership!,
+          account_id: 'pending',
+          name: '待接受玩家',
+          state: 'invited',
+          local_id: null,
+        },
+        {
+          ...entry.membership!,
+          account_id: 'accepted',
+          name: '已接受工作人员',
+          kind: 'staff',
+          state: 'accepted',
+          local_id: null,
+        },
+        {
+          ...entry.membership!,
+          account_id: 'bound',
+          name: '已绑定玩家',
+          state: 'bound',
+          local_id: 'C02',
+        },
+      ];
+      let removed = false;
+      const fetcher = vi.fn<(...args: [string, RequestInit?]) => Promise<Response>>(async (url) => {
+        if (url === '/api/auth/session') return Response.json({ ...session, roles: ['owner'] });
+        if (url === '/api/me/matches') return Response.json([{ ...entry, state }]);
+        if (url === '/api/platform/accounts') return Response.json([]);
+        if (url.endsWith('/manage'))
+          return Response.json({
+            match: { ...entry, state },
+            current: {
+              members: removed ? members.slice(0, 2) : members,
+              assignments: [],
+              players: 0,
+              phase: 'setup',
+              revision: 7,
+            },
+          });
+        if (url.endsWith('/members/remove')) {
+          removed = true;
+          return Response.json({ operationId: 'remove-op', status: 'pending' });
+        }
+        if (url === '/api/me/operations/remove-op')
+          return Response.json({ id: 'remove-op', status: 'succeeded' });
+        throw new Error(`Unexpected request ${url}`);
+      });
+      vi.stubGlobal('fetch', fetcher);
+      const confirm = vi.fn();
+      vi.stubGlobal('confirm', confirm);
+      await mount(<MatchApp id="match-a" />);
+      const buttons = [
+        ...document.querySelectorAll<HTMLButtonElement>('button[aria-label^="移除成员"]'),
+      ];
+      expect(buttons).toHaveLength(state === 'draft' ? 3 : 0);
+      if (state === 'available') return;
+      buttons[2]!.focus();
+      await act(async () => buttons[2]!.click());
+      expect(document.querySelector('dialog')?.textContent).toContain('C02');
+      expect(fetcher.mock.calls.some(([url]) => url.endsWith('/members/remove'))).toBe(false);
+      const cancel = document.querySelector<HTMLButtonElement>('dialog button')!;
+      await act(async () => cancel.click());
+      expect(document.querySelector('dialog')).toBeNull();
+      expect(document.activeElement).toBe(buttons[2]);
+      await act(async () => buttons[2]!.click());
+      await act(async () => {
+        const event = new Event('cancel', { cancelable: true });
+        document.querySelector('dialog')!.dispatchEvent(event);
+      });
+      expect(document.querySelector('dialog')).toBeNull();
+      await act(async () => buttons[2]!.click());
+      const submit = document.querySelector<HTMLButtonElement>('dialog button.danger')!;
+      await act(async () => {
+        submit.click();
+        submit.click();
+      });
+      const requests = fetcher.mock.calls.filter(([url]) => url.endsWith('/members/remove'));
+      expect(requests).toHaveLength(1);
+      expect(confirm).not.toHaveBeenCalled();
+      expect(JSON.parse(String(requests[0]![1]?.body))).toMatchObject({
+        accountId: 'bound',
+        expectedRevision: 7,
+      });
+      expect(document.querySelector('button[aria-label="移除成员 已绑定玩家"]')).toBeNull();
+    },
+  );
   it.each([false, true])('账号安全页无近期认证入口，已验证第二因素=%s', async (verified) => {
     history.replaceState({}, '', '/account');
     vi.stubGlobal(

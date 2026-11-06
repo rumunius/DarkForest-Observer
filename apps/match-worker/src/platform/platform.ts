@@ -953,19 +953,22 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       );
       return {
         status: 200,
-        body: await Promise.all(
-          entries.map(async (entry) => {
-            if (['provisioning', 'purged', 'imported_archive'].includes(entry.state)) return entry;
-            const current = await this.summary(this.directory(entry.id), s.account_id);
-            return {
-              ...entry,
-              phase: current.phase,
-              membership: (current.members as MatchMember[]).find(
-                (member) => member.account_id === s.account_id,
-              ),
-            };
-          }),
-        ),
+        body: (
+          await Promise.all(
+            entries.map(async (entry) => {
+              if (['provisioning', 'purged', 'imported_archive'].includes(entry.state))
+                return entry;
+              const current = await this.summary(this.directory(entry.id), s.account_id);
+              return {
+                ...entry,
+                phase: current.phase,
+                membership: (current.members as MatchMember[]).find(
+                  (member) => member.account_id === s.account_id,
+                ),
+              };
+            }),
+          )
+        ).filter((entry) => !('membership' in entry) || entry.membership !== undefined),
       };
     }
     if (path.startsWith('/matches/')) return this.matchRequest(input, s);
@@ -1860,9 +1863,14 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       return this.matchHistory(s, d, path, url);
     if (
       input.method === 'POST' &&
-      ['/members/invite', '/members/accept', '/members/bind', '/staff/assign', '/publish'].includes(
-        path,
-      )
+      [
+        '/members/invite',
+        '/members/remove',
+        '/members/accept',
+        '/members/bind',
+        '/staff/assign',
+        '/publish',
+      ].includes(path)
     ) {
       const p = object(input.body),
         id = requestId(p.request_id),
@@ -1931,6 +1939,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       const action = (
         {
           '/members/invite': 'invite',
+          '/members/remove': 'remove-member',
           '/members/accept': 'accept',
           '/members/bind': 'bind',
           '/staff/assign': 'assign',
@@ -2141,7 +2150,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
           const d = this.directory(op.target),
             action = op.action.slice(8);
           if (
-            ['invite', 'assign', 'publish'].includes(action) &&
+            ['invite', 'remove-member', 'assign', 'publish'].includes(action) &&
             !this.roles(op.actor).some((r) => ['owner', 'admin'].includes(r))
           ) {
             const latest = await this.summary(d, op.actor);
@@ -2153,7 +2162,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
               '原总裁判已失去任职，请由新人重新提交。',
             );
           }
-          if (p.accountId)
+          if (p.accountId && action !== 'remove-member')
             requireThat(
               this.account(String(p.accountId)).status !== 'disabled',
               'ACCOUNT_DISABLED',

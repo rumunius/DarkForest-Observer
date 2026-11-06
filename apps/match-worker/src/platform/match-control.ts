@@ -84,11 +84,13 @@ function freezeCheck(e: Engine) {
 function bindCivilization(e: Engine, accountId: string, name: string) {
   freezeCheck(e);
   const db = e.db;
-  const n = db.one<{ n: number }>('SELECT COUNT(*) AS n FROM players')!.n + 1;
+  const used = new Set(db.all<{ id: string }>('SELECT id FROM players').map((p) => p.id));
+  let n = 1;
+  while (n <= 350 && used.has(`C${String(n).padStart(2, '0')}`)) n++;
   requireThat(n <= 350, 'CAPACITY', '本场最多绑定350个文明。');
   const id = `C${String(n).padStart(2, '0')}`;
   db.exec(
-    'INSERT INTO accounts(id,match_id,role,name,credential_hash,permissions) VALUES(?,?,?,?,?,?)',
+    'INSERT INTO accounts(id,match_id,role,name,credential_hash,permissions) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,credential_hash=excluded.credential_hash,enabled=1,version=accounts.version+1',
     id,
     e.matchId,
     'player',
@@ -100,7 +102,8 @@ function bindCivilization(e: Engine, accountId: string, name: string) {
   db.exec('INSERT INTO flights(player_id) VALUES(?)', id);
   db.exec('INSERT INTO attack_controls(player_id) VALUES(?)', id);
   db.exec(
-    "UPDATE memberships SET local_id=?,state='bound',epoch=1 WHERE account_id=?",
+    "UPDATE memberships SET local_id=?,state='bound',epoch=(SELECT version FROM accounts WHERE id=?) WHERE account_id=?",
+    id,
     id,
     accountId,
   );
@@ -378,6 +381,7 @@ export async function matchControl(
             .map((row) => row.account_id),
           members: db.all('SELECT * FROM memberships'),
           assignments: db.all('SELECT * FROM staff_assignments'),
+          seatVersions: db.all("SELECT id,version FROM accounts WHERE role='judge'"),
           managementState: db.one('SELECT management_state FROM match_identity')?.management_state,
         };
       } else if (request.action === 'invite') {
@@ -396,6 +400,44 @@ export async function matchControl(
           'invited',
         );
         result = { invited: true };
+      } else if (request.action === 'remove-member') {
+        requireThat(
+          db.one('SELECT management_state FROM match_identity')?.management_state === 'draft',
+          'MATCH_ALREADY_PUBLISHED',
+          '发布准备入口后不能移除本场成员。',
+        );
+        freezeCheck(e);
+        requireThat(
+          db.match().revision === integer(p.expectedRevision, 0),
+          'VERSION_CONFLICT',
+          '本场成员或状态已变化，请刷新后重新确认移除。',
+        );
+        const account = text(p.accountId, 100),
+          member = db.one<{ kind: string; local_id: string | null; name: string }>(
+            'SELECT * FROM memberships WHERE account_id=?',
+            account,
+          );
+        requireThat(member, 'MEMBER_NOT_FOUND', '该账号已不在本场成员中。', 404);
+        const localId = member.local_id;
+        if (localId) {
+          cancelManagement(e, localId);
+          db.exec('UPDATE accounts SET enabled=0,version=version+1 WHERE id=?', localId);
+          if (member.kind === 'player') {
+            db.exec('DELETE FROM roster_members WHERE player_id=?', localId);
+            db.exec('DELETE FROM homeworlds WHERE player_id=?', localId);
+            db.exec('DELETE FROM attack_controls WHERE player_id=?', localId);
+            db.exec('DELETE FROM flights WHERE player_id=?', localId);
+            db.exec('DELETE FROM players WHERE id=?', localId);
+          } else {
+            db.exec(
+              'UPDATE staff_assignments SET ended_utc=? WHERE account_id=? AND ended_utc IS NULL',
+              e.now(),
+              account,
+            );
+          }
+        }
+        db.exec('DELETE FROM memberships WHERE account_id=?', account);
+        result = { removed: true, accountId: account, name: member.name, releasedLocalId: localId };
       } else if (request.action === 'accept') {
         const member = db.one<{
           kind: string;
