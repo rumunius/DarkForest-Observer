@@ -90,8 +90,10 @@ async function drain() {
 async function match(
   name: string,
   kind = 'official',
-  requestId = crypto.randomUUID(),
+  suppliedRequestId?: string,
 ) {
+  const requestId =
+    suppliedRequestId === undefined ? crypto.randomUUID() : suppliedRequestId;
   const reply = await call('/platform/matches/create', {
     request_id: requestId,
     name,
@@ -179,8 +181,10 @@ async function removeMember(
   id: string,
   target: Login,
   actor = owner,
-  requestId = crypto.randomUUID(),
+  suppliedRequestId?: string,
 ) {
+  const requestId =
+    suppliedRequestId === undefined ? crypto.randomUUID() : suppliedRequestId;
   const current = jsonObject(
     jsonObject((await call(`/matches/${id}/manage`, undefined, actor)).body)
       .current,

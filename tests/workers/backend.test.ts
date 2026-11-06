@@ -87,8 +87,10 @@ async function action(
   path: string,
   login: Login,
   payload: Record<string, unknown> = {},
-  requestId = `test-${++sequence}`,
+  suppliedRequestId?: string,
 ) {
+  const requestId =
+    suppliedRequestId === undefined ? `test-${++sequence}` : suppliedRequestId;
   return call(path, {...payload, request_id: requestId}, login);
 }
 async function manage(

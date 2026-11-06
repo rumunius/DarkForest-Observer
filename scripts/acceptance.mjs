@@ -81,7 +81,8 @@ async function login(id) {
   }
   return {cookie, csrf: data.csrfToken, id};
 }
-async function action(path, session, payload = {}, id = randomUUID()) {
+async function action(path, session, payload = {}, suppliedId) {
+  const id = suppliedId === undefined ? randomUUID() : suppliedId;
   return (await request(path, {...payload, request_id: id}, session)).data;
 }
 async function manage(path, head, payload = {}) {

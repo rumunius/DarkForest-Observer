@@ -79,8 +79,9 @@ async function action(
   path: string,
   l: Login,
   body: Record<string, unknown> = {},
-  id = `m-${++seq}`,
+  suppliedId?: string,
 ) {
+  const id = suppliedId === undefined ? `m-${++seq}` : suppliedId;
   return call(path, {...body, request_id: id}, l);
 }
 async function manage(

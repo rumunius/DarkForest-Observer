@@ -67,7 +67,8 @@ async function sql(query: string, ...args: SqlStorageValue[]) {
     ),
   );
 }
-async function command(text: string, l = head, id = `cmd-${++sequence}`) {
+async function command(text: string, l = head, suppliedId?: string) {
+  const id = suppliedId === undefined ? `cmd-${++sequence}` : suppliedId;
   return call('/judge/command/execute', {request_id: id, command: text}, l);
 }
 async function plan(text: string) {
