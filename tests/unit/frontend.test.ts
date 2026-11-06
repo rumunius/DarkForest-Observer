@@ -54,6 +54,65 @@ describe('bracelet overflow', () => {
 });
 
 describe('frontend input and authorized disclosure', () => {
+  it('rejects malformed preview arm inputs before accepting or recording an attack', async () => {
+    const source = new MockSource();
+    const before = await source.read('/player');
+    for (const payload of [
+      {arm_a: 'BK', arm_b: ['WH']},
+      {arm_a: null, arm_b: ['WH']},
+      {arm_a: ['BK', 'invalid'], arm_b: ['WH']},
+      {arm_a: ['BK', 'WH'], arm_b: {length: 1}},
+    ]) {
+      await expect(
+        source.submit({
+          path: '/action/sighting',
+          requestId: 'invalid-arms',
+          payload,
+        }),
+      ).rejects.toMatchObject({status: 422, message: '手环颜色组合不完整。'});
+    }
+    const after = await source.read('/player');
+    expect(after.match!.revision).toBe(before.match!.revision);
+    expect(after.player).toEqual(before.player);
+    expect((await source.result('invalid-arms')).status).toBe('pending');
+  });
+
+  it('validates every preview elimination row before changing any civilization', async () => {
+    const source = new MockSource();
+    source.reset('chief', 'verification');
+    const before = await source.read('/judge');
+    const living = before.civilizations.find(
+      civilization => civilization.flight === 'active',
+    )!;
+    await expect(
+      source.submit({
+        path: '/judge/hunt-finalize',
+        requestId: 'invalid-eliminations',
+        payload: {
+          eliminations: [{id: living.id, reason: 'outside_at_cutoff'}, null],
+        },
+      }),
+    ).rejects.toBeInstanceOf(ApiError);
+    const after = await source.read('/judge');
+    expect(after.civilizations).toEqual(before.civilizations);
+    expect(after.match!.verification).toBe(true);
+    expect(after.match!.revision).toBe(before.match!.revision);
+  });
+
+  it('rejects malformed preview site settings without replacing the valid configuration', async () => {
+    const source = new MockSource();
+    source.reset('chief', 'registration');
+    const before = await source.read('/judge');
+    await expect(
+      source.submit({
+        path: '/judge/site-config',
+        requestId: 'invalid-site',
+        payload: {site: {...before.site, colors: {BK: 42}}},
+      }),
+    ).rejects.toBeInstanceOf(ApiError);
+    expect((await source.read('/judge')).site).toEqual(before.site);
+  });
+
   it.each<Arms>([
     [['BK', 'OR'], ['WH']],
     [

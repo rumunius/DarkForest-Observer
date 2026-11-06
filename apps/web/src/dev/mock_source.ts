@@ -1,9 +1,7 @@
 import {
   RULES,
-  validArms,
   validCode,
   type Action,
-  type ColorId,
   type DataSource,
   type Operation,
   type OperationResult,
@@ -21,6 +19,11 @@ import {
 import {ApiError} from '../data/http';
 import type {PreviewRole} from './preview_fixtures';
 import {buildArms, createPreviewSnapshot} from './preview_fixtures';
+import {
+  previewEliminations,
+  previewSite,
+  validPreviewArms,
+} from './preview_input';
 
 function delay() {
   return new Promise<void>(resolve => setTimeout(resolve, 180));
@@ -395,9 +398,7 @@ export class MockSource implements DataSource {
           message = clearingCopy('photon', code);
           break;
         case 'sighting': {
-          if (
-            !validArms([payload.arm_a as ColorId[], payload.arm_b as ColorId[]])
-          ) {
+          if (!validPreviewArms(payload.arm_a, payload.arm_b)) {
             throw new ApiError('手环颜色组合不完整。', 422);
           }
           if (this.sightingResult === 'hit') {
@@ -483,19 +484,19 @@ export class MockSource implements DataSource {
           ],
         };
         if (Array.isArray(payload.eliminations)) {
-          preview.changes = (
-            payload.eliminations as Array<{id: string; reason: string}>
-          ).map(item => {
-            const c = this.state.civilizations.find(c => c.id === item.id);
-            return {
-              target: `${item.id}（${c?.nickname ?? ''}）`,
-              before: '存活文明',
-              after:
-                item.reason === 'outside_at_cutoff'
-                  ? '截止时未进入终局圈，永久淘汰'
-                  : '未按时加入位置共享，永久淘汰',
-            };
-          });
+          preview.changes = previewEliminations(payload.eliminations).map(
+            item => {
+              const c = this.state.civilizations.find(c => c.id === item.id);
+              return {
+                target: `${item.id}（${c?.nickname ?? ''}）`,
+                before: '存活文明',
+                after:
+                  item.reason === 'outside_at_cutoff'
+                    ? '截止时未进入终局圈，永久淘汰'
+                    : '未按时加入位置共享，永久淘汰',
+              };
+            },
+          );
           if (!preview.changes.length) {
             preview.changes.push({
               target: '全部存活文明',
@@ -564,11 +565,8 @@ export class MockSource implements DataSource {
         match.pauseReason = scalarText(payload.reason ?? '');
         title = match.paused ? '比赛已暂停' : '比赛已恢复';
       } else if (path === '/judge/hunt-finalize') {
-        const eliminations = payload.eliminations as Array<{
-          id: string;
-          reason: string;
-        }>;
-        for (const item of eliminations ?? []) {
+        const eliminations = previewEliminations(payload.eliminations);
+        for (const item of eliminations) {
           const c = this.state.civilizations.find(c => c.id === item.id);
           if (c) {
             c.flight = 'eliminated';
@@ -684,7 +682,7 @@ export class MockSource implements DataSource {
       } else if (path === '/judge/site-config') {
         this.state.site = {
           ...this.state.site,
-          ...(payload.site as Snapshot['site']),
+          ...previewSite(payload.site),
           version: this.state.site.version + 1,
         };
         title = '活动设置已保存';
