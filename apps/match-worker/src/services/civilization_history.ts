@@ -95,6 +95,213 @@ function readHistoryCursor(encoded: string, query: string): Cursor {
     watermark: integer(fields.watermark, 0),
   };
 }
+interface HistoryCollection {
+  readonly engine: Engine;
+  readonly id: string;
+  readonly kind: string;
+  readonly cursor: Cursor | undefined;
+  readonly ceilings: Record<string, number>;
+  readonly items: Item[];
+}
+
+/** Collect one fixed SQL source under its first-page waterline and original category. */
+function takeHistorySource(
+  collection: HistoryCollection,
+  table: string,
+  fields: string,
+  where: string,
+  args: SqlStorageValue[],
+  classify: (row: Row) => string,
+  utc: string,
+  game?: string,
+  actorField = 'actor',
+): void {
+  const {engine, id, kind, cursor, ceilings, items} = collection;
+
+  const ceiling =
+    cursor?.ceilings[table] ??
+    (cursor
+      ? 0
+      : engine.db.one<{n: number}>(
+          `SELECT COALESCE(MAX(rowid),0) n FROM ${table}`,
+        )!.n);
+  integer(ceiling, 0);
+  ceilings[table] = ceiling;
+  for (const row of engine.db.all<Record<string, SqlStorageValue>>(
+    `SELECT rowid AS position,${fields} FROM ${table} WHERE rowid<=? AND (${where})`,
+    ceiling,
+    ...args,
+  )) {
+    const category = classify(row);
+    if (!category || (kind !== 'all' && category !== kind)) {
+      continue;
+    }
+    items.push({
+      id: scalarText(row.id ?? `${table}:${scalarText(row.position)}`),
+      kind: category,
+      source: table,
+      position: row.position as number,
+      utcMs: Number(row[utc] ?? 0),
+      gameMs: game && row[game] !== null ? Number(row[game]) : null,
+      actor:
+        row[actorField] === undefined || row[actorField] === null
+          ? null
+          : scalarText(row[actorField]),
+      target: id,
+      status:
+        row.status !== undefined
+          ? scalarText(row.status)
+          : row.valid !== undefined
+            ? row.valid
+              ? 'valid'
+              : 'invalid'
+            : null,
+      record: row,
+    });
+  }
+}
+
+/** Collect public event, issued-flight and elimination facts without secret code indexes. */
+function collectCivilizationFacts(
+  collection: HistoryCollection,
+  permits: string[],
+): void {
+  const {id} = collection;
+
+  // No cryptographic code indexes, ciphertext, credential hashes or session material enter history.
+  takeHistorySource(
+    collection,
+    'event_log',
+    'id,kind,title,body,audience,owner,civilization_ids,actor,game_ms,utc_ms' +
+      (permits.includes('homeworlds') ? ',code' : ''),
+    'owner=? OR EXISTS(SELECT 1 FROM json_each(civilization_ids) WHERE value=?)',
+    [id, id],
+    r =>
+      r.kind === 'tech' || r.title === '资源调整'
+        ? 'resource'
+        : ['singer', 'photon', 'broadcast'].includes(scalarText(r.kind)) ||
+            scalarText(r.title).includes('母星')
+          ? 'homeworld'
+          : 'event',
+    'utc_ms',
+    'game_ms',
+  );
+
+  takeHistorySource(
+    collection,
+    'sighting_codes',
+    'id,player_id,voyage,status,issued_utc,activated_utc,activated_game,retired_utc,retired_game,retired_reason',
+    'player_id=?',
+    [id],
+    () => 'flight',
+    'issued_utc',
+    'activated_game',
+  );
+
+  takeHistorySource(
+    collection,
+    'eliminations',
+    'seq,player_id,game_ms,utc_ms,committed_utc,reason,source,group_id,valid',
+    'player_id=?',
+    [id],
+    () => 'elimination',
+    'utc_ms',
+    'game_ms',
+  );
+}
+
+/** Collect notification content and copy/send evidence only for authorized judges. */
+function collectCivilizationNotices(
+  collection: HistoryCollection,
+  permits: string[],
+): void {
+  const {id} = collection;
+
+  if (permits.includes('notices')) {
+    takeHistorySource(
+      collection,
+      'notice_queue',
+      '*',
+      'target=?',
+      [id],
+      () => 'notice',
+      'copied_utc',
+      'game_ms',
+      'operator',
+    );
+    takeHistorySource(
+      collection,
+      'notice_actions',
+      '*',
+      'notice_id IN (SELECT id FROM notice_queue WHERE target=?)',
+      [id],
+      () => 'notice',
+      'utc_ms',
+    );
+  }
+}
+
+/** Collect attack, correction and command evidence only within the current audit permission. */
+function collectCivilizationAudits(
+  collection: HistoryCollection,
+  permits: string[],
+): void {
+  const {id, kind} = collection;
+
+  if (permits.includes('audit')) {
+    takeHistorySource(
+      collection,
+      'attacks',
+      'id,actor,target,code_id,request_id,classification,roll,wrong_index,edge_utc,committed_utc,game_ms,valid,before_json',
+      'actor=? OR target=?',
+      [id, id],
+      row =>
+        kind === 'penalty' && row.wrong_index !== null ? 'penalty' : 'attack',
+      'committed_utc',
+      'game_ms',
+    );
+    takeHistorySource(
+      collection,
+      'attack_corrections',
+      '*',
+      'attack_id IN (SELECT id FROM attacks WHERE actor=? OR target=?)',
+      [id, id],
+      () => 'correction',
+      'utc_ms',
+    );
+    const related =
+      "target=? OR EXISTS(SELECT 1 FROM json_each(detail,'$.targets') WHERE value=?) OR EXISTS(SELECT 1 FROM json_each(detail,'$.changes') WHERE json_extract(value,'$.target')=?)";
+    takeHistorySource(
+      collection,
+      'audit_logs',
+      '*',
+      related,
+      [id, id, id],
+      r =>
+        /penalty|effects/.test(scalarText(r.action))
+          ? 'penalty'
+          : /correction|invalidate|correct-penalty/.test(scalarText(r.action))
+            ? 'correction'
+            : /homeworld/.test(scalarText(r.action))
+              ? 'homeworld'
+              : /resource|photon|tech/.test(scalarText(r.action))
+                ? 'resource'
+                : 'audit',
+      'utc_ms',
+      'game_ms',
+    );
+    takeHistorySource(
+      collection,
+      'judge_command_log',
+      'seq,id,actor,request_id,status,path,created_utc,game_ms,detail',
+      "EXISTS(SELECT 1 FROM json_each(detail,'$.targets') WHERE value=?) OR EXISTS(SELECT 1 FROM json_each(detail,'$.changes') WHERE json_extract(value,'$.target')=?)",
+      [id, id],
+      () => 'command',
+      'created_utc',
+      'game_ms',
+    );
+  }
+}
 
 /** Merge independent persisted histories; the cursor fixes each source's first-page waterline. */
 export function civilizationHistory(
@@ -140,162 +347,17 @@ export function civilizationHistory(
     : undefined;
   const ceilings: Record<string, number> = {};
   const items: Item[] = [];
-  const take = (
-    table: string,
-    fields: string,
-    where: string,
-    args: SqlStorageValue[],
-    classify: (row: Row) => string,
-    utc: string,
-    game?: string,
-    actorField = 'actor',
-  ) => {
-    const ceiling =
-      cursor?.ceilings[table] ??
-      (cursor
-        ? 0
-        : engine.db.one<{n: number}>(
-            `SELECT COALESCE(MAX(rowid),0) n FROM ${table}`,
-          )!.n);
-    integer(ceiling, 0);
-    ceilings[table] = ceiling;
-    for (const row of engine.db.all<Record<string, SqlStorageValue>>(
-      `SELECT rowid AS position,${fields} FROM ${table} WHERE rowid<=? AND (${where})`,
-      ceiling,
-      ...args,
-    )) {
-      const category = classify(row);
-      if (!category || (kind !== 'all' && category !== kind)) {
-        continue;
-      }
-      items.push({
-        id: scalarText(row.id ?? `${table}:${scalarText(row.position)}`),
-        kind: category,
-        source: table,
-        position: row.position as number,
-        utcMs: Number(row[utc] ?? 0),
-        gameMs: game && row[game] !== null ? Number(row[game]) : null,
-        actor:
-          row[actorField] === undefined || row[actorField] === null
-            ? null
-            : scalarText(row[actorField]),
-        target: id,
-        status:
-          row.status !== undefined
-            ? scalarText(row.status)
-            : row.valid !== undefined
-              ? row.valid
-                ? 'valid'
-                : 'invalid'
-              : null,
-        record: row,
-      });
-    }
+  const collection: HistoryCollection = {
+    engine,
+    id,
+    kind,
+    cursor,
+    ceilings,
+    items,
   };
-  // No cryptographic code indexes, ciphertext, credential hashes or session material enter history.
-  take(
-    'event_log',
-    'id,kind,title,body,audience,owner,civilization_ids,actor,game_ms,utc_ms' +
-      (permits.includes('homeworlds') ? ',code' : ''),
-    'owner=? OR EXISTS(SELECT 1 FROM json_each(civilization_ids) WHERE value=?)',
-    [id, id],
-    r =>
-      r.kind === 'tech' || r.title === '资源调整'
-        ? 'resource'
-        : ['singer', 'photon', 'broadcast'].includes(scalarText(r.kind)) ||
-            scalarText(r.title).includes('母星')
-          ? 'homeworld'
-          : 'event',
-    'utc_ms',
-    'game_ms',
-  );
-  take(
-    'sighting_codes',
-    'id,player_id,voyage,status,issued_utc,activated_utc,activated_game,retired_utc,retired_game,retired_reason',
-    'player_id=?',
-    [id],
-    () => 'flight',
-    'issued_utc',
-    'activated_game',
-  );
-  take(
-    'eliminations',
-    'seq,player_id,game_ms,utc_ms,committed_utc,reason,source,group_id,valid',
-    'player_id=?',
-    [id],
-    () => 'elimination',
-    'utc_ms',
-    'game_ms',
-  );
-  if (permits.includes('notices')) {
-    take(
-      'notice_queue',
-      '*',
-      'target=?',
-      [id],
-      () => 'notice',
-      'copied_utc',
-      'game_ms',
-      'operator',
-    );
-    take(
-      'notice_actions',
-      '*',
-      'notice_id IN (SELECT id FROM notice_queue WHERE target=?)',
-      [id],
-      () => 'notice',
-      'utc_ms',
-    );
-  }
-  if (permits.includes('audit')) {
-    take(
-      'attacks',
-      'id,actor,target,code_id,request_id,classification,roll,wrong_index,edge_utc,committed_utc,game_ms,valid,before_json',
-      'actor=? OR target=?',
-      [id, id],
-      row =>
-        kind === 'penalty' && row.wrong_index !== null ? 'penalty' : 'attack',
-      'committed_utc',
-      'game_ms',
-    );
-    take(
-      'attack_corrections',
-      '*',
-      'attack_id IN (SELECT id FROM attacks WHERE actor=? OR target=?)',
-      [id, id],
-      () => 'correction',
-      'utc_ms',
-    );
-    const related =
-      "target=? OR EXISTS(SELECT 1 FROM json_each(detail,'$.targets') WHERE value=?) OR EXISTS(SELECT 1 FROM json_each(detail,'$.changes') WHERE json_extract(value,'$.target')=?)";
-    take(
-      'audit_logs',
-      '*',
-      related,
-      [id, id, id],
-      r =>
-        /penalty|effects/.test(scalarText(r.action))
-          ? 'penalty'
-          : /correction|invalidate|correct-penalty/.test(scalarText(r.action))
-            ? 'correction'
-            : /homeworld/.test(scalarText(r.action))
-              ? 'homeworld'
-              : /resource|photon|tech/.test(scalarText(r.action))
-                ? 'resource'
-                : 'audit',
-      'utc_ms',
-      'game_ms',
-    );
-    take(
-      'judge_command_log',
-      'seq,id,actor,request_id,status,path,created_utc,game_ms,detail',
-      "EXISTS(SELECT 1 FROM json_each(detail,'$.targets') WHERE value=?) OR EXISTS(SELECT 1 FROM json_each(detail,'$.changes') WHERE json_extract(value,'$.target')=?)",
-      [id, id],
-      () => 'command',
-      'created_utc',
-      'game_ms',
-    );
-  }
+  collectCivilizationFacts(collection, permits);
+  collectCivilizationNotices(collection, permits);
+  collectCivilizationAudits(collection, permits);
   const since = opts.since ? instantMs(opts.since) : -Infinity;
   const until = opts.until ? instantMs(opts.until) : Infinity;
   const compare = (a: [number, string, number], b: [number, string, number]) =>
