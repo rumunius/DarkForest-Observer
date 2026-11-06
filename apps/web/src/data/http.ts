@@ -58,7 +58,7 @@ export class HttpSource implements DataSource {
       if (!response.ok)
         throw new ApiError(
           data.message ??
-            (response.status === 401 ? '请重新登录。' : '本次请求未完成，请重新核对后再试。'),
+            (response.status === 401 ? '请重新登录。' : '本次操作未完成，请稍后再试。'),
           response.status,
           data.definitive ?? false,
         );

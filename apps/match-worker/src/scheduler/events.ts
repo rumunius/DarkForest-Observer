@@ -1,4 +1,12 @@
 import { gameTime, uniformInt } from '../domain/rules';
+import {
+  APOCALYPSE_COPY,
+  HUNT_REVIEW_COPY,
+  PREPARE_COPY,
+  TRANSFER_COPY,
+  clearingCopy,
+  techBurstCopy,
+} from '../../../../packages/contracts/src/message-copy';
 import { Fault, requireThat, type Scheduled } from '../storage/store';
 import type { Engine } from '../services/engine';
 import { autoFinish, destroyHome, eliminate, finish, logEvent } from '../services/life';
@@ -106,24 +114,8 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
     case 'code_release':
       requireThat(m.phase === 'armed', 'RELEASE_STATE_CONFLICT', '发码阶段需要裁判核查。');
       db.exec("UPDATE matches SET phase='outfitting'");
-      logEvent(
-        e,
-        event.id,
-        'stage',
-        '开始领取配置',
-        '请领取本人的手环配置，在安全位置按图示穿戴。',
-        'public',
-        [],
-        game,
-        utc,
-      );
-      e.notice(
-        event.id,
-        'group',
-        '开始领取配置',
-        '统一发码时间已到，请登录官网领取本人配置。',
-        game,
-      );
+      logEvent(e, event.id, 'stage', '做好准备', PREPARE_COPY, 'public', [], game, utc);
+      e.notice(event.id, 'group', '做好准备', PREPARE_COPY, game);
       break;
     case 'match_start': {
       db.exec(
@@ -169,7 +161,7 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         0,
         utc,
       );
-      e.notice(event.id, 'group', '比赛开始', '比赛正式开始，请在现场重新观察后提交目击。', 0);
+      e.notice(event.id, 'group', '比赛开始', '全部文明统一出航，比赛计时开始。', 0);
       break;
     }
     case 'respawn_timeout': {
@@ -196,7 +188,7 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
           event.id,
           'tech',
           '技术爆炸',
-          `${e.identity(target)}获得一枚光粒。`,
+          techBurstCopy(e.identity(target)),
           'personal',
           [target],
           game,
@@ -205,13 +197,7 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
           null,
           target,
         );
-        e.notice(
-          event.id,
-          target,
-          '技术爆炸',
-          '你获得一枚光粒，可在第一阶段正常出航时发射。',
-          game,
-        );
+        e.notice(event.id, target, '技术爆炸', techBurstCopy(e.identity(target)), game);
       } else e.audit('system', 'tech_burst_empty', event.id, '没有符合条件的文明');
       break;
     }
@@ -219,9 +205,7 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
       const code = coordinate(payload.code);
       const target = db.officialHome(code, true);
       const hit = target ? destroyHome(e, target.player_id, event.id, game, utc) : false;
-      const body = hit
-        ? `${e.identity(target!.player_id)}的母星已被歌者摧毁。`
-        : '清理完成，未摧毁任何现存母星。';
+      const body = clearingCopy('singer', code, hit ? e.identity(target!.player_id) : undefined);
       logEvent(
         e,
         event.id,
@@ -239,7 +223,7 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         "UPDATE broadcasts SET singer_status='settled' WHERE id=?",
         String(payload.broadcast),
       );
-      e.notice(event.id, 'group', '歌者清理', `坐标${code}。${body}`, game);
+      e.notice(event.id, 'group', '歌者清理', body, game);
       autoFinish(e, game, utc, event.id);
       break;
     }
@@ -253,47 +237,15 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         "SELECT p.id FROM players p JOIN flights f ON f.player_id=p.id WHERE p.entry_status='registered' AND p.id IN (SELECT player_id FROM roster_members) AND f.status NOT IN ('active','eliminated')",
       );
       for (const p of inactive) eliminate(e, p.id, 'apocalypse', event.id, game, utc);
-      logEvent(
-        e,
-        event.id,
-        'stage',
-        '宇宙末日',
-        '所有母星已毁灭，仍在出航的文明继续最后一命。',
-        'public',
-        [],
-        game,
-        utc,
-      );
-      e.notice(
-        event.id,
-        'group',
-        '宇宙末日',
-        '比赛进入宇宙末日。所有母星已毁灭，返航与重生结束。',
-        game,
-      );
+      logEvent(e, event.id, 'stage', '宇宙末日', APOCALYPSE_COPY, 'public', [], game, utc);
+      e.notice(event.id, 'group', '宇宙末日', APOCALYPSE_COPY, game);
       autoFinish(e, game, utc, event.id);
       break;
     }
     case 'transfer_start':
       db.exec("UPDATE matches SET phase='transfer'");
-      logEvent(
-        e,
-        event.id,
-        'stage',
-        '前往终局圈',
-        '目击攻击暂停。请加入QQ群位置共享，正常步行进入终局圈。',
-        'public',
-        [],
-        game,
-        utc,
-      );
-      e.notice(
-        event.id,
-        'group',
-        '前往终局圈',
-        '请加入比赛QQ群的实时位置共享，正常步行进入终局圈。98:00前到达并持续共享。',
-        game,
-      );
+      logEvent(e, event.id, 'stage', '前往终局圈', TRANSFER_COPY, 'public', [], game, utc);
+      e.notice(event.id, 'group', '前往终局圈', TRANSFER_COPY, game);
       break;
     case 'hunt_cutoff':
       db.exec("UPDATE matches SET phase='hunt',paused_at=?,pause_reason='hunt_review'", utc);
@@ -301,18 +253,8 @@ function settleEvent(e: Engine, event: Scheduled, utc: number): void {
         "INSERT INTO clock_pauses(opened,reason,actor) VALUES(?,'hunt_review','system')",
         utc,
       );
-      logEvent(
-        e,
-        event.id,
-        'stage',
-        '终局资格确认中',
-        '比赛有效时间停在98:00。等待裁判完成资格核验后恢复计时。',
-        'public',
-        [],
-        game,
-        utc,
-      );
-      e.notice(event.id, 'group', '终局资格确认中', '比赛计时已暂停，等待裁判完成资格核验。', game);
+      logEvent(e, event.id, 'stage', '终局资格确认中', HUNT_REVIEW_COPY, 'public', [], game, utc);
+      e.notice(event.id, 'group', '终局资格确认中', HUNT_REVIEW_COPY, game);
       break;
     case 'regulation_end':
       finish(e, 'regulation', game, utc, event.id);

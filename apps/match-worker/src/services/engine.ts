@@ -1,4 +1,5 @@
 import type { OperationResult, Session } from '@darkforest/contracts';
+import { qqCopy } from '../../../../packages/contracts/src/message-copy';
 import {
   ContractError,
   coordinate,
@@ -156,7 +157,7 @@ export class Engine {
       key,
       bucket,
     )!.count;
-    requireThat(count <= max, 'RATE_LIMITED', '请求过于频繁，请稍后重试。', 429);
+    requireThat(count <= max, 'RATE_LIMITED', '操作过于频繁，请稍后重试。', 429);
   }
   actor(tokenHash: string): Actor {
     if (this.grant) return membershipActor(this, this.grant);
@@ -202,7 +203,7 @@ export class Engine {
           status: 'pending',
           code: 'UNCONFIRMED',
           title: '结果待确认',
-          message: '尚未取得已提交结果，正在确认。',
+          message: '正在确认上一次操作的结果。',
         };
   }
   replay(actor: Actor, id: string, path: string, bodyDigest: string): OperationResult | null {
@@ -217,7 +218,7 @@ export class Engine {
       requireThat(
         row.path === path && row.digest === bodyDigest,
         'REQUEST_ID_CONFLICT',
-        '该请求编号已用于不同操作。',
+        '本次操作内容有变，请刷新后重新提交。',
       );
     return JSON.parse(row.result_json) as OperationResult;
   }
@@ -266,6 +267,19 @@ export class Engine {
   notice(source: string, target: string, title: string, body: string, game = this.game()): void {
     const trial =
       this.db.one<{ kind: string }>('SELECT kind FROM match_identity')?.kind === 'trial';
+    const heading =
+      title === '永久淘汰'
+        ? body.includes('本次提交的手环颜色有误')
+          ? '直接出局'
+          : '维度跃迁'
+        : title === '飞船被击毁'
+          ? '飞船击毁'
+          : title === '正式坐标广播'
+            ? '坐标广播'
+            : title === '统一开赛时间'
+              ? '即将开赛'
+              : title;
+    const message = target === 'group' || /^C\d+$/.test(target) ? qqCopy(heading, body) : body;
     this.db.exec(
       'INSERT OR IGNORE INTO notice_queue(id,dedup_key,channel,target,title,body,game_ms,priority,ordering_seq) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(ordering_seq),0)+1 FROM notice_queue))',
       crypto.randomUUID(),
@@ -273,7 +287,7 @@ export class Engine {
       target === 'group' ? 'group' : 'private',
       target,
       trial ? `【试玩】${title}` : title,
-      trial ? `本场为试玩比赛。${body}` : body,
+      trial ? `本场为试玩比赛。\n${message}` : message,
       game,
       title === '永久淘汰' ? 100 : title === '飞船被击毁' ? 90 : title === '母星毁灭' ? 80 : 0,
     );
@@ -480,7 +494,12 @@ export class Engine {
       if (error instanceof Fault)
         return {
           status: error.status,
-          body: { code: error.code, message: error.message, definitive: true },
+          body: {
+            code: error.code,
+            message:
+              error instanceof EventFailure ? '赛事暂时无法继续，请等待裁判处理。' : error.message,
+            definitive: true,
+          },
         };
       if (error instanceof ContractError || error instanceof CommandSyntaxError)
         return {
@@ -492,7 +511,7 @@ export class Engine {
         status: 503,
         body: {
           code: 'SERVICE_UNAVAILABLE',
-          message: '服务暂时不可用，操作结果请通过结果确认恢复。',
+          message: '暂时无法连接，正在确认上一次操作的结果。',
           definitive: false,
         },
       };
@@ -736,7 +755,7 @@ export class Engine {
           status: 'complete',
           code: 'CANCELLED',
           title: '已确认未提交',
-          message: '该请求已持久取消，迟到请求不会再生效，可以重新行动。',
+          message: '上一次操作未提交，你可以重新操作。',
         };
         this.saveResult(current, id, null, null, cancelled, 1);
         return { status: 200, body: cancelled };
@@ -797,7 +816,7 @@ export class Engine {
         result = judgeAction(this, current, id, path, body, prepared, credentialMaterial);
       else if (path.startsWith('/action/') || path === '/player/nickname')
         result = playerAction(this, current, id, path, body, prepared, input.edgeUtc, keys);
-      else throw new Fault(404, 'NOT_FOUND', '接口不存在。');
+      else throw new Fault(404, 'NOT_FOUND', '未找到这项操作。');
       if (
         [
           '/judge/events/settle-due',

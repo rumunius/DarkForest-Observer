@@ -1,6 +1,10 @@
 import type { GameEvent, ResultsState } from '@darkforest/contracts';
 import type { Engine } from './engine';
 import { civilization } from '../projections/snapshot';
+import {
+  eliminationCopy,
+  homeDestroyedCopy,
+} from '../../../../packages/contracts/src/message-copy';
 import type { CodeRow } from '../storage/store';
 
 export function logEvent(
@@ -72,7 +76,11 @@ export function eliminate(
     source,
     group,
   );
-  const body = `${e.identity(player)}已永久淘汰。请在安全位置摘下全部比赛手环，停止正式行动，返回中控室。观战等待${e.db.parameters().observerWaitSeconds}秒。`;
+  const body = eliminationCopy(
+    e.identity(player),
+    e.db.parameters().observerWaitSeconds,
+    reason === 'wrong_attack_direct_out',
+  );
   logEvent(
     e,
     `${source}:elimination:${player}`,
@@ -107,7 +115,7 @@ export function destroyHome(
     source,
     player,
     '母星毁灭',
-    `${e.identity(player)}的母星已毁灭。已出航者继续最后一命，未出航者永久淘汰。`,
+    homeDestroyedCopy(e.identity(player), e.db.home(player)!.code),
     game,
   );
   return true;

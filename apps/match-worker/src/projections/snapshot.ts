@@ -26,6 +26,7 @@ import { judgeRecords, noticeProjection } from './judge-records';
 import { TIMES } from '../domain/rules';
 import { readCommandHistory } from '../services/commands';
 import { eventBody } from './event-copy';
+import { qqCopy, gameTimeCopy } from '../../../../packages/contracts/src/message-copy';
 type Keys = Awaited<ReturnType<Engine['keys']>>;
 export function matchProjection(e: Engine): MatchState {
   const m = e.db.match();
@@ -101,7 +102,7 @@ export function playerProjection(e: Engine, id: string, keys: Keys, own = false)
   )!.count;
   const reasons: Record<string, string> = {
     sighting: '最后一命被击毁',
-    wrong_attack_direct_out: '提交错误的目击码后被判定出局',
+    wrong_attack_direct_out: '提交错误的手环颜色，被判定永久淘汰',
     respawn_timeout: '未在期限内完成重生',
     homeworld_destroyed: '母星毁灭时尚未出航',
     apocalypse: '宇宙末日时尚未出航',
@@ -458,7 +459,10 @@ export function template(e: Engine, actor: Actor, kind: string): { text: string 
   if (kind === 'homeworld') {
     requireThat(home, 'NO_HOMEWORLD', '请先提交母星登记。');
     return {
-      text: `${identity}\n母星坐标：${home.code}\n提交版本：${home.version}\n请核对本次提交的时间水印照片。`,
+      text: qqCopy(
+        '母星登记',
+        `文明${identity}请求在${home.code}登记母星（提交版本：${home.version}），以下是我的母星现场时间水印照片：`,
+      ),
     };
   }
   if (kind === 'respawn') {
@@ -467,9 +471,17 @@ export function template(e: Engine, actor: Actor, kind: string): { text: string 
       'NO_RESPAWN',
       '当前无需提交重生照片。',
     );
-    return { text: `${identity}\n我已返回母星，附上本次返航的时间水印照片。` };
+    return {
+      text: qqCopy('重生', `文明${identity}已返回母星，请求重生，以下是我的母星现场时间水印照片：`),
+    };
   }
-  if (kind === 'exception') return { text: `${identity}\n我需要裁判协助，请核对官网当前状态。` };
+  if (kind === 'exception')
+    return {
+      text: qqCopy(
+        '异常申报',
+        `文明${identity}请求裁判协助。\n比赛时间：${gameTimeCopy(e.game())}。\n现场情况：`,
+      ),
+    };
   throw new Fault(404, 'NOT_FOUND', '消息模板不存在。');
 }
 export function readEndpoint(e: Engine, actor: Actor | null, path: string, keys: Keys): unknown {
@@ -562,5 +574,5 @@ export function readEndpoint(e: Engine, actor: Actor | null, path: string, keys:
     if (route === '/results/overview') return results(e, keys);
     if (route === '/observer/overview') return matchProjection(e);
   }
-  throw new Fault(404, 'NOT_FOUND', '接口不存在。');
+  throw new Fault(404, 'NOT_FOUND', '未找到这个页面。');
 }

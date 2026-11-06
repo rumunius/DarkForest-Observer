@@ -137,7 +137,7 @@ function useFeedbackMessages() {
           <strong>{!online ? '连接已中断，保留当前草稿。' : error}</strong>
           {data.match && (
             <small>
-              最近同步：
+              上次更新：
               {new Date(data.match.serverUtcMs).toLocaleTimeString('zh-CN', {
                 timeZone: data.site.timezone,
               })}
@@ -155,7 +155,7 @@ function useFeedbackMessages() {
       content: (
         <>
           <strong>正在确认上一次操作结果</strong>
-          <p>保留本次请求，取得明确结果后再进行新的操作。</p>
+          <p>请等待结果。</p>
           <button className="text-button" disabled={busy} onClick={() => void recover()}>
             查询原操作结果
           </button>
@@ -170,7 +170,9 @@ function useFeedbackMessages() {
         <>
           <strong>{result.title}</strong>
           <p>{result.message}</p>
-          {result.code && <strong className="numeric feedback-code">{result.code}</strong>}
+          {result.code && /^\d{6}$/.test(result.code) && (
+            <strong className="numeric feedback-code">{result.code}</strong>
+          )}
         </>
       ),
     });
@@ -352,8 +354,8 @@ function Screen() {
     content = allowedGlobal ? (
       <ObserverPages />
     ) : (
-      <Empty title="当前账号尚无宇宙观测权限">
-        永久淘汰满{data.parameters?.observerWaitSeconds ?? 180}秒后，请等待服务器确认资格。
+      <Empty title="宇宙观测尚未开放">
+        永久淘汰满{data.parameters?.observerWaitSeconds ?? 180}秒后可以进入宇宙观测。
       </Empty>
     );
   else if (results)

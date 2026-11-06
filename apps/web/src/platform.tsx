@@ -399,7 +399,7 @@ function Claim({ client, run, busy }: { client: PlatformClient; run: Run; busy: 
           });
         }}
       >
-        <Field label="邀请令牌">
+        <Field label="邀请码">
           <input
             type="password"
             required
@@ -537,7 +537,7 @@ function Matches({
                   {d.retention_days} 天
                 </small>
                 {d.synced_utc && (
-                  <small>状态同步于 {new Date(d.synced_utc).toLocaleString('zh-CN')}</small>
+                  <small>更新于 {new Date(d.synced_utc).toLocaleString('zh-CN')}</small>
                 )}
               </div>
               <div className="platform-row-actions">
@@ -1337,11 +1337,11 @@ function Security({
         </section>
       )}
       <section className="platform-detail">
-        <h2>设备会话</h2>
+        <h2>设备登录记录</h2>
         {sessions?.map((s, i) => (
           <p key={i}>
             {new Date(s.created_utc).toLocaleString('zh-CN')}，
-            {s.revoked ? '已撤销' : new Date(s.expires).toLocaleString('zh-CN') + ' 到期'}
+            {s.revoked ? '已退出登录' : new Date(s.expires).toLocaleString('zh-CN') + ' 到期'}
           </p>
         ))}
         <Button
@@ -1739,7 +1739,7 @@ function History({ client, id }: { client: PlatformClient; id: string }) {
       await work();
     } catch (e) {
       setError(
-        e instanceof Error && e.name !== 'AbortError' ? e.message : '请求未完成，请稍后重试。',
+        e instanceof Error && e.name !== 'AbortError' ? e.message : '操作未完成，请稍后重试。',
       );
     } finally {
       setBusy(false);

@@ -9,6 +9,10 @@ import {
   text,
 } from '../../../../packages/contracts/src/backend';
 import { techSchedule, TIMES } from '../domain/rules';
+import {
+  HUNT_START_COPY,
+  START_COUNTDOWN_COPY,
+} from '../../../../packages/contracts/src/message-copy';
 import { token } from '../security/crypto';
 import { Fault, permission, requireThat, type Actor, type Parameters } from '../storage/store';
 import { completed, type Engine, type PreparedCode } from './engine';
@@ -615,8 +619,8 @@ export function judgeAction(
       target,
       '母星审核结果',
       raw.decision === 'approve'
-        ? '母星审核通过，请继续完成首航准备。'
-        : `母星登记已退回：${String(raw.reason)}`,
+        ? `文明${e.identity(target)}，你的母星已登记，请离开母星至少50米，准备首航。`
+        : `文明${e.identity(target)}，你的母星登记已退回：${String(raw.reason)}`,
       game,
     );
     return completed(id, raw.decision === 'approve' ? '审核通过' : '已退回修改', undefined, {
@@ -805,7 +809,7 @@ export function judgeAction(
         source,
         'group',
         '统一开赛时间',
-        `统一开赛时间：${new Date(time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}。`,
+        `统一开赛时间：${new Date(time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}。\n${START_COUNTDOWN_COPY}`,
         game,
       );
       break;
@@ -866,7 +870,7 @@ export function judgeAction(
           `${source}:replay:${row.id}`,
           'group',
           `重播：${row.title}`,
-          `${row.body}${row.code ? `\n坐标：${row.code}` : ''}`,
+          `${row.body}${row.code && !row.body.includes(row.code) ? `\n坐标：${row.code}` : ''}`,
           game,
         );
       break;
@@ -901,13 +905,7 @@ export function judgeAction(
       closePause(e, now);
       autoFinish(e, TIMES.cutoff, m.paused_at!, source);
       if (db.match().phase !== 'ended')
-        e.notice(
-          source,
-          'group',
-          '最后狩猎开始',
-          '终局资格核验完成，恢复目击攻击。请持续共享位置。',
-          game,
-        );
+        e.notice(source, 'group', '最后狩猎开始', HUNT_START_COPY, game);
       break;
     }
     case '/judge/hunt-eliminate':

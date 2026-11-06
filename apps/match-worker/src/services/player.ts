@@ -9,6 +9,14 @@ import { firstSongDue, normalizeArms, TIMES, uniformInt } from '../domain/rules'
 import { Fault, requireThat, type Actor, type CodeRow } from '../storage/store';
 import { completed, type Engine, type PreparedCode } from './engine';
 import { autoFinish, destroyHome, eliminate, logEvent, retire } from './life';
+import {
+  broadcastCopy,
+  clearingCopy,
+  reverseListeningCopy,
+  shipDestroyedCopy,
+  gameTimeCopy,
+  messageDuration,
+} from '../../../../packages/contracts/src/message-copy';
 
 export function allowedActions(e: Engine, player: string): Action[] {
   if (e.db.match().recovery_state) return [];
@@ -339,9 +347,10 @@ export function playerAction(
           eventId,
           target,
           '飞船被击毁',
-          canRespawn
-            ? '你的飞船被击毁。请在安全位置摘下全部手环，在个人页面查看返航期限。'
-            : '你的飞船被击毁，已永久淘汰。请摘下手环并返回中控室。',
+          shipDestroyedCopy(e.identity(target)) +
+            (canRespawn
+              ? `\n请在比赛时间${gameTimeCopy(Math.min(game + params.respawnSeconds * 1000, TIMES.apocalypse))}前完成重生。`
+              : ''),
           game,
         );
       } else if (['reserved_code', 'unknown_code'].includes(classification)) {
@@ -385,13 +394,21 @@ export function playerAction(
         JSON.stringify(before),
         `${eventId}:attack`,
       );
+      const eliminated = db.flight(actor.id).status === 'eliminated';
+      const mismatch = wrong > control.wrong;
+      const missedTitle = mismatch ? (eliminated ? '直接出局' : '禁止攻击') : '本次目击未产生击毁';
+      const missedBody = mismatch
+        ? eliminated
+          ? `文明${e.identity(actor.id)}，本次提交的手环颜色有误，你已永久淘汰。\n请在安全位置摘下全部比赛手环，返回中控室，查看官网上的宇宙观测开放时间。`
+          : `文明${e.identity(actor.id)}，本次提交的手环颜色有误。\n累计错误：${wrong}次。禁止目击攻击：${messageDuration((locked - now) / 1000)}。\n恢复攻击时间：${new Date(locked).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}。\n再次提交错误颜色的处罚：${wrong === 1 ? `${params.secondOutPercent}%概率永久淘汰，${100 - params.secondOutPercent}%概率禁止目击攻击${messageDuration(params.secondLockSeconds)}` : '永久淘汰'}。`
+        : '本次目击未产生击毁。';
       if (!target)
         logEvent(
           e,
           eventId,
           'sighting',
-          '本次目击未产生击毁',
-          '本次目击未产生击毁。请在当前页查看提交错误的目击码次数及攻击限制。',
+          missedTitle,
+          missedBody,
           'personal',
           [actor.id],
           game,
@@ -404,7 +421,7 @@ export function playerAction(
           `${eventId}:target`,
           'sighting',
           '飞船被击毁',
-          '你的飞船已被击毁，请在当前页查看返航或淘汰安排。',
+          shipDestroyedCopy(e.identity(target)),
           'personal',
           [target],
           game,
@@ -432,15 +449,15 @@ export function playerAction(
           : undefined;
       result = completed(
         id,
-        target ? '目击成功' : '本次目击未产生击毁',
+        target ? '目击成功' : missedTitle,
         target
           ? '目标飞船已被击毁，母星情报已保存。'
-          : '本次目击未产生击毁。请在当前页查看提交错误的目击码次数及攻击限制。',
+          : missedBody.replace(`文明${e.identity(actor.id)}，`, ''),
         {
           outcome: {
             wrongCount: wrong,
             lockedUntilUtcMs: locked,
-            eliminated: db.flight(actor.id).status === 'eliminated',
+            eliminated,
             ...(target ? { target } : {}),
             ...(intel ? { intel } : {}),
           },
@@ -462,8 +479,8 @@ export function playerAction(
         e,
         eventId,
         'broadcast',
-        '正式坐标广播',
-        `${e.identity(actor.id)}广播了坐标${code}。`,
+        '坐标广播',
+        broadcastCopy(e.identity(actor.id), code),
         'public',
         [actor.id],
         game,
@@ -500,19 +517,13 @@ export function playerAction(
         e.notice(
           eventId,
           target.player_id,
-          '收到母星情报',
-          `${e.identity(actor.id)}的母星坐标为${home.code}。`,
+          '你被广播了',
+          reverseListeningCopy(e.identity(target.player_id), code, e.identity(actor.id), home.code),
           game,
         );
       }
-      e.notice(
-        eventId,
-        'group',
-        '正式坐标广播',
-        `${e.identity(actor.id)}广播了坐标${code}。`,
-        game,
-      );
-      result = completed(id, '广播已发布', '正式广播已受理。', {
+      e.notice(eventId, 'group', '坐标广播', broadcastCopy(e.identity(actor.id), code), game);
+      result = completed(id, '广播已发布', `坐标${code}已暴露给全宇宙。`, {
         outcome: { accepted: true, eventId, remaining: 1 - p.broadcasts },
       });
       break;
@@ -521,14 +532,13 @@ export function playerAction(
       const code = coordinate(raw.code);
       const target = db.officialHome(code, true);
       const hit = target ? destroyHome(e, target.player_id, eventId, game, now) : false;
-      const body = hit
-        ? `${e.identity(target!.player_id)}的母星已被光粒摧毁。`
-        : '清理完成，未摧毁任何现存母星。';
+      const body = clearingCopy('photon', code, hit ? e.identity(target!.player_id) : undefined);
+      const title = hit ? '光粒命中' : '光粒清理';
       logEvent(
         e,
         eventId,
         'photon',
-        '光粒清理',
+        title,
         body,
         'public',
         hit ? [target!.player_id] : [],
@@ -546,15 +556,15 @@ export function playerAction(
         hit ? target!.player_id : null,
       );
       db.exec('UPDATE players SET photons=0 WHERE id=?', actor.id);
-      e.notice(eventId, 'group', '光粒清理', `坐标${code}。${body}`, game);
-      result = completed(id, '光粒已发射', '光粒已发射，剩余0枚。', {
+      e.notice(eventId, 'group', title, body, game);
+      result = completed(id, '光粒已发射', body, {
         outcome: { accepted: true, eventId, remaining: 0 },
       });
       autoFinish(e, game, now, eventId);
       break;
     }
     default:
-      throw new Fault(404, 'NOT_FOUND', '接口不存在。');
+      throw new Fault(404, 'NOT_FOUND', '未找到这项操作。');
   }
   e.audit(actor.id, path, actor.id, '玩家操作', { requestId: id });
   db.bump();

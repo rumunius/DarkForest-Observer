@@ -31,6 +31,11 @@ import { accountList, updateAccount, prepareCredential } from './accounts';
 import { finishRecovery } from './recovery';
 import { civilizationHistory } from './civilization-history';
 import { managementState } from './management-impact';
+import {
+  clearingCopy,
+  techBurstCopy,
+  START_COUNTDOWN_COPY,
+} from '../../../../packages/contracts/src/message-copy';
 
 type Saved = {
   id: string;
@@ -895,7 +900,7 @@ function leaf(c: Context, n: CommandNode): unknown {
       const title = path === 'tech grant' ? '技术爆炸' : '资源调整';
       const message =
         path === 'tech grant'
-          ? `${e.identity(id)}获得一枚光粒，可在第一阶段正常出航时发射。`
+          ? techBurstCopy(e.identity(id))
           : `${e.identity(id)}的${resourceName}由${before}调整为${after}。`;
       logEvent(
         e,
@@ -971,7 +976,7 @@ function leaf(c: Context, n: CommandNode): unknown {
             `${source}:home:${id}`,
             'review',
             '裁判母星毁灭',
-            `${e.identity(id)}的母星已被裁判摧毁。`,
+            `文明${e.identity(id)}的母星${h.code}已被摧毁。`,
             'public',
             [id],
             e.game(),
@@ -983,12 +988,17 @@ function leaf(c: Context, n: CommandNode): unknown {
             `${source}:home`,
             'group',
             '母星毁灭',
-            `${e.identity(id)}的母星已被裁判摧毁。坐标${h.code}。`,
+            `文明${e.identity(id)}的母星${h.code}已被摧毁。`,
           );
         }
       } else {
         db.exec('UPDATE homeworlds SET destroyed_game=NULL WHERE player_id=?', id);
-        e.notice(source, id, '母星恢复', '裁判已恢复原登记母星。飞船及已传播信息不会自动恢复。');
+        e.notice(
+          source,
+          id,
+          '母星恢复',
+          `文明${e.identity(id)}，你的母星${h.code}已恢复。请打开本人官网查看状态和后续行动。`,
+        );
       }
     });
   }
@@ -1388,8 +1398,8 @@ function leaf(c: Context, n: CommandNode): unknown {
       e,
       source,
       'singer',
-      '裁判歌者清理',
-      home ? '母星已毁灭' : '未摧毁现存母星',
+      '歌者清理',
+      clearingCopy('singer', code, home ? e.identity(home.player_id) : undefined),
       'public',
       home ? [home.player_id] : [],
       e.game(),
@@ -1397,7 +1407,12 @@ function leaf(c: Context, n: CommandNode): unknown {
       null,
       code,
     );
-    e.notice(source, 'group', '歌者清理', `坐标${code}。${home ? '母星已毁灭' : '未摧毁现存母星'}`);
+    e.notice(
+      source,
+      'group',
+      '歌者清理',
+      clearingCopy('singer', code, home ? e.identity(home.player_id) : undefined),
+    );
     change(c, code, '未清理', '新增管理清理，不消耗原计划');
     return;
   }
@@ -1664,8 +1679,8 @@ function matchTime(c: Context, path: string, a: string[]): void {
     'group',
     title,
     time === null
-      ? `${title}已撤销，等待重新锁定。请以最新通知为准。`
-      : `${title}：${new Date(time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}（北京时间）。请以最新通知为准。`,
+      ? `${title}已取消，新的时间将另行通知。`
+      : `${title}：${new Date(time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}（北京时间）。${release ? '' : `\n${START_COUNTDOWN_COPY}`}`,
   );
   change(
     c,

@@ -155,7 +155,7 @@ export function correctAttack(
     `correction:${id}`,
     'review',
     '攻击更正',
-    `${reason}。已发出的情报保留在事件记录中。`,
+    `裁判已更正本次目击攻击。原因：${reason}`,
     'global',
     [attack.actor, ...(attack.target ? [attack.target] : [])],
     game,

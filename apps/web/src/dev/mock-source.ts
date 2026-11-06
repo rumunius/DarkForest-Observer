@@ -14,6 +14,16 @@ import {
 } from '@darkforest/contracts';
 import { DEFAULT_SITE } from '../config';
 import { ApiError } from '../data/http';
+import {
+  broadcastCopy,
+  clearingCopy,
+  eliminationCopy,
+  shipDestroyedCopy,
+  techBurstCopy,
+  qqCopy,
+  gameTimeCopy,
+  eventBody,
+} from '../../../../packages/contracts/src/message-copy';
 
 export const PREVIEW_ROLES = [
   { id: 'player', label: '玩家' },
@@ -168,8 +178,8 @@ export class MockSource implements DataSource {
       {
         id: 'EVT-107',
         kind: 'photon',
-        title: '光粒清理完成',
-        body: '口令028416的母星已被摧毁。',
+        title: '光粒命中',
+        body: clearingCopy('photon', '028416', 'C03（星尘）'),
         gameMs: 31 * 60000 + 24000,
         utcMs: now - 216000,
         audience: 'public',
@@ -180,8 +190,8 @@ export class MockSource implements DataSource {
       {
         id: 'EVT-106',
         kind: 'broadcast',
-        title: 'C12（漂流者）发布广播',
-        body: '这组六位口令已公开。',
+        title: '坐标广播',
+        body: broadcastCopy('C12（漂流者）', '001234'),
         gameMs: 30 * 60000 + 12000,
         utcMs: now - 288000,
         audience: 'public',
@@ -191,8 +201,8 @@ export class MockSource implements DataSource {
       {
         id: 'EVT-105',
         kind: 'tech',
-        title: '已获得光粒1枚',
-        body: '你已成为高级文明。正常出航时可以发射光粒。',
+        title: '技术爆炸',
+        body: techBurstCopy('C07（归零者）'),
         gameMs: 28 * 60000,
         utcMs: now - 420000,
         audience: 'personal',
@@ -300,7 +310,10 @@ export class MockSource implements DataSource {
             target: 'C04（星尘）',
             channel: 'private',
             title: '飞船被击毁通知',
-            body: '【飞船失联】\nC04（星尘），你的飞船已被击毁。请在安全位置摘下全部比赛手环，正常步行返回母星。请在比赛有效时间40:00前完成重生。',
+            body: qqCopy(
+              '飞船击毁',
+              `${shipDestroyedCopy('C04（星尘）')}\n请在比赛时间40:00前完成重生。`,
+            ),
             status: 'pending',
             version: 1,
             gameMs: 25 * 60000,
@@ -311,7 +324,7 @@ export class MockSource implements DataSource {
             target: '比赛QQ群',
             channel: 'group',
             title: '广播公告',
-            body: '【坐标广播】\nC12（漂流者）发送了一条坐标广播001234，该坐标已公开。',
+            body: qqCopy('坐标广播', broadcastCopy('C12（漂流者）', '001234')),
             status: 'copied',
             version: 2,
             gameMs: 30 * 60000,
@@ -322,7 +335,7 @@ export class MockSource implements DataSource {
             target: 'C19（微光）',
             channel: 'private',
             title: '永久淘汰通知',
-            body: 'C19（微光），你已永久淘汰。请摘下全部比赛手环，步行返回裁判室。',
+            body: qqCopy('维度跃迁', eliminationCopy('C19（微光）', 180)),
             status: 'sent',
             version: 3,
             gameMs: 24 * 60000,
@@ -616,6 +629,19 @@ export class MockSource implements DataSource {
           return projected;
         });
     }
+    out.events = out.events.map((event) => {
+      const owner = event.recipient ?? event.civilizationIds[0];
+      const civilization =
+        out.civilizations.find((c) => c.id === owner) ??
+        this.state.civilizations.find((c) => c.id === owner);
+      const identity = civilization
+        ? `${civilization.id}（${civilization.nickname}）`
+        : (owner ?? '');
+      return {
+        ...event,
+        body: eventBody(event, identity, !judge && owner === out.player?.id),
+      };
+    });
     if (!route.startsWith('/judge') || !judge) out.judge = null;
     if (judge) {
       out.player = null;
@@ -638,10 +664,19 @@ export class MockSource implements DataSource {
     const me = this.state.player!;
     if (!me) throw new ApiError('当前账号不能获取此消息。', 403);
     return kind === 'homeworld'
-      ? `【母星登记】\n${me.id}（${me.nickname}）\n母星口令：${me.homeworld}\n登记版本：第${me.homeVersion}次\n口令有效期应不少于24小时。请附上当前口令对应的现场照片。`
+      ? qqCopy(
+          '母星登记',
+          `文明${me.id}（${me.nickname}）请求在${me.homeworld}登记母星（提交版本：${me.homeVersion}），以下是我的母星现场时间水印照片：`,
+        )
       : kind === 'respawn'
-        ? `【重生】\n${me.id}（${me.nickname}）已返回母星，第${me.flightNumber + 1}航次准备重生。以下是我的母星现场时间水印照片：`
-        : `【异常申报】\n${me.id}（${me.nickname}）\n当前航次：${me.flightNumber}\n请说明现场情况并附上有关截图。`;
+        ? qqCopy(
+            '重生',
+            `文明${me.id}（${me.nickname}）已返回母星，请求重生，以下是我的母星现场时间水印照片：`,
+          )
+        : qqCopy(
+            '异常申报',
+            `文明${me.id}（${me.nickname}）请求裁判协助。\n比赛时间：${gameTimeCopy(this.state.match!.gameMs)}。\n现场情况：`,
+          );
   }
   async result(requestId: string) {
     await delay();
@@ -655,7 +690,7 @@ export class MockSource implements DataSource {
         requestId,
         status: 'pending' as const,
         title: '正在确认上一次操作结果',
-        message: '尚未取得原请求记录，请继续查询。',
+        message: '正在确认上一次操作的结果。',
       }
     );
   }
@@ -777,8 +812,8 @@ export class MockSource implements DataSource {
           this.state.events.unshift({
             id: `EVT-${crypto.randomUUID()}`,
             kind: 'broadcast',
-            title: `${me.id}（${me.nickname}）发布广播`,
-            body: '这组六位口令已公开。',
+            title: '坐标广播',
+            body: broadcastCopy(`${me.id}（${me.nickname}）`, code),
             code,
             audience: 'public',
             gameMs: match.gameMs,
@@ -792,7 +827,7 @@ export class MockSource implements DataSource {
           me.actions = me.actions.filter((a) => a !== 'photon');
           title = '光粒已发射';
           code = String(payload.code);
-          message = '清理已完成，未摧毁现存母星。';
+          message = clearingCopy('photon', code);
           break;
         case 'sighting': {
           if (!validArms([payload.arm_a as ColorId[], payload.arm_b as ColorId[]]))
@@ -803,7 +838,7 @@ export class MockSource implements DataSource {
             code = '739216';
           } else {
             title = '本次目击未产生击毁';
-            message = `提交错误目击码的次数：${me.wrongCount}。`;
+            message = '本次目击未产生击毁。';
             if (this.sightingResult === 'wrong') {
               me.wrongCount++;
               if (me.wrongCount >= 3) {
@@ -812,13 +847,15 @@ export class MockSource implements DataSource {
                 me.arms = null;
                 me.actions = [];
                 me.eliminatedAt = Date.now();
-                me.eliminationReason = '第三次提交错误目击码';
-                message = '你已永久淘汰。请摘下全部比赛手环，步行返回裁判室。';
+                me.eliminationReason = '第三次提交错误的手环颜色';
+                title = '直接出局';
+                message = eliminationCopy(`${me.id}（${me.nickname}）`, 180, true);
               } else {
                 const minutes = me.wrongCount === 1 ? 5 : 15;
                 me.attackLockedUntil = Date.now() + minutes * 60000;
                 me.actions = me.actions.filter((a) => a !== 'sighting');
-                message = `你仍在出航，可以被其他玩家击毁。距离恢复目击攻击${minutes}分钟。`;
+                title = '禁止攻击';
+                message = `本次提交的手环颜色有误。\n累计错误：${me.wrongCount}次。禁止目击攻击：${minutes}分钟。\n恢复攻击时间：${new Date(me.attackLockedUntil).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}。`;
               }
             }
           }

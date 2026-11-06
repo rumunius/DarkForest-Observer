@@ -25,9 +25,9 @@ function fail(status: number, code: string, message: string): Response {
 export async function gateway(request: Request, env: GatewayEnv): Promise<Response> {
   const edgeUtc = Date.now();
   if (!['GET', 'POST'].includes(request.method))
-    return fail(405, 'METHOD_NOT_ALLOWED', '请求方式不支持。');
+    return fail(405, 'METHOD_NOT_ALLOWED', '无法提交这项操作，请刷新后重试。');
   if (!env.MATCH_ID || !env.TRUSTED_ORIGINS)
-    return fail(503, 'ENTRY_NOT_CONFIGURED', '服务尚未配置完成。');
+    return fail(503, 'ENTRY_NOT_CONFIGURED', '活动网站尚未准备好，请联系主办方。');
   const url = new URL(request.url);
   const bootstrap = url.pathname === '/api/bootstrap' && env.APP_ENV === 'preview';
   const recovery = url.pathname === '/api/recovery';
@@ -56,7 +56,7 @@ export async function gateway(request: Request, env: GatewayEnv): Promise<Respon
       request.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !==
       'application/json'
     )
-      return fail(415, 'JSON_REQUIRED', '请求须使用JSON格式。');
+      return fail(415, 'JSON_REQUIRED', '提交内容格式不正确，请刷新后重试。');
   }
   if (Number(request.headers.get('content-length') ?? 0) > bodyLimit)
     return fail(413, 'BODY_TOO_LARGE', '提交内容过长。');
@@ -148,7 +148,8 @@ export async function gateway(request: Request, env: GatewayEnv): Promise<Respon
       ?.split(';')
       .map((v) => v.trim())
       .filter((v) => v.startsWith(`${cookieName}=`)) ?? [];
-  if (cookies.length > 1) return fail(400, 'AMBIGUOUS_COOKIE', '请清除本站Cookie后重新登录。');
+  if (cookies.length > 1)
+    return fail(400, 'AMBIGUOUS_COOKIE', '请在浏览器中清除本站的登录信息，再重新登录。');
   const sessionToken = cookies[0]?.slice(cookieName.length + 1);
   if (sessionToken && !/^[A-Za-z0-9_-]{43}$/.test(sessionToken))
     return fail(401, 'UNAUTHENTICATED', '请重新登录。');
@@ -164,7 +165,7 @@ export async function gateway(request: Request, env: GatewayEnv): Promise<Respon
   };
   try {
     if (env.PLATFORM_DO && !platformPath && !sessionToken)
-      return fail(409, 'MATCH_REQUIRED', '请从我的比赛进入明确的场次地址。');
+      return fail(409, 'MATCH_REQUIRED', '请从「我的比赛」选择要进入的比赛。');
     if (env.PLATFORM_DO && !platformPath) {
       const check = await env.MATCH_DO.getByName(`match:${env.MATCH_ID}`).call({
         ...input,
@@ -172,7 +173,7 @@ export async function gateway(request: Request, env: GatewayEnv): Promise<Respon
         path: '/auth/session',
       });
       if (check.status !== 200 || !JSON.parse(check.body))
-        return fail(401, 'UNAUTHENTICATED', '旧会话无法定位比赛，请重新登录。');
+        return fail(401, 'UNAUTHENTICATED', '请重新登录后选择比赛。');
     }
     const reply = platformPath
       ? await env.PLATFORM_DO!.getByName('platform:primary').call(input)

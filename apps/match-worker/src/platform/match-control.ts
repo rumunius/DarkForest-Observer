@@ -44,7 +44,7 @@ export function membershipActor(e: Engine, grant: MatchGrant): Actor {
   requireThat(
     grant.expires > e.now() && grant.matchId === e.matchId,
     'AUTHORIZATION_EXPIRED',
-    '授权已过期，请重新提交。',
+    '登录已过期，请重新登录。',
     401,
   );
   const member = e.db.one<{ local_id: string | null; epoch: number; state: string; kind: string }>(
@@ -68,7 +68,7 @@ export function membershipActor(e: Engine, grant: MatchGrant): Actor {
   requireThat(
     actor && actor.version === member.epoch,
     'ASSIGNMENT_CHANGED',
-    '任职或绑定已变化，请重新进入比赛。',
+    '本场身份已变更，请重新进入比赛。',
     403,
   );
   return actor;
@@ -533,12 +533,7 @@ export async function matchControl(
           e.now(),
           epoch,
         );
-        e.notice(
-          request.id,
-          'group',
-          '裁判岗位交接',
-          `${seat} 已完成交接；待核对管理任务不会自动交由新人执行。`,
-        );
+        e.notice(request.id, 'group', '设置了裁判', `裁判 ${seat} 已设置。`);
         result = { seat, epoch, assignmentId: assignment };
       } else if (request.action === 'fence') {
         db.exec(

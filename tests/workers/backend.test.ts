@@ -862,7 +862,7 @@ describe('real Workers SQLite and RPC', () => {
     const victimView = (await call('/snapshot?route=/player', undefined, players[2]))
       .body as Snapshot;
     expect(victimView.events.find((event) => event.title === '飞船被击毁')!.body).toContain(
-      '你的飞船',
+      '你的当前飞船刚刚被击毁',
     );
     expect(victimView.events.find((event) => event.title === '飞船被击毁')!.body).not.toContain(
       `C0${winner + 1}`,

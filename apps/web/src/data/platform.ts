@@ -74,7 +74,7 @@ export class PlatformClient {
       if (!response.ok) {
         if (write && data.definitive) sessionStorage.removeItem(this.pendingKey);
         throw new ApiError(
-          data.message ?? '本次请求未完成，请查询原操作。',
+          data.message ?? '本次操作的结果尚未确认，请查询操作结果。',
           response.status,
           data.definitive ?? false,
         );

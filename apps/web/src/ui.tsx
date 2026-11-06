@@ -521,7 +521,7 @@ export function PlayerStatus() {
 }
 export function MiniArms({ arms }: { arms: Arms | null }) {
   const { data } = useApp();
-  if (!arms) return <span className="muted">无现役配置</span>;
+  if (!arms) return <span className="muted">暂无手环配置</span>;
   return (
     <div className="mini-arms" aria-label="两侧手环配置">
       {arms.map((arm, i) => (
@@ -962,7 +962,7 @@ export function ColorEditor() {
       <div className="attack-commit">
         <div className={`attack-consequence ${wrong > 0 ? 'consequence-danger' : ''}`}>
           <p className="secondary">
-            提交错误目击码的次数 <strong className="numeric">{wrong}</strong>
+            提交错误手环颜色的次数 <strong className="numeric">{wrong}</strong>
           </p>
           <p>{attackWarning(wrong, data.parameters)}</p>
         </div>
@@ -1060,7 +1060,7 @@ function AttackConfirmation({
             </div>
           </div>
         ))}
-        <p className="secondary">请确认这是你在现场亲眼观察到的完整配置。提交后由服务器结算。</p>
+        <p className="secondary">请确认这是你在现场亲眼观察到的对手两臂完整手环颜色。</p>
         <p className="attention">{attackWarning(wrong, data.parameters)}</p>
         <div className="confirmation-actions">
           <Button autoFocus onClick={onCancel}>

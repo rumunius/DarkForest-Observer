@@ -16,7 +16,7 @@ export interface ApiFailure {
   definitive: boolean;
 }
 export class ContractError extends Error {
-  constructor(message = '请求格式不正确。') {
+  constructor(message = '输入内容有误，请检查后重试。') {
     super(message);
   }
 }
@@ -27,7 +27,7 @@ export function object(value: unknown): Record<string, unknown> {
 export function strict(value: unknown, allowed: readonly string[]): Record<string, unknown> {
   const result = object(value);
   if (Object.keys(result).some((key) => !allowed.includes(key)))
-    throw new ContractError('请求包含不允许的字段。');
+    throw new ContractError('提交内容有误，请刷新后重试。');
   return result;
 }
 export function text(value: unknown, max = 500, min = 1): string {
@@ -42,7 +42,7 @@ export function integer(value: unknown, min = 0, max = Number.MAX_SAFE_INTEGER):
 }
 export function requestId(value: unknown): string {
   const id = text(value, 100);
-  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new ContractError('请求编号格式不正确。');
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new ContractError('本次操作未能提交，请刷新后重试。');
   return id;
 }
 export function coordinate(value: unknown): string {
@@ -60,11 +60,11 @@ export function homeworldSubmission(
 export function nickname(value: unknown): string {
   const normalized = text(value, 128).normalize('NFKC').trim();
   if (/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(normalized))
-    throw new ContractError('昵称不能包含控制字符或隐藏字符。');
+    throw new ContractError('昵称中含有无法显示的内容，请换一个昵称。');
   const length = [...new Intl.Segmenter('zh', { granularity: 'grapheme' }).segment(normalized)]
     .length;
   if (length < 2 || length > 8 || !/\S/u.test(normalized))
-    throw new ContractError('昵称须为2—8个可见字符。');
+    throw new ContractError('昵称长度应为2—8个字。');
   return normalized;
 }
 export function stableJson(value: unknown): string {

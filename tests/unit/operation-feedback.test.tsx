@@ -341,6 +341,37 @@ describe('操作在当前页面反馈实际结果', () => {
     expect(document.querySelector('.feedback-stack')).toBeNull();
   });
 
+  it.each(['CANCELLED', 'CANCELLED_BY_RECOVERY', '938472'])(
+    '场内操作结果隐藏内部标记并保留六位口令：%s',
+    async (code) => {
+      history.replaceState({}, '', '/player');
+      const source = new MockSource();
+      const snapshot = await source.read('/player');
+      vi.spyOn(source, 'read').mockResolvedValue(snapshot);
+      sessionStorage.setItem(
+        'darkforest.pending-operation',
+        JSON.stringify({
+          id: 'pending-feedback',
+          account: snapshot.session!.id,
+          match: snapshot.session!.matchId,
+        }),
+      );
+      vi.spyOn(source, 'result').mockResolvedValue({
+        requestId: 'pending-feedback',
+        status: 'complete',
+        title: '操作结果已确认',
+        message: '请查看当前状态。',
+        code,
+      });
+      await mount(<App source={source} />);
+      await act(async () => button('查询原操作结果').click());
+      const feedback = document.querySelector('.feedback-stack')!;
+      expect(feedback.textContent).toContain('请查看当前状态。');
+      if (code === '938472') expect(feedback.textContent).toContain(code);
+      else expect(feedback.textContent).not.toContain(code);
+    },
+  );
+
   it('原有场内失败横幅也使用同一个组件，并移到页面滚动容器之外', async () => {
     history.replaceState({}, '', '/player');
     const source = new MockSource();

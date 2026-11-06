@@ -1618,6 +1618,10 @@ textarea::placeholder {
   margin: 6px 0 0;
   font-size: 14px;
   color: var(--secondary);
+  white-space: pre-line;
+}
+.message-body {
+  white-space: pre-line;
 }
 .event-row time {
   color: var(--muted);
@@ -1768,6 +1772,7 @@ textarea::placeholder {
 }
 .global-feedback p {
   margin: 6px 0;
+  white-space: pre-line;
 }
 .global-feedback small {
   display: block;

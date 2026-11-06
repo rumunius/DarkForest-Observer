@@ -122,7 +122,7 @@ it('人工技术爆炸只在执行时产生本人通知，重试不重复且其�
   const own = await call('/snapshot?route=/player', undefined, player);
   const events = (own.body as { events: { title: string; body: string }[] }).events;
   expect(events.filter((event) => event.title === '技术爆炸')).toEqual([
-    expect.objectContaining({ body: expect.stringContaining('你获得一枚光粒') }),
+    expect.objectContaining({ body: expect.stringContaining('你的文明刚刚发生了技术爆炸') }),
   ]);
   expect(await sql("SELECT target FROM notice_queue WHERE title='技术爆炸'")).toEqual([
     { target: 'C01' },
@@ -538,7 +538,7 @@ it('schedules persistent UTC messages and game tasks freeze while paused', async
   now += 60001;
   await call('/public/match');
   expect(await sql("SELECT body FROM notice_queue WHERE title='赛事通知'")).toEqual([
-    { body: '到点通知' },
+    { body: '【赛事通知】\n到点通知' },
   ]);
   await call('/public/match');
   expect(await sql("SELECT COUNT(*) n FROM notice_queue WHERE title='赛事通知'")).toEqual([
@@ -619,8 +619,8 @@ it('retains message tasks after the match ends and cancels battle tasks', async 
   expect((await confirm(end.token)).status).toBe(200);
   now += 60001;
   await call('/public/match');
-  expect(await sql("SELECT body FROM notice_queue WHERE body='赛后集合'")).toEqual([
-    { body: '赛后集合' },
+  expect(await sql("SELECT body FROM notice_queue WHERE body='【赛事通知】\n赛后集合'")).toEqual([
+    { body: '【赛事通知】\n赛后集合' },
   ]);
   expect(
     await sql("SELECT status FROM command_objects WHERE kind='schedule' ORDER BY created_utc,id"),
@@ -671,9 +671,9 @@ it('preserves authorized tasks through checkpoint rollback and waits for recover
     finishRecovery(new Engine(new Store(state.storage), bindings)),
   );
   await call('/public/match');
-  expect(await sql("SELECT body FROM notice_queue WHERE body='恢复后仍按原时刻'")).toEqual([
-    { body: '恢复后仍按原时刻' },
-  ]);
+  expect(
+    await sql("SELECT body FROM notice_queue WHERE body='【赛事通知】\n恢复后仍按原时刻'"),
+  ).toEqual([{ body: '【赛事通知】\n恢复后仍按原时刻' }]);
   expect(await sql("SELECT status FROM command_objects WHERE kind='schedule'")).toEqual([
     { status: 'complete' },
   ]);
@@ -693,10 +693,14 @@ it('keeps snapshot target scope while live tasks see later eligible players', as
   now += 60001;
   await call('/public/match');
   expect(
-    await sql("SELECT target FROM notice_queue WHERE body='创建时范围' ORDER BY target"),
+    await sql(
+      "SELECT target FROM notice_queue WHERE body='【赛事通知】\n创建时范围' ORDER BY target",
+    ),
   ).toEqual([{ target: 'C01' }]);
   expect(
-    await sql("SELECT target FROM notice_queue WHERE body='执行时范围' ORDER BY target"),
+    await sql(
+      "SELECT target FROM notice_queue WHERE body='【赛事通知】\n执行时范围' ORDER BY target",
+    ),
   ).toEqual([{ target: 'C01' }, { target: 'C02' }]);
 });
 it('pins the previewed macro version when a later definition is published', async () => {
