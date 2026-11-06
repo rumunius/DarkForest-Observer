@@ -3,9 +3,18 @@
   "name": "darkforest-pages-dev",
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-11-01",
-  "vars": { "APP_ENV": "local" },
+  "vars": {
+    "APP_ENV": "local",
+    "MATCH_ID": "local-rehearsal",
+    "TRUSTED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8788,http://127.0.0.1:8788",
+  },
   "durable_objects": {
     "bindings": [
+      {
+        "name": "PLATFORM_DO",
+        "class_name": "DarkForestPlatform",
+        "script_name": "darkforest-core-local",
+      },
       {
         "name": "MATCH_DO",
         "class_name": "DarkForestMatch",
@@ -15,9 +24,18 @@
   },
   "env": {
     "preview": {
-      "vars": { "APP_ENV": "preview" },
+      "vars": {
+        "APP_ENV": "preview",
+        "MATCH_ID": "preview-rehearsal",
+        "TRUSTED_ORIGINS": "https://dev.darkforest-pages-dev.pages.dev",
+      },
       "durable_objects": {
         "bindings": [
+          {
+            "name": "PLATFORM_DO",
+            "class_name": "DarkForestPlatform",
+            "script_name": "darkforest-core-preview",
+          },
           {
             "name": "MATCH_DO",
             "class_name": "DarkForestMatch",

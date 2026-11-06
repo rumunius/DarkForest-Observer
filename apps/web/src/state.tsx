@@ -10,6 +10,8 @@ import {
 import type { Arms, DataSource, OperationResult, Snapshot } from '@darkforest/contracts';
 import { DEFAULT_SITE } from './config';
 import { ApiError } from './data/http';
+import { mergeRecords, type Collection } from './judge-records';
+import { personalMessage } from './data/messages';
 
 const empty: Snapshot = {
   site: DEFAULT_SITE,
@@ -28,6 +30,8 @@ interface AppContext {
   base: string;
   go: (path: string, replace?: boolean) => void;
   refresh: () => Promise<void>;
+  loadEarlierEvents: () => Promise<void>;
+  loadJudgeRecords: (kind: Collection) => Promise<void>;
   source: DataSource;
   loading: boolean;
   busy: boolean;
@@ -115,7 +119,7 @@ export function AppProvider({
   const generation = useRef(0);
   const previousEpoch = useRef(epoch);
   const readError = useRef(false);
-  const storageKey = `${pendingKey}${base ? '.preview' : ''}`;
+  const storageKey = `${pendingKey}${base.startsWith('/m/') ? `.${base}` : base ? '.preview' : ''}`;
   const pendingRecord = useRef(readPending(storageKey));
   const persistPending = useCallback(
     (value: PendingRecord | null) => {
@@ -129,10 +133,16 @@ export function AppProvider({
   snapshotRef.current = data;
   const routeRef = useRef(route);
   routeRef.current = route;
-  const accountKey = `${base ? 'preview.' : ''}darkforest.read.${data.session?.id ?? 'guest'}`;
+  const timelineKey = useRef('');
+  const historyLoading = useRef(false);
+  const accountKey = `${base}.darkforest.read.${data.session?.matchId ?? ''}.${data.session?.role ?? ''}.${data.session?.id ?? 'guest'}`;
   useEffect(() => {
     try {
-      setReadIds(JSON.parse(sessionStorage.getItem(accountKey) ?? '[]') as string[]);
+      setReadIds(
+        JSON.parse(
+          localStorage.getItem(accountKey) ?? sessionStorage.getItem(accountKey) ?? '[]',
+        ) as string[],
+      );
     } catch {
       setReadIds([]);
     }
@@ -143,7 +153,7 @@ export function AppProvider({
         if (previous.includes(id)) return previous;
         const next = [...previous, id];
         try {
-          sessionStorage.setItem(accountKey, JSON.stringify(next));
+          localStorage.setItem(accountKey, JSON.stringify(next));
         } catch {
           /* Reading preferences can stay in memory. */
         }
@@ -186,6 +196,27 @@ export function AppProvider({
         setDraft([[], []]);
         setSelectedArm(null);
       }
+      const nextTimelineKey = `${next.session?.id ?? ''}|${next.match?.id ?? ''}|${path}`;
+      if (
+        nextTimelineKey === timelineKey.current &&
+        next.session &&
+        next.eventCursor !== undefined
+      ) {
+        const ids = new Set(next.events.map((event) => event.id));
+        next.events = [...next.events, ...previous.events.filter((event) => !ids.has(event.id))];
+        next.eventCursor = previous.eventCursor ?? null;
+        if (next.judge && previous.judge && next.session.role === 'judge') {
+          for (const kind of ['notices', 'audits', 'attacks'] as const) {
+            if (!next.session.permissions.includes(kind === 'audits' ? 'audit' : kind)) continue;
+            next.judge = mergeRecords(next.judge, kind, previous.judge[kind] ?? []);
+            next.judge.cursors = {
+              ...next.judge.cursors,
+              [kind]: previous.judge.cursors?.[kind] ?? null,
+            };
+          }
+        }
+      }
+      timelineKey.current = nextTimelineKey;
       setData(next);
       snapshotRef.current = next;
       setReceivedAt(performance.now());
@@ -208,6 +239,8 @@ export function AppProvider({
     } catch (e) {
       if (request !== sequence.current) return;
       if (e instanceof ApiError && [401, 403].includes(e.status)) {
+        timelineKey.current = '';
+        snapshotRef.current = { ...empty, site: snapshotRef.current.site };
         setData({ ...empty, site: snapshotRef.current.site });
         setDraft([[], []]);
         setSelectedArm(null);
@@ -220,6 +253,68 @@ export function AppProvider({
       if (request === sequence.current) setLoading(false);
     }
   }, [source, persistPending, storageKey]);
+  const loadEarlierEvents = useCallback(async () => {
+    const current = snapshotRef.current,
+      cursor = current.eventCursor,
+      path = routeRef.current,
+      key = timelineKey.current;
+    if (!source.eventsPage || !cursor || historyLoading.current) return;
+    historyLoading.current = true;
+    try {
+      const page = await source.eventsPage(path, cursor);
+      if (key !== timelineKey.current || path !== routeRef.current) return;
+      const latest = snapshotRef.current;
+      const ids = new Set(latest.events.map((event) => event.id));
+      const next = {
+        ...latest,
+        events: [...latest.events, ...page.items.filter((event) => !ids.has(event.id))],
+        eventCursor: page.nextCursor,
+      };
+      snapshotRef.current = next;
+      setData(next);
+    } catch (error) {
+      if (key !== timelineKey.current) return;
+      if (error instanceof ApiError && [401, 403].includes(error.status)) {
+        timelineKey.current = '';
+        const next = { ...empty, site: snapshotRef.current.site };
+        snapshotRef.current = next;
+        setData(next);
+      }
+      setError(error instanceof Error ? error.message : '暂时无法取得历史记录。');
+    } finally {
+      historyLoading.current = false;
+    }
+  }, [source]);
+  const loadJudgeRecords = useCallback(
+    async (kind: Collection) => {
+      const cursor = snapshotRef.current.judge?.cursors?.[kind],
+        key = timelineKey.current;
+      if (!cursor || !source.judgePage || historyLoading.current) return;
+      historyLoading.current = true;
+      try {
+        const page = await source.judgePage(kind, cursor);
+        if (key !== timelineKey.current || !snapshotRef.current.judge) return;
+        const latest = snapshotRef.current,
+          judge = mergeRecords(latest.judge!, kind, page.items);
+        judge.cursors = { ...judge.cursors, [kind]: page.nextCursor };
+        const next = { ...latest, judge };
+        snapshotRef.current = next;
+        setData(next);
+      } catch (e) {
+        if (key !== timelineKey.current) return;
+        if (e instanceof ApiError && [401, 403].includes(e.status)) {
+          timelineKey.current = '';
+          const next = { ...empty, site: snapshotRef.current.site };
+          snapshotRef.current = next;
+          setData(next);
+        }
+        setError(e instanceof Error ? e.message : '暂时无法读取记录。');
+      } finally {
+        historyLoading.current = false;
+      }
+    },
+    [source],
+  );
   const recover = useCallback(async () => {
     const stored = pendingRecord.current ?? readPending(storageKey);
     if (!stored || submitting.current) return;
@@ -237,6 +332,7 @@ export function AppProvider({
           setDraft([[], []]);
           setSelectedArm(0);
         }
+        timelineKey.current = '';
         await refresh();
       }
     } catch (e) {
@@ -277,13 +373,13 @@ export function AppProvider({
         if (response.status === 'complete') {
           persistPending(null);
           setPending(null);
+          timelineKey.current = '';
           await refresh();
         }
         return response;
       } catch (e) {
         if (mine !== generation.current) return;
-        const definitive =
-          e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 408;
+        const definitive = e instanceof ApiError && e.definitive;
         if (definitive) {
           persistPending(null);
           setPending(null);
@@ -303,6 +399,7 @@ export function AppProvider({
     try {
       await source.logout();
       generation.current++;
+      timelineKey.current = '';
       sequence.current++;
       setData({ ...empty, site: data.site });
       setDraft([[], []]);
@@ -330,18 +427,22 @@ export function AppProvider({
     void refresh();
   }, [epoch, refresh, persistPending]);
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(
-      () => {
-        if (!document.hidden && navigator.onLine) void refresh();
-      },
-      route.startsWith('/judge')
-        ? 3000
-        : route.startsWith('/observer') || route.startsWith('/display')
-          ? 5000
-          : 2000,
-    );
-    return () => window.clearInterval(timer);
+    let stopped = false;
+    let timer: number;
+    const interval = route.startsWith('/judge')
+      ? 3000
+      : route.startsWith('/observer') || route.startsWith('/display')
+        ? 5000
+        : 2000;
+    const poll = async () => {
+      if (!document.hidden && navigator.onLine) await refresh();
+      if (!stopped) timer = window.setTimeout(() => void poll(), interval);
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
   }, [route, refresh]);
   useEffect(() => {
     if (pending && !busy) {
@@ -379,6 +480,8 @@ export function AppProvider({
         base,
         go,
         refresh,
+        loadEarlierEvents,
+        loadJudgeRecords,
         source,
         loading,
         busy,
@@ -402,8 +505,9 @@ export function AppProvider({
         setSelectedArm,
         receivedAt,
         online,
-        unread: data.events.filter((e) => e.audience === 'personal' && !readIds.includes(e.id))
-          .length,
+        unread: data.events.filter(
+          (e) => personalMessage(e, data.player?.id ?? data.session?.id) && !readIds.includes(e.id),
+        ).length,
         markRead,
       }}
     >

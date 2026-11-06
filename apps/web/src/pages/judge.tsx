@@ -1,3 +1,4 @@
+import { CommandConsole } from './command-console';
 import { useState, type ReactNode } from 'react';
 import {
   COLORS,
@@ -10,6 +11,7 @@ import {
 import { DEFAULT_SITE } from '../config';
 import { useApp } from '../state';
 import { judgeCan } from '../permissions';
+import { MatchLinks } from '../components/match-context';
 import {
   Button,
   CopyText,
@@ -30,6 +32,12 @@ import {
   formatTime,
 } from '../ui';
 import { CivilizationDetail, CivilizationList, EventExplorer } from './observe';
+import { ParametersSettings, RosterSettings } from './parameters';
+import { AccountsManagement } from './accounts';
+import { ReportCorrection } from './report-correction';
+import { RecordPagination } from './record-pagination';
+import { RecoveryTools } from './recovery';
+import { ScheduledEvents } from './scheduled-events';
 
 export const JUDGE_NAV = [
   {
@@ -57,7 +65,7 @@ export const JUDGE_NAV = [
       ['clock', '比赛时间', '/judge/clock'],
       ['equipment', '手环处理', '/judge/equipment'],
       ['effects', '临时效果', '/judge/effects'],
-      ['commands', '指令控制台', '/judge/commands'],
+      ['overview', '指令控制台', '/judge/commands'],
     ],
   },
   {
@@ -111,9 +119,9 @@ export function ManagementForm({
           />
         </Field>
       )}
-      {usable && !currentPreview && (
+      {!currentPreview && (
         <Button
-          disabled={busy}
+          disabled={busy || !usable}
           onClick={async () => {
             const r = await operate('/judge/manage/preview', {
               path,
@@ -186,7 +194,7 @@ function Dashboard() {
     },
     {
       label: '待发送通知',
-      value: judge.notices.filter((n) => n.status !== 'sent').length,
+      value: judge.noticePendingCount ?? judge.notices.filter((n) => n.status !== 'sent').length,
       to: '/judge/notices',
       area: 'notices',
     },
@@ -194,6 +202,11 @@ function Dashboard() {
   return (
     <>
       <PageTitle title="工作台" aside={<Status>{data.session!.name}</Status>} />
+      {judge.scheduler.error && (
+        <p role="alert" className="attention notice-block">
+          {judge.scheduler.error} 请先暂停比赛，再到赛事事件页处理。
+        </p>
+      )}
       <div className="judge-status-heading">
         <MatchSummary />
         <div className="judge-quick">
@@ -239,7 +252,7 @@ function Dashboard() {
               <Icon name="arrow" size={18} />
             </Link>
           )}
-          {judge.notices
+          {(judge.noticeTasks ?? judge.notices)
             .filter((n) => n.status !== 'sent')
             .slice(0, 4)
             .map((n) => (
@@ -355,21 +368,19 @@ function HomeworldReview() {
                 <Field label="具体退回原因">
                   <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} />
                 </Field>
-                {reason.trim() && (
-                  <Button
-                    disabled={busy}
-                    onClick={() =>
-                      void operate(`/judge/homeworld/${c.id}/verify`, {
-                        expected_version: c.homeVersion,
-                        expected_code: c.homeworld,
-                        decision: 'reject',
-                        reason,
-                      })
-                    }
-                  >
-                    确认退回修改
-                  </Button>
-                )}
+                <Button
+                  disabled={busy || !reason.trim()}
+                  onClick={() =>
+                    void operate(`/judge/homeworld/${c.id}/verify`, {
+                      expected_version: c.homeVersion,
+                      expected_code: c.homeworld,
+                      decision: 'reject',
+                      reason,
+                    })
+                  }
+                >
+                  确认退回修改
+                </Button>
               </>
             )}
           </Frame>
@@ -390,6 +401,7 @@ function PreflightManagement() {
   return (
     <>
       <PageTitle title="开赛准备" />
+      <RosterSettings />
       <div className="table-wrap">
         <table>
           <thead>
@@ -445,7 +457,10 @@ function PreflightManagement() {
               <ManagementForm
                 title={mode === 'release' ? '安排发码' : '安排开赛'}
                 path={mode === 'release' ? '/judge/arm-code-release' : '/judge/arm-start'}
-                payload={{ time, expected_roster: roster.map((c) => c.id) }}
+                payload={{
+                  time: new Date(time).getTime(),
+                  expected_roster: roster.map((c) => c.id),
+                }}
                 ready={!!time && new Date(time).getTime() > Date.now()}
               >
                 <Field label="未来的统一时间">
@@ -466,18 +481,35 @@ function PreflightManagement() {
 function Notices() {
   const { data, operate, busy } = useApp();
   const [channel, setChannel] = useState('private');
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('todo');
   const [id, setId] = useState(new URLSearchParams(location.search).get('notice') ?? '');
   const [reason, setReason] = useState('');
   const [showError, setShowError] = useState(false);
-  const notices = data.judge!.notices.filter(
-    (n) => n.channel === channel && (filter === 'all' || n.status === filter),
-  );
+  const queue = new Map(data.judge!.notices.map((n) => [n.id, n]));
+  for (const task of data.judge!.noticeTasks ?? []) queue.set(task.id, task);
+  const notices = [...queue.values()]
+    .filter(
+      (n) =>
+        n.channel === channel &&
+        (filter === 'todo' ? n.status !== 'sent' : filter === 'all' || n.status === filter),
+    )
+    .sort(
+      (a, b) =>
+        Number(a.status === 'sent') - Number(b.status === 'sent') ||
+        (b.priority ?? 0) - (a.priority ?? 0) ||
+        a.gameMs - b.gameMs,
+    );
   const n = notices.find((n) => n.id === id) ?? notices[0];
   const statusNames = { pending: '待发送', copied: '已复制', sent: '已发送', error: '需要处理' };
   return (
     <>
       <PageTitle title="通知待办" />
+      <p className="secondary">
+        全场尚有
+        {data.judge!.noticePendingCount ?? notices.filter((n) => n.status !== 'sent').length}
+        条通知未发送；优先处理淘汰、失联和母星毁灭提醒。
+      </p>
+      <RecordPagination kind="notices" />
       <Tabs
         tabs={[
           { id: 'private', label: '玩家私聊' },
@@ -488,6 +520,7 @@ function Notices() {
       />
       <Field label="处理状态">
         <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+          <option value="todo">全部未发送</option>
           <option value="all">全部通知</option>
           {Object.entries(statusNames).map(([id, name]) => (
             <option key={id} value={id}>
@@ -527,6 +560,17 @@ function Notices() {
             <p className="secondary">
               最近处理人：{n.operator || '尚未处理'}，第{n.version}版
             </p>
+            {n.copiedUtcMs && (
+              <p className="secondary">
+                复制：{n.copiedBy}，{new Date(n.copiedUtcMs).toLocaleString('zh-CN')}
+              </p>
+            )}
+            {n.sentUtcMs && (
+              <p className="secondary">
+                发送：{n.sentBy}，{new Date(n.sentUtcMs).toLocaleString('zh-CN')}
+              </p>
+            )}
+            {n.error && <p className="attention">发送异常：{n.error}</p>}
             <CopyText
               text={n.body}
               label="复制消息"
@@ -556,19 +600,17 @@ function Notices() {
                     <Field label="异常原因">
                       <textarea value={reason} onChange={(e) => setReason(e.target.value)} />
                     </Field>
-                    {reason.trim() && (
-                      <Button
-                        disabled={busy}
-                        onClick={() =>
-                          void operate(`/judge/notices/${n.id}/error`, {
-                            expected_version: n.version,
-                            reason,
-                          })
-                        }
-                      >
-                        保存发送异常
-                      </Button>
-                    )}
+                    <Button
+                      disabled={busy || !reason.trim()}
+                      onClick={() =>
+                        void operate(`/judge/notices/${n.id}/error`, {
+                          expected_version: n.version,
+                          reason,
+                        })
+                      }
+                    >
+                      保存发送异常
+                    </Button>
                   </>
                 )}
               </>
@@ -594,6 +636,7 @@ function PlayerManagement({ c }: { c: Civilization }) {
               <option value="photons">修正光粒库存</option>
               <option value="broadcasts">修正广播次数</option>
               <option value="restore">恢复参赛资格</option>
+              <option value="eliminate">记录严重违规淘汰</option>
               <option value="absence">登记赛前缺席</option>
             </select>
           </Field>
@@ -601,22 +644,36 @@ function PlayerManagement({ c }: { c: Civilization }) {
             title={
               operation === 'restore'
                 ? '恢复参赛资格'
-                : operation === 'absence'
-                  ? '登记赛前缺席'
-                  : '修正文明确认信息'
+                : operation === 'eliminate'
+                  ? '记录严重违规淘汰'
+                  : operation === 'absence'
+                    ? '登记赛前缺席'
+                    : '修正文明确认信息'
             }
-            path={operation === 'absence' ? `/judge/roster/${c.id}/withdraw` : '/judge/correction'}
-            payload={{ target: c.id, field: operation, value }}
-            ready={operation === 'restore' || operation === 'absence' || !!value.trim()}
+            path={
+              operation === 'absence'
+                ? `/judge/roster/${c.id}/withdraw`
+                : operation === 'restore'
+                  ? '/judge/player-restore'
+                  : operation === 'eliminate'
+                    ? '/judge/player-eliminate'
+                    : '/judge/correction'
+            }
+            payload={
+              ['restore', 'eliminate'].includes(operation)
+                ? { target: c.id }
+                : { target: c.id, field: operation, value }
+            }
+            ready={['restore', 'absence', 'eliminate'].includes(operation) || !!value.trim()}
             current={`${c.id}（${c.nickname}），${FLIGHT_NAMES[c.flight]}`}
           >
-            {!['restore', 'absence'].includes(operation) && (
+            {!['restore', 'absence', 'eliminate'].includes(operation) && (
               <Field label="拟变更值">
                 <input value={value} onChange={(e) => setValue(e.target.value)} />
               </Field>
             )}
             <p className="secondary">
-              恢复资格需同步核对航次、现役配置、淘汰与排名，并撤销赛中观战权限。已传播的情报保留审计说明。
+              恢复资格前先暂停并核对人工淘汰记录。原出航文明将领取全新配置，核对佩戴后由裁判激活；已传播的情报保留审计说明。
             </p>
           </ManagementForm>
         </Disclosure>
@@ -765,20 +822,46 @@ function ClockManagement() {
 }
 function AuditEntries() {
   const { data } = useApp();
+  const [search, setSearch] = useState('');
   return (
     <div className="audit-list">
-      {data.judge!.audits.map((a) => (
-        <Disclosure key={a.id} title={`${a.title}，${formatTime(a.gameMs)}`}>
-          <p>操作者：{a.operator}</p>
-          <p>原因：{a.reason}</p>
-          <div className="change-row">
-            <span>{a.before}</span>
-            <Icon name="arrow" size={18} />
-            <span>{a.after}</span>
-          </div>
-          <p className="muted">记录编号：{a.id}</p>
-        </Disclosure>
-      ))}
+      <Field label="检索操作记录">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="操作者、文明、动作或原因"
+        />
+      </Field>
+      <RecordPagination kind="audits" />
+      {data
+        .judge!.audits.filter((a) =>
+          `${a.title} ${a.operator} ${a.target ?? ''} ${a.reason}`.includes(search),
+        )
+        .map((a) => (
+          <Disclosure key={a.id} title={`${a.title}，${formatTime(a.gameMs)}`}>
+            <p>操作者：{a.operator}</p>
+            <p>原因：{a.reason}</p>
+            {a.target && (
+              <p>
+                对象：{a.target}；
+                {a.status === 'previewed'
+                  ? '操作预览'
+                  : a.status === 'failed'
+                    ? '执行失败'
+                    : '执行记录'}
+              </p>
+            )}
+            {a.utcMs && (
+              <p className="secondary">记录时间：{new Date(a.utcMs).toLocaleString('zh-CN')}</p>
+            )}
+            <div className="change-row">
+              <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{a.before}</pre>
+              <Icon name="arrow" size={18} />
+              <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{a.after}</pre>
+            </div>
+            <p className="muted">记录编号：{a.id}</p>
+          </Disclosure>
+        ))}
     </div>
   );
 }
@@ -843,10 +926,14 @@ function Effects() {
 function AttackReview() {
   const { data } = useApp();
   const [id, setId] = useState('C07');
+  const [selectedAttack, setSelectedAttack] = useState('');
   const c = data.civilizations.find((c) => c.id === id);
+  const attacks = data.judge?.attacks?.filter((a) => a.actor === id) ?? [];
+  const attack = attacks.find((a) => a.id === selectedAttack) ?? attacks[0];
   return (
     <>
       <PageTitle title="攻击复核" />
+      <RecordPagination kind="attacks" />
       <Field label="选择文明">
         <select value={id} onChange={(e) => setId(e.target.value)}>
           {data.civilizations.map((c) => (
@@ -873,17 +960,37 @@ function AttackReview() {
               (e) => e.kind === 'sighting' && e.civilizationIds.includes(id),
             )}
           />
-          {judgeCan(data, 'commands') && (
-            <ManagementForm
-              title="有技术证据的攻击纠错"
-              path={`/judge/attack-correction/${id}`}
-              payload={{ target: id }}
-              change="复核原攻击、关联航次、战绩、淘汰、排名、观战与通知，不重抽既定随机结果"
-            >
-              <p className="notice-block">
-                仅在有充分技术故障证据时执行。原记录保留，已发生的情报传播写入审计说明。
-              </p>
-            </ManagementForm>
+          {judgeCan(data, 'commands') && attack && (
+            <>
+              <Field label="需要更正的攻击">
+                <select
+                  value={attack.id}
+                  onChange={(event) => setSelectedAttack(event.target.value)}
+                >
+                  {attacks.map((a) => (
+                    <option value={a.id} key={a.id}>
+                      {new Date(a.utcMs).toLocaleTimeString('zh-CN', {
+                        timeZone: data.site.timezone,
+                      })}
+                      ，{a.target ? `击毁${a.target}` : '未产生击毁'}
+                      {a.valid ? '' : '，已更正'}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {attack.roll !== null && <p>第二次错误提交的抽签值：{attack.roll}</p>}
+              <ManagementForm
+                title="有技术证据的攻击纠错"
+                path="/judge/attack-correction"
+                payload={{ attack_id: attack.id }}
+                ready={attack.valid}
+                change="复核原攻击、关联航次、战绩、淘汰、排名、观战与通知，不重抽既定随机结果"
+              >
+                <p className="notice-block">
+                  仅在有充分技术故障证据时执行。原记录保留，已发生的情报传播写入审计说明。
+                </p>
+              </ManagementForm>
+            </>
           )}
         </>
       )}
@@ -932,7 +1039,14 @@ function Equipment() {
         active={mode}
         onChange={setMode}
       />
-      {mode === 'replace' ? (
+      {c?.flight === 'issued' && data.match!.paused ? (
+        <ManagementForm
+          title="确认穿戴并恢复出航"
+          path="/judge/equipment-correction"
+          payload={{ target: id, mode: 'activate' }}
+          change="核对新配置穿戴后，恢复该文明出航"
+        />
+      ) : mode === 'replace' ? (
         <ManagementForm
           title="记录手环替换"
           path="/judge/equipment-correction"
@@ -954,138 +1068,11 @@ function Equipment() {
     </>
   );
 }
-const COMMANDS = [
-  ['/inspect C07', '查询文明状态'],
-  ['/history C07', '查询航次与历史'],
-  ['/events list', '查询赛事事件'],
-  ['/clock status', '查询比赛时钟'],
-  ['/codebook status', '查询手环发行情况'],
-  ['/clock pause', '暂停比赛'],
-  ['/clock resume', '恢复比赛'],
-  ['/pause_attack @a 60', '全场暂时禁止目击60秒'],
-  ['/player grant C07 photoid 1', '修正文明光粒库存'],
-  ['/player revive C07', '恢复参赛资格'],
-  ['/event retry EVT-1024', '重新结算指定事件'],
-  ['/announce @a "请联系裁判"', '发送全场公告'],
-  ['/schedule 90 /announce @a "请留意赛事通知"', '延迟发送公告'],
-];
 function Commands() {
-  const { data, operate, busy } = useApp();
-  const [command, setCommand] = useState('');
-  const [search, setSearch] = useState('');
-  const [reason, setReason] = useState('');
-  const [preview, setPreview] = useState<ManagementPreview | null>(null);
-  const [stamp, setStamp] = useState('');
-  const query = /^\/(inspect|history|events list|clock status|codebook status|help)(\s|$)/.test(
-    command,
-  );
   return (
     <>
-      <PageTitle title="指令控制台" />
-      <Disclosure title="查询命令与参数提示">
-        <Field label="搜索操作">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="例如暂停、文明、事件"
-          />
-        </Field>
-        <div className="command-help">
-          {COMMANDS.filter(([cmd, label]) => `${cmd}${label}`.includes(search)).map(
-            ([cmd, label]) => (
-              <button
-                key={cmd}
-                onClick={() => {
-                  setCommand(cmd!);
-                  setPreview(null);
-                }}
-              >
-                <strong>{label}</strong>
-                <code>{cmd}</code>
-              </button>
-            ),
-          )}
-        </div>
-        <p>
-          目标：C07为指定文明，@a为全场参赛者，@alive为存活文明，@dead为淘汰者。随机目标在执行时确定。
-        </p>
-      </Disclosure>
-      <Field label="输入赛事指令">
-        <textarea
-          className="command-input"
-          value={command}
-          onChange={(e) => {
-            setCommand(e.target.value);
-            setPreview(null);
-          }}
-          rows={3}
-          placeholder="/inspect C07"
-          spellCheck={false}
-        />
-      </Field>
-      {!query && (
-        <Field label="本次执行原因">
-          <input
-            value={reason}
-            onChange={(e) => {
-              setReason(e.target.value);
-              setPreview(null);
-            }}
-          />
-        </Field>
-      )}
-      {command.trim() && (query || reason.trim()) && !preview && (
-        <Button
-          className="primary"
-          disabled={busy}
-          onClick={async () => {
-            const r = await operate(query ? '/judge/command/execute' : '/judge/command/preview', {
-              command,
-              reason,
-              expected_revision: data.match!.revision,
-            });
-            if (r?.preview) {
-              setPreview(r.preview);
-              setStamp(`${command}|${reason}`);
-            }
-          }}
-        >
-          {query ? '执行查询' : '预览指令影响'}
-          <Icon name="arrow" size={18} />
-        </Button>
-      )}
-      {preview && stamp === `${command}|${reason}` && (
-        <Frame>
-          <h2>指令影响预览</h2>
-          <code className="command-preview">{command}</code>
-          {preview.changes.map((c, i) => (
-            <p key={i}>
-              {c.target}：{c.before} → {c.after}
-            </p>
-          ))}
-          {preview.consequences.map((c) => (
-            <p className="secondary" key={c}>
-              {c}
-            </p>
-          ))}
-          <Button
-            className="primary full"
-            disabled={busy}
-            onClick={async () => {
-              const r = await operate('/judge/command/execute', {
-                command,
-                reason,
-                preview_token: preview.token,
-                expected_revision: preview.revision,
-              });
-              if (r?.status === 'complete') setPreview(null);
-            }}
-          >
-            确认执行
-          </Button>
-        </Frame>
-      )}
-      <h2>执行历史</h2>
+      <CommandConsole />
+      <h2>业务审计</h2>
       <AuditEntries />
     </>
   );
@@ -1096,6 +1083,7 @@ function SystemStatus() {
   return (
     <>
       <PageTitle title="系统状态" />
+      <RecoveryTools />
       <div className="stat-lines">
         <div>
           <span>最近一次成功处理时间</span>
@@ -1147,6 +1135,8 @@ function Settings() {
   return (
     <>
       <PageTitle title="活动设置" />
+      <RosterSettings />
+      <ParametersSettings />
       <div className="settings-grid">
         <section>
           {(
@@ -1215,9 +1205,12 @@ function Settings() {
           }}
         />
       </Field>
-      {colorsValid && reason.trim() && site.title.trim() && (
-        <Button onClick={() => setPreview(true)}>预览并核对设置</Button>
-      )}
+      <Button
+        disabled={!colorsValid || !reason.trim() || !site.title.trim() || busy}
+        onClick={() => setPreview(true)}
+      >
+        预览并核对设置
+      </Button>
       {preview && (
         <Frame>
           <h2>设置变更预览</h2>
@@ -1254,9 +1247,25 @@ function Settings() {
   );
 }
 function ResultsManagement() {
-  const { data } = useApp();
+  const { data, source } = useApp();
   const [kind, setKind] = useState('report');
-  const exportData = () => {
+  const [exportError, setExportError] = useState('');
+  const exportData = async () => {
+    if (source.exportData) {
+      try {
+        const file = await source.exportData(kind);
+        const url = URL.createObjectURL(new Blob([file.text], { type: 'application/json' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.fileName;
+        link.click();
+        URL.revokeObjectURL(url);
+        setExportError('');
+      } catch (error) {
+        setExportError(error instanceof Error ? error.message : '导出失败，请稍后重试。');
+      }
+      return;
+    }
     const object =
       kind === 'report'
         ? {
@@ -1283,6 +1292,7 @@ function ResultsManagement() {
   return (
     <>
       <PageTitle title="比赛结果管理" />
+      <ReportCorrection />
       {data.match!.stage === 'ended' ? (
         <>
           <h2>{data.results?.reason ?? '比赛已结束'}</h2>
@@ -1296,7 +1306,7 @@ function ResultsManagement() {
               <option value="audit">裁判操作记录，仅限授权人员</option>
             </select>
           </Field>
-          <Button onClick={exportData}>
+          <Button onClick={() => void exportData()}>
             导出{kind === 'report' ? '正式战报' : '裁判操作记录'}
           </Button>
         </>
@@ -1304,6 +1314,34 @@ function ResultsManagement() {
         <Empty title="当前尚未正式完赛" to="/judge">
           比赛结束后可查看并导出正式结果。
         </Empty>
+      )}
+      {judgeCan(data, 'system') && (
+        <>
+          <p className="attention" role="status">
+            {exportError}
+          </p>
+          <Button
+            onClick={async () => {
+              try {
+                const file = await source.exportData?.('backup');
+                if (!file) return;
+                const url = URL.createObjectURL(
+                  new Blob([file.text], { type: 'application/json' }),
+                );
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = file.fileName;
+                link.click();
+                URL.revokeObjectURL(url);
+                setExportError('');
+              } catch (error) {
+                setExportError(error instanceof Error ? error.message : '导出失败，请稍后重试。');
+              }
+            }}
+          >
+            导出加密备份
+          </Button>
+        </>
       )}
     </>
   );
@@ -1313,6 +1351,8 @@ function JudgeAccount() {
   return (
     <>
       <PageTitle title="裁判账号" />
+      <MatchLinks />
+      <AccountsManagement />
       <h2>{data.session!.name}</h2>
       <p className="secondary">当前账号可以使用以下功能。</p>
       <div className="permission-list">
@@ -1354,7 +1394,7 @@ export function JudgePages() {
         ))}
       </>
     );
-  if (!judgeCan(data, area))
+  if (!judgeCan(data, area === 'commands' ? 'overview' : area))
     return (
       <>
         <PageTitle title="当前职责无此权限" />
@@ -1383,7 +1423,13 @@ export function JudgePages() {
   }
   if (area === 'endgame') return <EndgameManagement />;
   if (area === 'clock') return <ClockManagement />;
-  if (area === 'events') return <EventExplorer />;
+  if (area === 'events')
+    return (
+      <>
+        <ScheduledEvents />
+        <EventExplorer />
+      </>
+    );
   if (area === 'effects') return <Effects />;
   if (area === 'attacks') return <AttackReview />;
   if (area === 'equipment') return <Equipment />;

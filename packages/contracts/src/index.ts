@@ -61,9 +61,11 @@ export interface Session {
   csrfToken: string;
 }
 export interface MatchState {
+  recoveryReview?: boolean;
   id: string;
   revision: number;
   stage: Stage;
+  phase?: import('./backend').DomainPhase;
   gameMs: number;
   serverUtcMs: number;
   running: boolean;
@@ -115,6 +117,7 @@ export interface GameEvent {
   utcMs: number;
   audience: 'public' | 'personal' | 'global';
   civilizationIds: string[];
+  recipient?: string;
   code?: string;
   actor?: string;
 }
@@ -147,6 +150,12 @@ export interface Notice {
   version: number;
   gameMs: number;
   operator: string;
+  priority?: number;
+  copiedBy?: string | null;
+  copiedUtcMs?: number | null;
+  sentBy?: string | null;
+  sentUtcMs?: number | null;
+  error?: string;
 }
 export interface AuditEntry {
   id: string;
@@ -156,6 +165,9 @@ export interface AuditEntry {
   before: string;
   after: string;
   gameMs: number;
+  utcMs?: number;
+  target?: string;
+  status?: string;
 }
 export interface Effect {
   id: string;
@@ -166,6 +178,27 @@ export interface Effect {
   active: boolean;
 }
 export interface JudgeState {
+  noticePendingCount?: number;
+  noticeTasks?: Notice[];
+  scheduledEvents?: ScheduledEvent[];
+  cursors?: Partial<Record<'notices' | 'audits' | 'attacks', string | null>>;
+  accounts?: AccountSummary[];
+  attacks?: {
+    id: string;
+    actor: string;
+    target: string | null;
+    classification: string;
+    roll: number | null;
+    wrongIndex: number | null;
+    utcMs: number;
+    valid: boolean;
+  }[];
+  roster?: {
+    members: string[];
+    accounts: { id: string; nickname: string; eligible: boolean }[];
+    locked: boolean;
+  };
+  parameters?: { version: number; locked: boolean; values: RuleParameters };
   notices: Notice[];
   audits: AuditEntry[];
   effects: Effect[];
@@ -177,13 +210,30 @@ export interface JudgeState {
     error: string;
   };
 }
+export interface ScheduledEvent {
+  id: string;
+  kind: string;
+  clock: 'game' | 'utc';
+  due: number;
+  status: string;
+  attempts: number;
+  lastAttemptUtcMs: number | null;
+  lastError: string;
+  lastErrorUtcMs: number | null;
+  committedUtcMs: number | null;
+  payload: Record<string, unknown>;
+}
 export interface ResultsState {
+  correctionReason?: string;
+  versions?: { version: number; reason: string; createdUtc: number }[];
   version: number;
   reason: string;
   champions: string[];
   standings: Civilization[];
 }
 export interface Snapshot {
+  eventCursor?: string | null;
+  parameters?: RuleParameters;
   site: SiteConfig;
   session: Session | null;
   match: MatchState | null;
@@ -194,13 +244,44 @@ export interface Snapshot {
   judge: JudgeState | null;
   results: ResultsState | null;
 }
+export interface RuleParameters {
+  singerPercent: number;
+  firstLockSeconds: number;
+  secondLockSeconds: number;
+  secondOutPercent: number;
+  respawnSeconds: number;
+  observerWaitSeconds: number;
+  sightingIntervalMs: number;
+  sightingsPerMinute: number;
+}
 export interface OperationResult {
+  scheduler?: { settledEvents: string[]; remaining: number };
+  credentialDeliveryId?: string;
   requestId: string;
   status: 'complete' | 'pending';
   title: string;
   message: string;
   code?: string;
   preview?: ManagementPreview;
+  revision?: number;
+  outcome?: {
+    accepted?: boolean;
+    eventId?: string;
+    target?: string;
+    intel?: Intel;
+    remaining?: number;
+    wrongCount?: number;
+    lockedUntilUtcMs?: number;
+    eliminated?: boolean;
+  };
+}
+export interface AccountSummary {
+  id: string;
+  name: string;
+  role: 'player' | 'judge';
+  enabled: boolean;
+  version: number;
+  permissions: string[];
 }
 export interface ManagementPreview {
   token: string;
@@ -214,7 +295,23 @@ export interface Operation {
   payload: Record<string, unknown>;
   requestId: string;
 }
+export interface HomeworldSubmission {
+  code: string;
+}
 export interface DataSource {
+  judgePage?(
+    kind: 'notices' | 'audits' | 'attacks',
+    cursor: string,
+  ): Promise<{
+    items: Notice[] | AuditEntry[] | NonNullable<JudgeState['attacks']>;
+    nextCursor: string | null;
+  }>;
+  credential?(id: string): Promise<{ accountId: string; credential: string }>;
+  exportData?(kind: string): Promise<{ fileName: string; text: string }>;
+  eventsPage?(
+    route: string,
+    cursor: string,
+  ): Promise<{ items: GameEvent[]; nextCursor: string | null }>;
   read(route: string): Promise<Snapshot>;
   login(credential: string, judge: boolean): Promise<void>;
   logout(): Promise<void>;
@@ -271,3 +368,4 @@ export function validArms(arms: Arms): boolean {
 export function validCode(value: string): boolean {
   return /^\d{6}$/.test(value);
 }
+export type * from './platform';

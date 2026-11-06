@@ -42,5 +42,6 @@ Desktop.ini
 # Event data and private exports must remain local
 backups/
 exports/
+.private/
 
 .codegraph/

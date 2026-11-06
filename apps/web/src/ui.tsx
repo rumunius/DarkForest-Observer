@@ -1,11 +1,13 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   COLORS,
   FLIGHT_NAMES,
@@ -17,6 +19,7 @@ import {
   type GameEvent,
 } from '@darkforest/contracts';
 import { useApp, useClock } from './state';
+import { attackWarning } from './rule-text';
 import { moveBracelet } from './bracelets';
 
 const paths: Record<string, ReactNode> = {
@@ -111,6 +114,39 @@ export function Icon({ name, size = 24 }: { name: string; size?: number }) {
   );
 }
 
+export type FeedbackMessage = {
+  tone: 'error' | 'pending' | 'result';
+  content: ReactNode;
+  onClose?: () => void;
+};
+export function Feedback({ messages }: { messages: FeedbackMessage[] }) {
+  if (!messages.length) return null;
+  return createPortal(
+    <div className="feedback-stack">
+      {messages.map(({ tone, content, onClose }, index) => (
+        <div
+          key={`${tone}:${index}`}
+          className={`global-feedback ${tone}-feedback`}
+          role={tone === 'error' ? 'alert' : 'status'}
+          aria-atomic="true"
+        >
+          <Icon
+            name={tone === 'error' ? 'alert' : tone === 'pending' ? 'clock' : 'check'}
+            size={20}
+          />
+          <div>{content}</div>
+          {onClose && (
+            <button className="icon-button" aria-label="关闭本次操作结果" onClick={onClose}>
+              <Icon name="close" size={18} />
+            </button>
+          )}
+        </div>
+      ))}
+    </div>,
+    document.body,
+  );
+}
+
 export function notchPath(width: number, height: number, cut: number, inset = 0.5): string {
   return `M ${cut} ${inset} H ${width - inset} V ${height - cut} L ${width - cut} ${height - inset} H ${inset} V ${cut} Z`;
 }
@@ -167,6 +203,60 @@ export function Button({
       <CutOutline />
       <span className="button-content">{children}</span>
     </button>
+  );
+}
+export function ConfirmDialog({
+  title,
+  children,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  children: ReactNode;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const returnFocus = useRef(document.activeElement);
+  const titleId = useId();
+  const descriptionId = useId();
+  useEffect(() => {
+    const element = dialog.current!;
+    const trigger = returnFocus.current;
+    element.showModal();
+    return () => {
+      element.close();
+      if (trigger instanceof HTMLElement && trigger.isConnected)
+        trigger.focus({ preventScroll: true });
+    };
+  }, []);
+  return createPortal(
+    <dialog
+      ref={dialog}
+      className="confirmation-dialog"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      onCancel={(event) => {
+        event.preventDefault();
+        onCancel();
+      }}
+    >
+      <Frame>
+        <h2 id={titleId}>{title}</h2>
+        <div id={descriptionId}>{children}</div>
+        <div className="confirmation-actions">
+          <Button autoFocus onClick={onCancel}>
+            取消
+          </Button>
+          <Button className="danger" onClick={onConfirm}>
+            {confirmLabel}
+          </Button>
+        </div>
+      </Frame>
+    </dialog>,
+    document.body,
   );
 }
 export function Link({
@@ -431,7 +521,7 @@ export function PlayerStatus() {
 }
 export function MiniArms({ arms }: { arms: Arms | null }) {
   const { data } = useApp();
-  if (!arms) return <span className="muted">无现役配置</span>;
+  if (!arms) return <span className="muted">暂无手环配置</span>;
   return (
     <div className="mini-arms" aria-label="两侧手环配置">
       {arms.map((arm, i) => (
@@ -593,7 +683,7 @@ export function CopyText({
   );
 }
 export function Events({ events, detailsPrefix }: { events: GameEvent[]; detailsPrefix?: string }) {
-  const { data } = useApp();
+  const { data, loadEarlierEvents } = useApp();
   return events.length ? (
     <div className="event-list">
       {events.map((event) => (
@@ -634,6 +724,9 @@ export function Events({ events, detailsPrefix }: { events: GameEvent[]; details
           </time>
         </article>
       ))}
+      {data.eventCursor && events.length >= 50 && (
+        <Button onClick={() => void loadEarlierEvents()}>加载更早记录</Button>
+      )}
     </div>
   ) : (
     <p className="empty-inline">还没有新的赛事事件。</p>
@@ -869,15 +962,9 @@ export function ColorEditor() {
       <div className="attack-commit">
         <div className={`attack-consequence ${wrong > 0 ? 'consequence-danger' : ''}`}>
           <p className="secondary">
-            提交错误目击码的次数 <strong className="numeric">{wrong}</strong>
+            提交错误手环颜色的次数 <strong className="numeric">{wrong}</strong>
           </p>
-          <p>
-            {wrong === 0
-              ? '提交错误的目击码，将禁止目击攻击5分钟。'
-              : wrong === 1
-                ? '再次提交错误的目击码，有50%的概率永久淘汰，有50%的概率禁止目击攻击15分钟。'
-                : '再次提交错误的目击码，将永久淘汰。'}
-          </p>
+          <p>{attackWarning(wrong, data.parameters)}</p>
         </div>
         {valid && !locked ? (
           <Button
@@ -973,14 +1060,8 @@ function AttackConfirmation({
             </div>
           </div>
         ))}
-        <p className="secondary">请确认这是你在现场亲眼观察到的完整配置。提交后由服务器结算。</p>
-        <p className="attention">
-          {wrong === 0
-            ? '提交错误的目击码，将禁止目击攻击5分钟。'
-            : wrong === 1
-              ? '再次提交错误的目击码，有50%的概率永久淘汰，有50%的概率禁止目击攻击15分钟。'
-              : '再次提交错误的目击码，将永久淘汰。'}
-        </p>
+        <p className="secondary">请确认这是你在现场亲眼观察到的对手两臂完整手环颜色。</p>
+        <p className="attention">{attackWarning(wrong, data.parameters)}</p>
         <div className="confirmation-actions">
           <Button autoFocus onClick={onCancel}>
             返回检查

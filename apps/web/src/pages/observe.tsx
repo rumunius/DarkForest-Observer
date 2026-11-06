@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { FLIGHT_NAMES, STAGE_NAMES, type Civilization } from '@darkforest/contracts';
 import { useApp } from '../state';
+import { OBSERVER_AGREEMENT_COPY } from '../../../../packages/contracts/src/message-copy';
 import {
   ArmsView,
   Button,
@@ -136,7 +137,7 @@ export function CivilizationDetail({
                   <ArmsView arms={c.arms} />
                 </>
               ) : (
-                <p className="secondary">当前没有现役手环配置。</p>
+                <p className="secondary">当前没有可用的手环配置。</p>
               )}
             </>
           ) : tab === 'voyages' ? (
@@ -145,7 +146,7 @@ export function CivilizationDetail({
                 <Frame key={v.number}>
                   <div className="heading-row">
                     <h2>第{v.number}航次</h2>
-                    <Status>{v.endMs === null ? '现役' : '已失效'}</Status>
+                    <Status>{v.endMs === null ? '使用中' : '已失效'}</Status>
                   </div>
                   <MiniArms arms={v.arms} />
                   <p className="secondary">
@@ -174,7 +175,9 @@ function Overview() {
     <>
       <PageTitle title="宇宙观测" aside={<Status>四维观察者</Status>} />
       <MatchSummary />
-      <p className="observer-intro">你已永久淘汰，可以查看当前战况和已经发生的赛事记录。</p>
+      <p className="observer-intro">
+        你的意识已进入四维世界。你可以观察宇宙、与其他四维文明交流，并向裁判提出高维干涉建议。
+      </p>
       <div className="overview-stats">
         <Link to="/observer/civilizations">
           <strong className="numeric">{match.survivors}</strong>
@@ -198,7 +201,7 @@ function Overview() {
           .slice(0, 5)
           .map((e) => (e.actor ? { ...e, body: `${e.body} 发起者：${e.actor}` } : e))}
       />
-      <p className="notice-block">观战信息仅供已淘汰玩家交流，请勿向仍在比赛中的玩家传递。</p>
+      <p className="notice-block">{OBSERVER_AGREEMENT_COPY}</p>
     </>
   );
 }
@@ -279,7 +282,7 @@ export function ResultsPages() {
       <>
         <PageTitle title="比赛结果" />
         <Empty title="当前尚无正式结果" to={data.session?.role === 'judge' ? '/judge' : '/player'}>
-          正式结果在服务器确认比赛结束后开放。
+          比赛结束后可以查看结果和完整战报。
         </Empty>
       </>
     );
