@@ -8,7 +8,12 @@ import {
   instantMs,
   type CommandNode,
 } from '../../../../packages/contracts/src/commands';
-import {integer, stableJson} from '../../../../packages/contracts/src/backend';
+import {
+  integer,
+  object,
+  stableJson,
+  text,
+} from '../../../../packages/contracts/src/backend';
 import {permission, requireThat, type Actor} from '../storage/store';
 import type {Engine} from './engine';
 
@@ -43,6 +48,52 @@ interface Cursor {
   ceilings: Record<string, number>;
   before: [number, string, number];
   watermark: number;
+}
+
+/** Decode untrusted cursor fields before any SQL waterline or tuple comparison. */
+function readHistoryCursor(encoded: string, query: string): Cursor {
+  let decoded: unknown;
+  try {
+    decoded = parseJson(
+      new TextDecoder().decode(
+        Uint8Array.from(atob(encoded), ch => ch.charCodeAt(0)),
+      ),
+    );
+  } catch {
+    // Invalid encoding is rejected by the same cursor check below.
+  }
+  requireThat(
+    decoded && typeof decoded === 'object' && !Array.isArray(decoded),
+    'COMMAND_ARGUMENT',
+    '历史游标无效，或与当前筛选不匹配。',
+    400,
+  );
+  const fields = object(decoded);
+  requireThat(
+    fields.query === query &&
+      Array.isArray(fields.before) &&
+      fields.before.length === 3,
+    'COMMAND_ARGUMENT',
+    '历史游标无效，或与当前筛选不匹配。',
+    400,
+  );
+  const before: unknown[] = fields.before;
+  const ceilings = object(fields.ceilings);
+  return {
+    query,
+    ceilings: Object.fromEntries(
+      Object.entries(ceilings).map(([source, ceiling]) => [
+        source,
+        integer(ceiling, 0),
+      ]),
+    ),
+    before: [
+      integer(before[0], 0),
+      text(before[1], 128),
+      integer(before[2], 1),
+    ],
+    watermark: integer(fields.watermark, 0),
+  };
 }
 
 /** Merge independent persisted histories; the cursor fixes each source's first-page waterline. */
@@ -84,29 +135,9 @@ export function civilizationHistory(
       ),
     ),
   });
-  let cursor: Cursor | undefined;
-  if (opts.before) {
-    try {
-      cursor = parseJson(
-        new TextDecoder().decode(
-          Uint8Array.from(atob(opts.before), ch => ch.charCodeAt(0)),
-        ),
-      ) as Cursor;
-    } catch {
-      /* Validated below. */
-    }
-    requireThat(
-      cursor &&
-        cursor.query === query &&
-        cursor.ceilings &&
-        Array.isArray(cursor.before) &&
-        cursor.before.length === 3 &&
-        Number.isSafeInteger(cursor.watermark),
-      'COMMAND_ARGUMENT',
-      '历史游标无效，或与当前筛选不匹配。',
-      400,
-    );
-  }
+  const cursor = opts.before
+    ? readHistoryCursor(opts.before, query)
+    : undefined;
   const ceilings: Record<string, number> = {};
   const items: Item[] = [];
   const take = (

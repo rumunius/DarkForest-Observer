@@ -589,6 +589,47 @@ it('F11 applies history filters before pagination and keeps source waterlines ac
   );
   expect(jsonObjects(old.items).some(r => r.id === 'old-0')).toBe(true);
 });
+it('rejects malformed history cursor fields before comparing or querying records', async () => {
+  await forest();
+  for (let index = 0; index < 2; index++) {
+    await sql(
+      "INSERT INTO event_log(id,kind,title,body,audience,owner,civilization_ids,game_ms,utc_ms,committed_utc) VALUES(?,'notice','游标边界','历史证据','personal','C01','[\"C01\"]',0,?,?)",
+      `cursor-${index}`,
+      now,
+      now,
+    );
+  }
+  const first = jsonObject(resultData(await command('/history C01 --limit 1')));
+  const cursor = jsonObject(parseJson(atob(jsonString(first.nextCursor))));
+  const before = jsonArray(cursor.before);
+  const variants = [
+    null,
+    [],
+    {...cursor, query: 'another query'},
+    {...cursor, before: [before[0], before[1]]},
+    {...cursor, before: [before[0], null, before[2]]},
+    {...cursor, before: [before[0], '', before[2]]},
+    {...cursor, before: ['not-a-time', before[1], before[2]]},
+    {...cursor, before: [-1, before[1], before[2]]},
+    {...cursor, before: [before[0], before[1], 0.5]},
+    {...cursor, before: [before[0], before[1], 0]},
+    {...cursor, ceilings: []},
+    {...cursor, ceilings: null},
+    {...cursor, ceilings: {event_log: 'not-a-number'}},
+    {...cursor, ceilings: {event_log: Number.MAX_SAFE_INTEGER + 1}},
+    {...cursor, ceilings: {event_log: -1}},
+    {...cursor, watermark: -1},
+    {...cursor, watermark: '1'},
+    {...cursor, watermark: Number.MAX_SAFE_INTEGER + 1},
+  ];
+  for (const variant of variants) {
+    const reply = await command(
+      `/history C01 --limit 1 --before ${btoa(JSON.stringify(variant))}`,
+    );
+    expect(reply.status, JSON.stringify(variant)).toBe(400);
+  }
+});
+
 it('previews without committing; explicit target plans survive unrelated activity and time', async () => {
   await forest();
   const p = await plan('/photon grant C01');
