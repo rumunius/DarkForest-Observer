@@ -89,7 +89,7 @@ export function CivilizationList({
 }
 /** 展示获授权的文明详情与历史，不推测或补齐不可见秘密。 */
 export function CivilizationDetail({
-  civilization: civilization,
+  civilization,
   back,
   title = '文明详情',
 }: {

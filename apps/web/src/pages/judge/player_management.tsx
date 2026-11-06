@@ -16,11 +16,7 @@ import {RecordPagination} from '../record_pagination';
 import {ManagementForm} from './management_form';
 
 /** 展示指定文明的裁判管理操作，使用真实预览解释跨状态影响。 */
-export function PlayerManagement({
-  civilization: civilization,
-}: {
-  civilization: Civilization;
-}) {
+export function PlayerManagement({civilization}: {civilization: Civilization}) {
   const {data} = useApp();
   const [operation, setOperation] = useState('nickname');
   const [value, setValue] = useState('');

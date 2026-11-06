@@ -8,7 +8,7 @@ import {
 } from 'react';
 import {ApiError} from './data/http';
 import {mergeRecords, type Collection} from './judge_records';
-import {EMPTY_SNAPSHOT as empty} from './state_snapshot';
+import {EMPTY_SNAPSHOT} from './state_snapshot';
 import {requireError} from '@darkforest/contracts';
 
 interface HistoryContext {
@@ -61,7 +61,7 @@ export function useMatchHistory({
       }
       if (error instanceof ApiError && [401, 403].includes(error.status)) {
         timelineKey.current = '';
-        const next = {...empty, site: snapshotRef.current.site};
+        const next = {...EMPTY_SNAPSHOT, site: snapshotRef.current.site};
         snapshotRef.current = next;
         setData(next);
       }
@@ -95,7 +95,7 @@ export function useMatchHistory({
         }
         if (error instanceof ApiError && [401, 403].includes(error.status)) {
           timelineKey.current = '';
-          const next = {...empty, site: snapshotRef.current.site};
+          const next = {...EMPTY_SNAPSHOT, site: snapshotRef.current.site};
           snapshotRef.current = next;
           setData(next);
         }

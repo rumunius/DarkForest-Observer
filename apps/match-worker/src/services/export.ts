@@ -168,12 +168,15 @@ export async function exportData(
         })),
         events: events(engine, actor, false, Number.MAX_SAFE_INTEGER, 100000)
           .filter(event => event.audience === 'public')
-          .map(({actor: eventActor, ...event}) => ({
-            ...event,
-            ...(event.kind === 'broadcast' && eventActor
-              ? {actor: eventActor}
-              : {}),
-          })),
+          .map(publicEvent => {
+            const {actor: eventActor, ...event} = publicEvent;
+            return {
+              ...event,
+              ...(event.kind === 'broadcast' && eventActor
+                ? {actor: eventActor}
+                : {}),
+            };
+          }),
       },
       null,
       2,

@@ -20,9 +20,9 @@ import {useMatchHistory} from './state_history';
 import {useMessageReadState} from './state_messages';
 import {useMatchNavigation} from './state_navigation';
 import {useMatchOperations} from './state_operations';
-import {EMPTY_SNAPSHOT as empty, mergeSnapshotHistory} from './state_snapshot';
+import {EMPTY_SNAPSHOT, mergeSnapshotHistory} from './state_snapshot';
 import {
-  PENDING_OPERATION_KEY as pendingKey,
+  PENDING_OPERATION_KEY,
   readPending,
   savePending,
   type PendingRecord,
@@ -85,7 +85,7 @@ export function AppProvider({
   children: ReactNode;
   epoch?: number;
 }) {
-  const [data, setData] = useState<Snapshot>(empty);
+  const [data, setData] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -111,7 +111,7 @@ export function AppProvider({
     readError,
     setResult,
   );
-  const storageKey = `${pendingKey}${base.startsWith('/m/') ? `.${base}` : base ? '.preview' : ''}`;
+  const storageKey = `${PENDING_OPERATION_KEY}${base.startsWith('/m/') ? `.${base}` : base ? '.preview' : ''}`;
   const pendingRecord = useRef(readPending(storageKey));
   const persistPending = useCallback(
     (value: PendingRecord | null) => {
@@ -180,8 +180,11 @@ export function AppProvider({
       }
       if (error instanceof ApiError && [401, 403].includes(error.status)) {
         timelineKey.current = '';
-        snapshotRef.current = {...empty, site: snapshotRef.current.site};
-        setData({...empty, site: snapshotRef.current.site});
+        snapshotRef.current = {
+          ...EMPTY_SNAPSHOT,
+          site: snapshotRef.current.site,
+        };
+        setData({...EMPTY_SNAPSHOT, site: snapshotRef.current.site});
         setDraft([[], []]);
         setSelectedArm(null);
         setPending(null);
@@ -231,7 +234,7 @@ export function AppProvider({
       generation.current++;
       timelineKey.current = '';
       sequence.current++;
-      setData({...empty, site: data.site});
+      setData({...EMPTY_SNAPSHOT, site: data.site});
       setDraft([[], []]);
       setPending(null);
       persistPending(null);
@@ -248,8 +251,8 @@ export function AppProvider({
     sequence.current++;
     submitting.current = false;
     setLoading(true);
-    setData(empty);
-    snapshotRef.current = empty;
+    setData(EMPTY_SNAPSHOT);
+    snapshotRef.current = EMPTY_SNAPSHOT;
     setDraft([[], []]);
     setSelectedArm(null);
     setResult(null);
