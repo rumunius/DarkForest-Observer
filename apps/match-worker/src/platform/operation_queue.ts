@@ -63,13 +63,7 @@ export async function alarm(host: DarkForestPlatform) {
         ) {
           const latest = await host.summary(directoryEntry, operation.actor);
           requireThat(
-            (
-              latest.members as Array<{
-                account_id: string;
-                local_id: string;
-                state: string;
-              }>
-            ).some(
+            latest.members.some(
               m =>
                 m.account_id === operation.actor &&
                 m.local_id === 'J01' &&

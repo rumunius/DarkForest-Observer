@@ -1,7 +1,4 @@
-import type {
-  MatchEntry,
-  MatchMember,
-} from '../../../../packages/contracts/src/platform';
+import type {MatchEntry} from '../../../../packages/contracts/src/platform';
 import type {BackendEnv, RpcReply} from '../rpc/types';
 import {requireThat} from '../storage/store';
 import {matchRequest} from './matches';
@@ -111,7 +108,7 @@ async function listMyMatches(
           return {
             ...entry,
             phase: current.phase,
-            membership: (current.members as MatchMember[]).find(
+            membership: current.members.find(
               member => member.account_id === session.account_id,
             ),
           };

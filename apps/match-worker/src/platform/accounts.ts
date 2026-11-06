@@ -321,13 +321,7 @@ export async function changeAccount(
       const matchEntry = host.directory(target.match_id);
       const current = await host.summary(matchEntry, session.account_id);
       requireThat(
-        !(
-          current.members as Array<{
-            account_id: string;
-            local_id: string;
-            state: string;
-          }>
-        ).some(
+        !current.members.some(
           m =>
             m.account_id === account.id &&
             m.local_id === 'J01' &&

@@ -17,6 +17,7 @@ import {adminRequest} from './admin_requests';
 import {publicAuthentication} from './authentication';
 import {bootstrap, maintenance} from './maintenance';
 import type {ControlRequest} from './match_control';
+import type {MatchControlSummary} from './match_control_reads';
 import {alarm} from './operation_queue';
 import {personalRequest} from './personal_requests';
 import type {AuthenticatedRequest} from './request_context';
@@ -227,15 +228,19 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
   }
 
   /** 读取本场权威摘要并更新目录缓存，目录不能成为第二权威状态源。 */
-  async summary(matchEntry: Directory, actor: string) {
-    const summary = await this.control(
+  async summary(
+    matchEntry: Directory,
+    actor: string,
+  ): Promise<MatchControlSummary> {
+    // The signed summary action serializes readControlSummary; control rejects its error envelope.
+    const summary = (await this.control(
       matchEntry,
       crypto.randomUUID(),
       'summary',
       actor,
       '读取本场最新管理状态',
       {},
-    );
+    )) as MatchControlSummary;
     this.db.exec(
       'UPDATE match_directory SET summary=?,synced_utc=? WHERE id=?',
       JSON.stringify({

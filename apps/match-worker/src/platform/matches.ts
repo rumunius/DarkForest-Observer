@@ -10,7 +10,6 @@ import {
 import type {
   MatchDownload,
   MatchHistory,
-  MatchMember,
 } from '../../../../packages/contracts/src/platform';
 import type {BackendEnv, MatchGrant, RpcInput, RpcReply} from '../rpc/types';
 import {digest, token} from '../security/crypto';
@@ -54,13 +53,7 @@ export async function matchRequest(
     (path === '/preview' && input.method === 'POST')
   ) {
     const current = await host.summary(matchEntry, session.account_id);
-    const head = (
-      current.members as Array<{
-        account_id: string;
-        local_id: string;
-        state: string;
-      }>
-    ).some(
+    const head = current.members.some(
       m =>
         m.account_id === session.account_id &&
         m.local_id === 'J01' &&
@@ -74,14 +67,7 @@ export async function matchRequest(
     if (path === '/eligible') {
       return {
         status: 200,
-        body: (
-          current.members as Array<{
-            account_id: string;
-            name: string;
-            kind: string;
-            state: string;
-          }>
-        )
+        body: current.members
           .filter(m => m.kind === 'staff' && m.state === 'accepted')
           .map(m => ({
             id: m.account_id,
@@ -166,13 +152,7 @@ export async function matchRequest(
         host.admin(session, ['owner', 'admin']);
       } else {
         const current = await host.summary(matchEntry, session.account_id);
-        const member = (
-          current.members as Array<{
-            account_id: string;
-            local_id: string;
-            state: string;
-          }>
-        ).find(
+        const member = current.members.find(
           m =>
             m.account_id === session.account_id &&
             m.local_id === 'J01' &&
@@ -335,8 +315,8 @@ async function matchHistory(
   );
   const current = await host.summary(matchEntry, session.account_id);
   const localReader =
-    (current.participants as string[]).includes(session.account_id) ||
-    (current.members as MatchMember[]).some(
+    current.participants.includes(session.account_id) ||
+    current.members.some(
       m =>
         m.account_id === session.account_id &&
         m.state === 'bound' &&
