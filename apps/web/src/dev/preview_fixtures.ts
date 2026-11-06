@@ -139,7 +139,97 @@ export function createPreviewSnapshot(
 ): Snapshot {
   const now = Date.now();
 
-  const civilizations: Civilization[] = nicknames.map((nickname, index) => ({
+  const civilizations: Civilization[] = createCivilizations(now);
+
+  const civilization = createCurrentCivilization(civilizations);
+  const events: GameEvent[] = createPreviewEvents(now);
+
+  const judgeRole =
+    role === 'chief' ||
+    role === 'communication' ||
+    role === 'event' ||
+    role === 'display';
+
+  const state: Snapshot = {
+    site: {
+      ...structuredClone(DEFAULT_SITE),
+      qqGroup: '黑暗森林活动群（预览）',
+      judgeContact: '通讯裁判，QQ 10000001（模拟）',
+    },
+    session: {
+      id: judgeRole ? `judge-${role}` : 'player-C07',
+      matchId: 'preview-match',
+      role: judgeRole ? 'judge' : 'player',
+      name: judgeRole
+        ? role === 'communication'
+          ? '通讯裁判'
+          : role === 'event'
+            ? '事件裁判'
+            : '总裁判'
+        : '归零者',
+      permissions: PERMISSIONS[role] ?? [],
+      csrfToken: 'preview-only',
+    },
+    match: {
+      id: 'preview-match',
+      revision: 1,
+      stage: 'forest',
+      gameMs: 35 * 60000,
+      serverUtcMs: now,
+      running: true,
+      paused: false,
+      pauseReason: '',
+      verification: false,
+      total: 24,
+      survivors: 18,
+      homeworldsAlive: 16,
+      releaseAt: null,
+      startAt: null,
+    },
+    player: judgeRole ? null : civilization,
+    events,
+    intel: [
+      {
+        id: 'INT-1',
+        civilization: 'C12',
+        nickname: '漂流者',
+        code: '739216',
+        gameMs: 25 * 60000 + 10000,
+        source: '成功目击获得',
+      },
+    ],
+    civilizations,
+    judge: createJudgeState(now),
+    results: null,
+  };
+
+  const context: PreviewScenarioContext = {
+    state,
+    civilization,
+    scenario,
+    role,
+    now,
+    judgeRole,
+  };
+  applyPreparationScenario(context);
+  applyCombatScenario(context);
+  applyEndScenario(context);
+  finalizePreviewSnapshot(context);
+  return state;
+}
+
+interface PreviewScenarioContext {
+  readonly state: Snapshot;
+  readonly civilization: Civilization;
+  readonly scenario: string;
+  readonly role: PreviewRole;
+  readonly now: number;
+  readonly judgeRole: boolean;
+}
+
+/** Build the independent civilization pool before selecting the current player. */
+function createCivilizations(now: number): Civilization[] {
+  return nicknames.map((nickname, index) => ({
     id: `C${String(index + 1).padStart(2, '0')}`,
     nickname,
     flight: index > 17 ? 'eliminated' : index === 3 ? 'returning' : 'active',
@@ -171,22 +261,25 @@ export function createPreviewSnapshot(
     rank: null,
     tied: false,
   }));
+}
 
+/** Clone and customize the current player's starting state without mutating the pool. */
+function createCurrentCivilization(
+  civilizations: Civilization[],
+): Civilization {
   const civilization = structuredClone(civilizations[6]!);
-
   civilization.flightNumber = 2;
-
   civilization.arms = [['YL', 'SB'], ['WH']];
-
   civilization.photons = 1;
-
   civilization.broadcasts = 2;
-
   civilization.wrongCount = 0;
-
   civilization.actions = ['sighting', 'broadcast', 'photon', 'withdraw'];
+  return civilization;
+}
 
-  const events: GameEvent[] = [
+/** Construct example past events using the one timestamp captured for this snapshot. */
+function createPreviewEvents(now: number): GameEvent[] {
+  return [
     {
       id: 'EVT-108',
       kind: 'notice',
@@ -263,135 +356,85 @@ export function createPreviewSnapshot(
       civilizationIds: [],
     },
   ];
+}
 
-  const judgeRole =
-    role === 'chief' ||
-    role === 'communication' ||
-    role === 'event' ||
-    role === 'display';
-
-  const state: Snapshot = {
-    site: {
-      ...structuredClone(DEFAULT_SITE),
-      qqGroup: '黑暗森林活动群（预览）',
-      judgeContact: '通讯裁判，QQ 10000001（模拟）',
-    },
-    session: {
-      id: judgeRole ? `judge-${role}` : 'player-C07',
-      matchId: 'preview-match',
-      role: judgeRole ? 'judge' : 'player',
-      name: judgeRole
-        ? role === 'communication'
-          ? '通讯裁判'
-          : role === 'event'
-            ? '事件裁判'
-            : '总裁判'
-        : '归零者',
-      permissions: PERMISSIONS[role] ?? [],
-      csrfToken: 'preview-only',
-    },
-    match: {
-      id: 'preview-match',
-      revision: 1,
-      stage: 'forest',
-      gameMs: 35 * 60000,
-      serverUtcMs: now,
-      running: true,
-      paused: false,
-      pauseReason: '',
-      verification: false,
-      total: 24,
-      survivors: 18,
-      homeworldsAlive: 16,
-      releaseAt: null,
-      startAt: null,
-    },
-    player: judgeRole ? null : civilization,
-    events,
-    intel: [
+/** Construct local judge notices and diagnostics; these are not server queue entries. */
+function createJudgeState(now: number): NonNullable<Snapshot['judge']> {
+  return {
+    issuedCodes: 46,
+    effects: [
       {
-        id: 'INT-1',
-        civilization: 'C12',
-        nickname: '漂流者',
-        code: '739216',
-        gameMs: 25 * 60000 + 10000,
-        source: '成功目击获得',
+        id: 'FX-1',
+        target: '全场目击攻击',
+        reason: '四维观察者提案',
+        untilUtcMs: now - 60000,
+        operator: '总裁判',
+        active: false,
       },
     ],
-    civilizations,
-    judge: {
-      issuedCodes: 46,
-      effects: [
-        {
-          id: 'FX-1',
-          target: '全场目击攻击',
-          reason: '四维观察者提案',
-          untilUtcMs: now - 60000,
-          operator: '总裁判',
-          active: false,
-        },
-      ],
-      notices: [
-        {
-          id: 'N1',
-          target: 'C04（星尘）',
-          channel: 'private',
-          title: '飞船被击毁通知',
-          body: qqCopy(
-            '飞船击毁',
-            `${shipDestroyedCopy('C04（星尘）')}\n请在比赛时间40:00前完成重生。`,
-          ),
-          status: 'pending',
-          version: 1,
-          gameMs: 25 * 60000,
-          operator: '',
-        },
-        {
-          id: 'N2',
-          target: '比赛QQ群',
-          channel: 'group',
-          title: '广播公告',
-          body: qqCopy('坐标广播', broadcastCopy('C12（漂流者）', '001234')),
-          status: 'copied',
-          version: 2,
-          gameMs: 30 * 60000,
-          operator: '通讯裁判',
-        },
-        {
-          id: 'N3',
-          target: 'C19（微光）',
-          channel: 'private',
-          title: '永久淘汰通知',
-          body: qqCopy('维度跃迁', eliminationCopy('C19（微光）', 180)),
-          status: 'sent',
-          version: 3,
-          gameMs: 24 * 60000,
-          operator: '通讯裁判',
-        },
-      ],
-      audits: [
-        {
-          id: 'AUD-1',
-          title: '恢复比赛计时',
-          operator: '总裁判',
-          reason: '现场材料核对完成',
-          before: '比赛暂停',
-          after: '恢复黑暗森林阶段',
-          gameMs: 23 * 60000,
-        },
-      ],
-      scheduler: {
-        lastSuccessUtcMs: now - 1500,
-        nextWakeUtcMs: now + 60000,
-        backlog: 0,
-        error: '',
+    notices: [
+      {
+        id: 'N1',
+        target: 'C04（星尘）',
+        channel: 'private',
+        title: '飞船被击毁通知',
+        body: qqCopy(
+          '飞船击毁',
+          `${shipDestroyedCopy('C04（星尘）')}\n请在比赛时间40:00前完成重生。`,
+        ),
+        status: 'pending',
+        version: 1,
+        gameMs: 25 * 60000,
+        operator: '',
       },
+      {
+        id: 'N2',
+        target: '比赛QQ群',
+        channel: 'group',
+        title: '广播公告',
+        body: qqCopy('坐标广播', broadcastCopy('C12（漂流者）', '001234')),
+        status: 'copied',
+        version: 2,
+        gameMs: 30 * 60000,
+        operator: '通讯裁判',
+      },
+      {
+        id: 'N3',
+        target: 'C19（微光）',
+        channel: 'private',
+        title: '永久淘汰通知',
+        body: qqCopy('维度跃迁', eliminationCopy('C19（微光）', 180)),
+        status: 'sent',
+        version: 3,
+        gameMs: 24 * 60000,
+        operator: '通讯裁判',
+      },
+    ],
+    audits: [
+      {
+        id: 'AUD-1',
+        title: '恢复比赛计时',
+        operator: '总裁判',
+        reason: '现场材料核对完成',
+        before: '比赛暂停',
+        after: '恢复黑暗森林阶段',
+        gameMs: 23 * 60000,
+      },
+    ],
+    scheduler: {
+      lastSuccessUtcMs: now - 1500,
+      nextWakeUtcMs: now + 60000,
+      backlog: 0,
+      error: '',
     },
-    results: null,
   };
+}
 
+/** Set the registration and first-flight preparation steps for the selected scenario. */
+function applyPreparationScenario(context: PreviewScenarioContext): void {
+  const {state, civilization, scenario, now} = context;
+  const {civilizations} = state;
   const match = state.match!;
-
   const preflightFlight = Object.hasOwn(preflightFlights, scenario)
     ? preflightFlights[scenario]
     : undefined;
@@ -444,19 +487,23 @@ export function createPreviewSnapshot(
       match.startAt = now + 90000;
     }
   }
+}
 
+/** Set the local battle, respawn and observer scenario after preparation. */
+function applyCombatScenario(context: PreviewScenarioContext): void {
+  const {state, civilization, scenario, now, role} = context;
+
+  const match = state.match!;
   if (scenario === 'limited') {
     civilization.photons = 0;
     civilization.broadcasts = 0;
     civilization.actions = ['sighting', 'withdraw'];
   }
-
   if (scenario === 'locked') {
     civilization.wrongCount = 1;
     civilization.attackLockedUntil = now + 135000;
     civilization.actions = ['broadcast', 'photon', 'withdraw'];
   }
-
   if (
     scenario === 'returning' ||
     scenario === 'preparing' ||
@@ -474,25 +521,21 @@ export function createPreviewSnapshot(
           : 'launch',
     ];
   }
-
   if (scenario === 'last-life') {
     civilization.homeAlive = false;
   }
-
   if (scenario === 'apocalypse') {
     match.stage = 'apocalypse';
     match.gameMs = 72 * 60000;
     civilization.homeAlive = false;
     civilization.actions = ['sighting', 'withdraw'];
   }
-
   if (scenario === 'transfer') {
     match.stage = 'transfer';
     match.gameMs = 93 * 60000;
     civilization.homeAlive = false;
     civilization.actions = [];
   }
-
   if (scenario === 'verification') {
     match.stage = 'hunt';
     match.gameMs = RULES.cutoffMs;
@@ -501,20 +544,17 @@ export function createPreviewSnapshot(
     match.pauseReason = '裁判正在核验终局资格';
     civilization.actions = [];
   }
-
   if (scenario === 'hunt') {
     match.stage = 'hunt';
     match.gameMs = 102 * 60000;
     civilization.homeAlive = false;
     civilization.actions = ['sighting', 'withdraw'];
   }
-
   if (scenario === 'paused') {
     match.paused = true;
     match.pauseReason = '现场安全检查，等待裁判通知';
     civilization.actions = [];
   }
-
   if (['eliminated', 'observer'].includes(scenario) || role === 'observer') {
     civilization.flight = 'eliminated';
     civilization.arms = null;
@@ -526,7 +566,13 @@ export function createPreviewSnapshot(
     civilization.observerAllowed =
       role === 'observer' || scenario === 'observer';
   }
+}
 
+/** Create the selected finished-match example and its initial ranking. */
+function applyEndScenario(context: PreviewScenarioContext): void {
+  const {state, civilization, scenario, now} = context;
+  const {civilizations} = state;
+  const match = state.match!;
   if (['ended', 'no-champion'].includes(scenario)) {
     match.stage = 'ended';
     match.running = false;
@@ -559,7 +605,13 @@ export function createPreviewSnapshot(
       standings: [...civilizations].sort((a, b) => a.rank! - b.rank!),
     };
   }
+}
 
+/** Reconcile judge preparation, current voyage, counts and result projections in their original order. */
+function finalizePreviewSnapshot(context: PreviewScenarioContext): void {
+  const {state, civilization, scenario, judgeRole} = context;
+  const {civilizations} = state;
+  const match = state.match!;
   if (judgeRole && ['setup', 'outfitting', 'countdown'].includes(match.stage)) {
     civilizations.forEach((c, index) => {
       c.flight =
@@ -579,14 +631,12 @@ export function createPreviewSnapshot(
           ? 'staged'
           : 'verified';
   }
-
   civilizations[6] = {
     ...structuredClone(civilization),
     voyages: civilizations[6]!.voyages,
     rank: state.results ? 1 : null,
     tied: false,
   };
-
   if (
     [
       'apocalypse',
@@ -605,22 +655,16 @@ export function createPreviewSnapshot(
       }
     });
   }
-
   const currentVoyage = civilizations[6].voyages.at(-1);
-
   if (currentVoyage && civilization.arms) {
     currentVoyage.arms = structuredClone(civilization.arms);
     currentVoyage.number = civilization.flightNumber;
   }
-
   match.survivors = civilizations.filter(c => c.flight !== 'eliminated').length;
-
   match.homeworldsAlive = civilizations.filter(c => c.homeAlive).length;
-
   if (state.results) {
     state.results.standings = [...civilizations].sort(
       (a, b) => a.rank! - b.rank!,
     );
   }
-  return state;
 }
