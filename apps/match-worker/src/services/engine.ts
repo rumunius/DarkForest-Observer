@@ -93,6 +93,21 @@ const HEAD = [
   'settings',
   'account',
 ];
+/** 同一同步写事务使用的原正文、身份摘要、已准备材料和结算前事件集合。 */
+interface PreparedWriteRequest {
+  readonly input: RpcInput;
+  readonly path: string;
+  readonly hash: string;
+  readonly keys: Codebook;
+  readonly body: Record<string, unknown>;
+  readonly id: string;
+  readonly bodyDigest: string;
+  readonly prepared: PreparedCode[];
+  readonly credentialMaterial:
+    Awaited<ReturnType<typeof prepareCredential>> | undefined;
+  readonly commandCiphertext: string | null;
+  readonly pendingEvents: string[];
+}
 /** 本场业务执行器，统一身份、到期屏障、事务、审计和可控时间来源。 */
 export class Engine {
   platformKeys = false;
@@ -849,48 +864,7 @@ export class Engine {
       503,
     );
     if (path === '/auth/exchange' && method === 'POST') {
-      requireThat(
-        !db.one<Record<string, SqlStorageValue>>(
-          'SELECT id FROM match_identity',
-        ),
-        'PLATFORM_LOGIN_REQUIRED',
-        '请从长期账号入口登录。',
-        401,
-      );
-      this.limit(`login:${input.clientKey}`, 120);
-      const body = strict(input.body, ['credential', 'audience']);
-      requireThat(
-        body.audience === 'player' || body.audience === 'judge',
-        'BAD_AUDIENCE',
-        '登录入口不正确。',
-        400,
-      );
-      const hash = await digest(text(body.credential, 128, 32));
-      this.limit(`credential:${hash}`, 10);
-      const sessionToken = token();
-      const tokenHash = await digest(sessionToken);
-      const csrf = token();
-      return db.tx(() => {
-        this.requireRecoveryAccess(path, true);
-        const actor = db.one<Actor>(
-          'SELECT * FROM accounts WHERE credential_hash=? AND role=? AND enabled=1',
-          hash,
-          body.audience as string,
-        );
-        requireThat(actor, 'INVALID_CREDENTIAL', '登录口令无效。', 401);
-        db.exec(
-          'INSERT INTO sessions VALUES(?,?,?,?,0)',
-          tokenHash,
-          actor.id,
-          csrf,
-          this.now() + 12 * 60 * 60_000,
-        );
-        return {
-          status: 200,
-          body: this.session(actor, tokenHash),
-          sessionToken,
-        };
-      });
+      return this.exchangeCredentials(input);
     }
     const hash = input.token ? await digest(input.token) : '';
     this.requireRecoveryAccess(path, method === 'POST');
@@ -916,85 +890,177 @@ export class Engine {
     }
     this.limit(`readwrite:${actor?.id ?? input.clientKey}`, actor ? 300 : 90);
     if (method === 'GET') {
-      if (/^\/operations\/[A-Za-z0-9_-]+$/.test(path)) {
-        return {status: 200, body: readEndpoint(this, actor, path, keys)};
-      }
-      if (path === '/judge/scheduler/health') {
-        requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
-        permission(actor, 'system');
-        return {status: 200, body: readEndpoint(this, actor, path, keys)};
-      }
-      this.settleForRequest(actor, path);
-      await rearm(this);
-      this.requireRecoveryAccess(path);
-      // All awaited preparation completes before this final synchronous snapshot transaction.
-      if (actor) {
-        actor = this.actor(hash);
-      }
-      const readUrl = new URL(path, 'https://internal');
-      if (readUrl.pathname.startsWith('/judge/credentials/')) {
-        requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
-        permission(actor, 'system');
-        const deliveryId = readUrl.pathname.slice('/judge/credentials/'.length);
-        const row = db.one<{
-          actor: string;
-          account_id: string;
-          ciphertext: string;
-        }>('SELECT * FROM credential_deliveries WHERE id=?', deliveryId);
-        requireThat(
-          row && row.actor === actor.id,
-          'NOT_FOUND',
-          '口令记录不存在。',
-          404,
-        );
-        const credential = await decrypt(
-          keys.encryption,
-          row.ciphertext,
-          `credential|${this.matchId}|${actor.id}|${deliveryId}`,
-        );
-        permission(this.actor(hash), 'system');
-        return {status: 200, body: {accountId: row.account_id, credential}};
-      }
-      if (readUrl.pathname === '/judge/export') {
-        requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
-        const exported = await exportData(
-          this,
-          actor,
-          readUrl.searchParams.get('kind') ?? 'report',
-          keys,
-        );
-        await rearm(this);
-        permission(
-          this.actor(hash),
-          ['backup', 'checkpoint'].includes(
-            readUrl.searchParams.get('kind') ?? '',
-          )
-            ? 'system'
-            : readUrl.searchParams.get('kind') === 'audit'
-              ? 'audit'
-              : 'results',
-        );
-        return {status: 200, body: exported};
-      }
-      // Alarm registration is asynchronous; repeat the barrier after it.
-      this.settleForRequest(actor, path);
-      const body = db.tx(() => {
-        if (path.startsWith('/snapshot')) {
-          const scope =
-            new URL(path, 'https://internal').searchParams.get('route') ?? '/';
-          return projectSnapshot(
-            this,
-            actor,
-            actor ? this.session(actor, hash) : null,
-            scope,
-            keys,
-          );
-        }
-        return readEndpoint(this, actor, path, keys);
-      });
-      return {status: 200, body};
+      return this.readRequest(path, actor, hash, keys);
     }
     requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
+    return this.writeRequest(input, actor, hash, keys, creators);
+  }
+
+  /** 建立旧单场登录会话，事务内再次检查恢复状态及有效账号。 */
+  private async exchangeCredentials(input: RpcInput): Promise<RpcReply> {
+    const db = this.db;
+    const {path} = input;
+
+    requireThat(
+      !db.one<Record<string, SqlStorageValue>>('SELECT id FROM match_identity'),
+      'PLATFORM_LOGIN_REQUIRED',
+      '请从长期账号入口登录。',
+      401,
+    );
+    this.limit(`login:${input.clientKey}`, 120);
+    const body = strict(input.body, ['credential', 'audience']);
+    requireThat(
+      body.audience === 'player' || body.audience === 'judge',
+      'BAD_AUDIENCE',
+      '登录入口不正确。',
+      400,
+    );
+    const hash = await digest(text(body.credential, 128, 32));
+    this.limit(`credential:${hash}`, 10);
+    const sessionToken = token();
+    const tokenHash = await digest(sessionToken);
+    const csrf = token();
+    return db.tx(() => {
+      this.requireRecoveryAccess(path, true);
+      const actor = db.one<Actor>(
+        'SELECT * FROM accounts WHERE credential_hash=? AND role=? AND enabled=1',
+        hash,
+        body.audience as string,
+      );
+      requireThat(actor, 'INVALID_CREDENTIAL', '登录口令无效。', 401);
+      db.exec(
+        'INSERT INTO sessions VALUES(?,?,?,?,0)',
+        tokenHash,
+        actor.id,
+        csrf,
+        this.now() + 12 * 60 * 60_000,
+      );
+      return {
+        status: 200,
+        body: this.session(actor, tokenHash),
+        sessionToken,
+      };
+    });
+  }
+
+  /** 在到期屏障和异步重排后复核身份，再读取授权快照或专用交付。 */
+  private async readRequest(
+    path: string,
+    actor: Actor | null,
+    hash: string,
+    keys: Codebook,
+  ): Promise<RpcReply> {
+    const db = this.db;
+
+    if (/^\/operations\/[A-Za-z0-9_-]+$/.test(path)) {
+      return {status: 200, body: readEndpoint(this, actor, path, keys)};
+    }
+    if (path === '/judge/scheduler/health') {
+      requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
+      permission(actor, 'system');
+      return {status: 200, body: readEndpoint(this, actor, path, keys)};
+    }
+    this.settleForRequest(actor, path);
+    await rearm(this);
+    this.requireRecoveryAccess(path);
+    // All awaited preparation completes before this final synchronous snapshot transaction.
+    if (actor) {
+      actor = this.actor(hash);
+    }
+    const readUrl = new URL(path, 'https://internal');
+    if (readUrl.pathname.startsWith('/judge/credentials/')) {
+      return this.deliverCredential(readUrl, actor, hash, keys);
+    }
+    if (readUrl.pathname === '/judge/export') {
+      return this.readExport(readUrl, actor, hash, keys);
+    }
+    // Alarm registration is asynchronous; repeat the barrier after it.
+    this.settleForRequest(actor, path);
+    const body = db.tx(() => {
+      if (path.startsWith('/snapshot')) {
+        const scope =
+          new URL(path, 'https://internal').searchParams.get('route') ?? '/';
+        return projectSnapshot(
+          this,
+          actor,
+          actor ? this.session(actor, hash) : null,
+          scope,
+          keys,
+        );
+      }
+      return readEndpoint(this, actor, path, keys);
+    });
+    return {status: 200, body};
+  }
+
+  /** 核对专用交付归属并解密，返回前再次复核当前系统职责。 */
+  private async deliverCredential(
+    readUrl: URL,
+    actor: Actor | null,
+    hash: string,
+    keys: Codebook,
+  ): Promise<RpcReply> {
+    const db = this.db;
+
+    requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
+    permission(actor, 'system');
+    const deliveryId = readUrl.pathname.slice('/judge/credentials/'.length);
+    const row = db.one<{
+      actor: string;
+      account_id: string;
+      ciphertext: string;
+    }>('SELECT * FROM credential_deliveries WHERE id=?', deliveryId);
+    requireThat(
+      row && row.actor === actor.id,
+      'NOT_FOUND',
+      '口令记录不存在。',
+      404,
+    );
+    const credential = await decrypt(
+      keys.encryption,
+      row.ciphertext,
+      `credential|${this.matchId}|${actor.id}|${deliveryId}`,
+    );
+    permission(this.actor(hash), 'system');
+    return {status: 200, body: {accountId: row.account_id, credential}};
+  }
+
+  /** 生成已授权导出并重排唤醒，返回前按导出类别复核当前职责。 */
+  private async readExport(
+    readUrl: URL,
+    actor: Actor | null,
+    hash: string,
+    keys: Codebook,
+  ): Promise<RpcReply> {
+    requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
+    const exported = await exportData(
+      this,
+      actor,
+      readUrl.searchParams.get('kind') ?? 'report',
+      keys,
+    );
+    await rearm(this);
+    permission(
+      this.actor(hash),
+      ['backup', 'checkpoint'].includes(readUrl.searchParams.get('kind') ?? '')
+        ? 'system'
+        : readUrl.searchParams.get('kind') === 'audit'
+          ? 'audit'
+          : 'results',
+    );
+    return {status: 200, body: exported};
+  }
+
+  /** 按原摘要重放并在事务外准备材料，再通过同步事务复核及提交原操作。 */
+  private async writeRequest(
+    input: RpcInput,
+    actor: Actor,
+    hash: string,
+    keys: Codebook,
+    creators: string[],
+  ): Promise<RpcReply> {
+    const db = this.db;
+    const {path} = input;
     const body = object(input.body);
     const resolve = /^\/operations\/([A-Za-z0-9_-]+)\/resolve$/.exec(path);
     if (resolve) {
@@ -1063,80 +1129,115 @@ export class Engine {
       )
       .map(event => event.id);
     this.settleForRequest(actor, path, body);
-    const result = db.tx(() => {
-      this.requireRecoveryAccess(path, true);
-      const current = this.actor(hash);
-      const replay = this.replay(current, id, path, bodyDigest);
-      if (replay) {
-        return replay;
-      }
-      let result: OperationResult;
-      if (path.startsWith('/judge/command/')) {
-        result = commandAction(
-          this,
-          current,
-          id,
-          path,
-          body,
-          prepared,
-          keys,
-          commandCiphertext,
-        );
-      } else if (path === '/judge/manage/preview') {
-        result = previewAction(this, current, id, body);
-      } else if (path.startsWith('/judge/')) {
-        result = judgeAction(
-          this,
-          current,
-          id,
-          path,
-          body,
-          prepared,
-          credentialMaterial,
-        );
-      } else if (path.startsWith('/action/') || path === '/player/nickname') {
-        result = playerAction(
-          this,
-          current,
-          id,
-          path,
-          body,
-          prepared,
-          input.edgeUtc,
-          keys,
-        );
-      } else {
-        throw new Fault(404, 'NOT_FOUND', '未找到这项操作。');
-      }
-      if (
-        [
-          '/judge/events/settle-due',
-          '/judge/scheduler/rearm',
-          '/judge/event-control',
-          '/judge/event-trigger',
-        ].includes(path)
-      ) {
-        result.scheduler = {
-          settledEvents: db
-            .all<{id: string}>(
-              "SELECT id FROM scheduled_events WHERE status='settled'",
-            )
-            .map(event => event.id)
-            .filter(
-              event =>
-                pendingEvents.includes(event) ||
-                event.startsWith(`judge:${current.id}:${id}:`),
-            ),
-          remaining: db.one<{count: number}>(
-            "SELECT COUNT(*) AS count FROM scheduled_events WHERE status='pending'",
-          )!.count,
-        };
-      }
-      this.saveResult(current, id, path, bodyDigest, result);
-      return result;
-    });
+    const preparedRequest: PreparedWriteRequest = {
+      input,
+      path,
+      hash,
+      keys,
+      body,
+      id,
+      bodyDigest,
+      prepared,
+      credentialMaterial,
+      commandCiphertext,
+      pendingEvents,
+    };
+    const result = db.tx(() => this.commitWrite(preparedRequest));
     await rearm(this);
     return {status: 200, body: result};
+  }
+
+  /** 在同一同步事务内复核恢复、身份和原收据，并保存调度说明及确定结果。 */
+  private commitWrite(request: PreparedWriteRequest): OperationResult {
+    const db = this.db;
+    const {path, hash, id, bodyDigest, pendingEvents} = request;
+    this.requireRecoveryAccess(path, true);
+    const current = this.actor(hash);
+    const replay = this.replay(current, id, path, bodyDigest);
+    if (replay) {
+      return replay;
+    }
+    const result = this.applyWrite(current, request);
+    if (
+      [
+        '/judge/events/settle-due',
+        '/judge/scheduler/rearm',
+        '/judge/event-control',
+        '/judge/event-trigger',
+      ].includes(path)
+    ) {
+      result.scheduler = {
+        settledEvents: db
+          .all<{id: string}>(
+            "SELECT id FROM scheduled_events WHERE status='settled'",
+          )
+          .map(event => event.id)
+          .filter(
+            event =>
+              pendingEvents.includes(event) ||
+              event.startsWith(`judge:${current.id}:${id}:`),
+          ),
+        remaining: db.one<{count: number}>(
+          "SELECT COUNT(*) AS count FROM scheduled_events WHERE status='pending'",
+        )!.count,
+      };
+    }
+    this.saveResult(current, id, path, bodyDigest, result);
+    return result;
+  }
+
+  /** 分派已在当前事务复核的业务请求，各领域仍负责自身规则与原返回契约。 */
+  private applyWrite(
+    current: Actor,
+    request: PreparedWriteRequest,
+  ): OperationResult {
+    const {
+      path,
+      id,
+      body,
+      prepared,
+      keys,
+      credentialMaterial,
+      commandCiphertext,
+      input,
+    } = request;
+    if (path.startsWith('/judge/command/')) {
+      return commandAction(
+        this,
+        current,
+        id,
+        path,
+        body,
+        prepared,
+        keys,
+        commandCiphertext,
+      );
+    } else if (path === '/judge/manage/preview') {
+      return previewAction(this, current, id, body);
+    } else if (path.startsWith('/judge/')) {
+      return judgeAction(
+        this,
+        current,
+        id,
+        path,
+        body,
+        prepared,
+        credentialMaterial,
+      );
+    } else if (path.startsWith('/action/') || path === '/player/nickname') {
+      return playerAction(
+        this,
+        current,
+        id,
+        path,
+        body,
+        prepared,
+        input.edgeUtc,
+        keys,
+      );
+    } else {
+      throw new Fault(404, 'NOT_FOUND', '未找到这项操作。');
+    }
   }
 
   /** 按稳定事件ID登记时基、优先级和负载，重试不创建另一份事件。 */

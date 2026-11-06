@@ -1780,6 +1780,98 @@ describe('real Workers SQLite and RPC', () => {
       ).events.filter(e => e.body === '请联系裁判'),
     ).toHaveLength(1);
   });
+  it('rechecks the session after asynchronous read preparation before returning judge material', async () => {
+    const {head} = await start();
+    const reply = await runInDurableObject(stub(), async (_instance, state) => {
+      const engine = new Engine(new Store(state.storage), bindings);
+      engine.now = () => testUtc!;
+      const original = state.storage.setAlarm.bind(state.storage);
+      let rearmed = false;
+      state.storage.setAlarm = async (...parameters) => {
+        await original(...parameters);
+        rearmed = true;
+        engine.db.exec("UPDATE accounts SET enabled=0 WHERE id='J01'");
+      };
+      try {
+        const response = await engine.call({
+          method: 'GET',
+          path: '/snapshot?route=/judge',
+          token: head.token,
+          edgeUtc: testUtc!,
+          clientKey: 'test',
+        });
+        expect(rearmed).toBe(true);
+        return response;
+      } finally {
+        state.storage.setAlarm = original;
+      }
+    });
+    expect(reply.status).toBe(401);
+    expect(reply.body).toMatchObject({
+      code: 'UNAUTHENTICATED',
+      definitive: true,
+    });
+    expect(reply.body).not.toHaveProperty('judge');
+  });
+  it('rechecks the session inside the write transaction after preparing replacement codes', async () => {
+    const {head} = await start();
+    expect((await manage('/judge/pause', head)).status).toBe(200);
+    const payload = {target: 'C01', mode: 'reissue'};
+    const previewReply = await previewFromJudge(
+      '/judge/equipment-correction',
+      head,
+      payload,
+    );
+    expect(previewReply.status).toBe(200);
+    const preview = (previewReply.body as OperationResult).preview!;
+    const before = await inEngine(
+      engine =>
+        engine.db.one<{count: number}>(
+          'SELECT COUNT(*) AS count FROM sighting_codes',
+        )!.count,
+    );
+    const reply = await inEngine(async engine => {
+      const prepare = engine.prepareCode.bind(engine);
+      engine.prepareCode = async () => {
+        const prepared = await prepare();
+        engine.db.exec("UPDATE accounts SET enabled=0 WHERE id='J01'");
+        return prepared;
+      };
+      return engine.call({
+        method: 'POST',
+        path: '/judge/equipment-correction',
+        token: head.token,
+        csrf: head.csrf,
+        body: {
+          ...payload,
+          request_id: 'revoked-during-code-preparation',
+          reason: '审计问题回归',
+          expected_revision: preview.revision,
+          preview_token: preview.token,
+        },
+        edgeUtc: testUtc!,
+        clientKey: 'test',
+      });
+    });
+    expect(reply.status).toBe(401);
+    expect(reply.body).toMatchObject({code: 'UNAUTHENTICATED'});
+    expect(
+      await inEngine(
+        engine =>
+          engine.db.one<{count: number}>(
+            'SELECT COUNT(*) AS count FROM sighting_codes',
+          )!.count,
+      ),
+    ).toBe(before);
+    expect(
+      await inEngine(engine =>
+        engine.db.one<Record<string, SqlStorageValue>>(
+          'SELECT * FROM request_journal WHERE request_id=?',
+          'revoked-during-code-preparation',
+        ),
+      ),
+    ).toBeUndefined();
+  });
   it('reports Alarm registration failures after a committed action and repairs them later', async () => {
     const {players} = await start();
     const reply = await runInDurableObject(stub(), async (_instance, state) => {
