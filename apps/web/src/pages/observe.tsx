@@ -67,18 +67,18 @@ export function CivilizationList({
         )}
       </div>
       <div className="civilization-list">
-        {list.map(c => (
+        {list.map(civilization => (
           <Link
-            to={`${prefix}/${c.id}`}
+            to={`${prefix}/${civilization.id}`}
             className="civilization-row"
-            key={c.id}
+            key={civilization.id}
           >
-            <Identity id={c.id} nickname={c.nickname} />
+            <Identity id={civilization.id} nickname={civilization.nickname} />
             <div className="civilization-state">
-              <span>{FLIGHT_NAMES[c.flight]}</span>
-              <small>母星{c.homeAlive ? '尚存' : '已毁灭'}</small>
+              <span>{FLIGHT_NAMES[civilization.flight]}</span>
+              <small>母星{civilization.homeAlive ? '尚存' : '已毁灭'}</small>
             </div>
-            <MiniArms arms={c.arms} />
+            <MiniArms arms={civilization.arms} />
             <Icon name="arrow" size={18} />
           </Link>
         ))}
@@ -156,16 +156,19 @@ export function CivilizationDetail({
             </>
           ) : tab === 'voyages' ? (
             <div className="voyage-list">
-              {c.voyages.map(v => (
-                <Frame key={v.number}>
+              {c.voyages.map(voyage => (
+                <Frame key={voyage.number}>
                   <div className="heading-row">
-                    <h2>第{v.number}航次</h2>
-                    <Status>{v.endMs === null ? '使用中' : '已失效'}</Status>
+                    <h2>第{voyage.number}航次</h2>
+                    <Status>
+                      {voyage.endMs === null ? '使用中' : '已失效'}
+                    </Status>
                   </div>
-                  <MiniArms arms={v.arms} />
+                  <MiniArms arms={voyage.arms} />
                   <p className="secondary">
-                    生效时间{formatTime(v.startMs)}
-                    {v.endMs !== null && `，失效时间${formatTime(v.endMs)}`}
+                    生效时间{formatTime(voyage.startMs)}
+                    {voyage.endMs !== null &&
+                      `，失效时间${formatTime(voyage.endMs)}`}
                   </p>
                 </Frame>
               ))}
@@ -375,20 +378,20 @@ export function ResultsPages() {
       </Link>
       <h2>完整名次</h2>
       <div className="standings">
-        {results.standings.map(c => (
+        {results.standings.map(civilization => (
           <Link
-            to={`/results/civilizations/${c.id}`}
-            key={c.id}
+            to={`/results/civilizations/${civilization.id}`}
+            key={civilization.id}
             className="standing"
           >
             <span className="rank numeric">
-              {c.tied ? '并列' : ''}
-              {c.rank}
+              {civilization.tied ? '并列' : ''}
+              {civilization.rank}
             </span>
-            <Identity id={c.id} nickname={c.nickname} />
+            <Identity id={civilization.id} nickname={civilization.nickname} />
             <span>
-              {c.flight === 'eliminated' ? '已淘汰' : '存活'}
-              <small>击毁{c.kills}个不同文明</small>
+              {civilization.flight === 'eliminated' ? '已淘汰' : '存活'}
+              <small>击毁{civilization.kills}个不同文明</small>
             </span>
             <Icon name="arrow" size={18} />
           </Link>

@@ -89,7 +89,7 @@ export function CommandConsole() {
     });
   };
   const execute = async (confirm = false) => {
-    const r = await operate(
+    const operationResult = await operate(
       confirm || direct ? '/judge/command/execute' : '/judge/command/preview',
       {
         command: confirm ? `/confirm ${preview!.token}` : command,
@@ -97,12 +97,12 @@ export function CommandConsole() {
         expected_revision: data.match!.revision,
       },
     );
-    if (r?.preview) {
-      setPreview(r.preview);
+    if (operationResult?.preview) {
+      setPreview(operationResult.preview);
       setPreviewCommand(command);
-    } else if (r) {
+    } else if (operationResult) {
       setPreview(null);
-      setResult(`${r.title}\n${r.message ?? ''}`);
+      setResult(`${operationResult.title}\n${operationResult.message ?? ''}`);
     }
   };
   return (
@@ -143,31 +143,31 @@ export function CommandConsole() {
             setDismissed(false);
             setPreview(null);
           }}
-          onKeyDown={e => {
-            if (composing.current || e.nativeEvent.isComposing) {
+          onKeyDown={event => {
+            if (composing.current || event.nativeEvent.isComposing) {
               return;
             }
-            if (e.key === 'Escape') {
+            if (event.key === 'Escape') {
               setDismissed(true);
               return;
             }
             if (!suggestions.length) {
               return;
             }
-            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-              e.preventDefault();
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault();
               select(
                 Math.max(
                   0,
                   Math.min(
                     suggestions.length - 1,
-                    selected + (e.key === 'ArrowDown' ? 1 : -1),
+                    selected + (event.key === 'ArrowDown' ? 1 : -1),
                   ),
                 ),
               );
             }
-            if (e.key === 'Tab' && !e.shiftKey) {
-              e.preventDefault();
+            if (event.key === 'Tab' && !event.shiftKey) {
+              event.preventDefault();
               complete(suggestions[selected]!);
             }
           }}
@@ -311,11 +311,11 @@ export function CommandConsole() {
       )}
       <Disclosure title="完整命令目录与中文帮助">
         <div className="command-catalogue">
-          {COMMAND_SPECS.map(s => (
+          {COMMAND_SPECS.map(commandSpec => (
             <button
-              key={s.path}
+              key={commandSpec.path}
               onClick={() => {
-                const text = `/${s.path} `;
+                const text = `/${commandSpec.path} `;
                 setCommand(text);
                 setCaret(text.length);
                 setActive(0);
@@ -324,8 +324,8 @@ export function CommandConsole() {
                 input.current?.focus();
               }}
             >
-              <code>/{s.path}</code>
-              <span>{s.description}</span>
+              <code>/{commandSpec.path}</code>
+              <span>{commandSpec.description}</span>
             </button>
           ))}
         </div>

@@ -152,74 +152,74 @@ export interface Lexeme {
 /** 按引号、转义和组合括号拆词；不执行或授权任何命令。 */
 export function tokenizeCommand(input: string): Lexeme[] {
   const result: Lexeme[] = [];
-  for (let i = 0; i < input.length;) {
-    if (/[ \t\r]/.test(input[i]!)) {
-      i++;
+  for (let index = 0; index < input.length;) {
+    if (/[ \t\r]/.test(input[index]!)) {
+      index++;
       continue;
     }
-    const start = i;
-    if (input[i] === '"') {
-      i++;
-      while (i < input.length && input[i] !== '"') {
-        if (input[i] === '\\') {
-          i++;
+    const start = index;
+    if (input[index] === '"') {
+      index++;
+      while (index < input.length && input[index] !== '"') {
+        if (input[index] === '\\') {
+          index++;
         }
-        i++;
+        index++;
       }
-      if (i >= input.length) {
+      if (index >= input.length) {
         throw new CommandSyntaxError('字符串缺少结束引号', start);
       }
-      i++;
+      index++;
       try {
-        parseJson(input.slice(start, i));
+        parseJson(input.slice(start, index));
       } catch {
         throw new CommandSyntaxError('字符串须使用JSON转义', start);
       }
     } else if (
-      input[i] === '@' ||
-      (input[i] === '{' && /^\{\s*C\d/.test(input.slice(i)))
+      input[index] === '@' ||
+      (input[index] === '{' && /^\{\s*C\d/.test(input.slice(index)))
     ) {
       let brackets = 0;
       let braces = 0;
       let quoted = false;
       do {
-        const c = input[i++]!;
-        if (c === '\\' && quoted) {
-          i++;
+        const character = input[index++]!;
+        if (character === '\\' && quoted) {
+          index++;
           continue;
         }
-        if (c === '"') {
+        if (character === '"') {
           quoted = !quoted;
         }
         if (!quoted) {
-          if (c === '[') {
+          if (character === '[') {
             brackets++;
           }
-          if (c === ']') {
+          if (character === ']') {
             brackets--;
           }
-          if (c === '{') {
+          if (character === '{') {
             braces++;
           }
-          if (c === '}') {
+          if (character === '}') {
             braces--;
           }
         }
       } while (
-        i < input.length &&
-        (brackets > 0 || braces > 0 || !/[\s;(){}]/.test(input[i]!))
+        index < input.length &&
+        (brackets > 0 || braces > 0 || !/[\s;(){}]/.test(input[index]!))
       );
       if (brackets || braces || quoted) {
         throw new CommandSyntaxError('目标集合或选择器未闭合', start);
       }
-    } else if (/[{}();,\n]/.test(input[i]!)) {
-      i++;
+    } else if (/[{}();,\n]/.test(input[index]!)) {
+      index++;
     } else {
-      while (i < input.length && !/[\s{}();,]/.test(input[i]!)) {
-        i++;
+      while (index < input.length && !/[\s{}();,]/.test(input[index]!)) {
+        index++;
       }
     }
-    result.push({value: input.slice(start, i), start, end: i});
+    result.push({value: input.slice(start, index), start, end: index});
   }
   return result;
 }
@@ -253,47 +253,53 @@ export function parseCommandTree(input: string): CommandNode {
     throw new CommandSyntaxError('指令须以 / 开头');
   }
   const tokens = tokenizeCommand(input.trimStart().slice(1));
-  let i = 0;
+  let index = 0;
   const read = (depth: number): CommandNode => {
     if (depth > COMMAND_LIMITS.depth) {
-      throw new CommandSyntaxError('嵌套超过32层', tokens[i]?.start);
+      throw new CommandSyntaxError('嵌套超过32层', tokens[index]?.start);
     }
     const node: CommandNode = {words: [], options: {}};
-    while (i < tokens.length && ![';', '\n', '}'].includes(tokens[i]!.value)) {
-      const t = tokens[i++]!;
-      if (t.value === '{') {
+    while (
+      index < tokens.length &&
+      ![';', '\n', '}'].includes(tokens[index]!.value)
+    ) {
+      const token = tokens[index++]!;
+      if (token.value === '{') {
         if (node.block) {
-          throw new CommandSyntaxError('一个操作只能有一个块', t.start);
+          throw new CommandSyntaxError('一个操作只能有一个块', token.start);
         }
         node.block = [];
-        while (tokens[i] && tokens[i]!.value !== '}') {
-          if ([';', '\n'].includes(tokens[i]!.value)) {
-            i++;
+        while (tokens[index] && tokens[index]!.value !== '}') {
+          if ([';', '\n'].includes(tokens[index]!.value)) {
+            index++;
             continue;
           }
           node.block.push(read(depth + 1));
         }
-        if (tokens[i++]?.value !== '}') {
-          throw new CommandSyntaxError('操作块未闭合', t.start);
+        if (tokens[index++]?.value !== '}') {
+          throw new CommandSyntaxError('操作块未闭合', token.start);
         }
-      } else if (t.value.startsWith('--')) {
-        const key = t.value.slice(2);
+      } else if (token.value.startsWith('--')) {
+        const key = token.value.slice(2);
         if (!optionNames.has(key) || key in node.options) {
-          throw new CommandSyntaxError('未知或重复选项 ' + t.value, t.start);
+          throw new CommandSyntaxError(
+            '未知或重复选项 ' + token.value,
+            token.start,
+          );
         }
-        const value = tokens[i++];
+        const value = tokens[index++];
         if (
           !value ||
           /^[;{}\n]/.test(value.value) ||
           value.value.startsWith('--')
         ) {
-          throw new CommandSyntaxError('选项缺少值', t.start);
+          throw new CommandSyntaxError('选项缺少值', token.start);
         }
         node.options[key] = value.value.startsWith('"')
           ? (parseJson(value.value) as string)
           : value.value;
       } else {
-        let atom = t.value.replace(/^\//, '');
+        let atom = token.value.replace(/^\//, '');
         if (atom.startsWith('"')) {
           atom = JSON.stringify(parseJson(atom));
         } else if (/^(?:\d+(?:\.\d+)?(?:ms|s|m|h|d))+$/.test(atom)) {
@@ -303,18 +309,18 @@ export function parseCommandTree(input: string): CommandNode {
       }
     }
     if (!node.words.length) {
-      throw new CommandSyntaxError('缺少操作', tokens[i]?.start);
+      throw new CommandSyntaxError('缺少操作', tokens[index]?.start);
     }
     return node;
   };
   const node = read(0);
-  while ([';', '\n'].includes(tokens[i]?.value ?? '')) {
-    i++;
+  while ([';', '\n'].includes(tokens[index]?.value ?? '')) {
+    index++;
   }
-  if (i !== tokens.length) {
+  if (index !== tokens.length) {
     throw new CommandSyntaxError(
       '顶层仅允许一条指令，请使用batch run',
-      tokens[i]?.start,
+      tokens[index]?.start,
     );
   }
   return node;
@@ -431,7 +437,7 @@ const values: Record<string, Array<[string, string]>> = {
     'observer-wait',
     'sighting-min-interval',
     'sighting-per-minute',
-  ].map((v, i) => [
+  ].map((v, index) => [
     v,
     [
       '歌者概率',
@@ -442,7 +448,7 @@ const values: Record<string, Array<[string, string]>> = {
       '观战等待秒数',
       '目击间隔毫秒',
       '每分钟目击次数',
-    ][i]!,
+    ][index]!,
   ]),
   setting: [
     'activity-name',

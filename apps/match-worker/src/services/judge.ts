@@ -49,7 +49,7 @@ export function judgeAction(
   credentialMaterial?: CredentialMaterial,
 ): OperationResult {
   const db = engine.db;
-  const m = db.match();
+  const matchState = db.match();
   const now = engine.now();
   const game = engine.game(now);
   const verify = /^\/judge\/homeworld\/(C\d{2,3})\/verify$/.exec(path);
@@ -62,13 +62,17 @@ export function judgeAction(
       'decision',
       'reason',
     ]);
-    requireThat(m.phase === 'setup', 'REGISTRATION_CLOSED', '母星审核已结束。');
-    const target = verify[1]!;
-    const h = db.home(target);
     requireThat(
-      h?.status === 'pending' &&
-        h.version === integer(raw.expected_version, 1) &&
-        h.code === coordinate(raw.expected_code),
+      matchState.phase === 'setup',
+      'REGISTRATION_CLOSED',
+      '母星审核已结束。',
+    );
+    const target = verify[1]!;
+    const homeworld = db.home(target);
+    requireThat(
+      homeworld?.status === 'pending' &&
+        homeworld.version === integer(raw.expected_version, 1) &&
+        homeworld.code === coordinate(raw.expected_code),
       'HOMEWORLD_VERSION_CONFLICT',
       '提交内容已更新，请核对最新版本。',
     );
@@ -82,7 +86,7 @@ export function judgeAction(
       requireThat(
         !db.one<Record<string, SqlStorageValue>>(
           "SELECT player_id FROM homeworlds WHERE code=? AND status='verified'",
-          h.code,
+          homeworld.code,
         ),
         'HOMEWORLD_DUPLICATE',
         '这个坐标已有审核通过的母星。',
@@ -107,7 +111,7 @@ export function judgeAction(
       {
         requestId: id,
         status: 'executed',
-        before: h,
+        before: homeworld,
         after: db.home(target),
         parameters: {
           decision: raw.decision,
@@ -117,7 +121,7 @@ export function judgeAction(
     );
     db.bump();
     engine.notice(
-      `verify:${target}:${h.version}`,
+      `verify:${target}:${homeworld.version}`,
       target,
       '母星审核结果',
       raw.decision === 'approve'
@@ -199,8 +203,12 @@ export function judgeAction(
   if (path === '/judge/site-config') {
     permission(actor, 'settings');
     strict(raw, ['request_id', 'site', 'expected_version', 'reason']);
-    requireThat(m.phase === 'setup', 'PARAMETERS_LOCKED', '活动设置已锁定。');
-    const previous = parseJson(m.site_json) as SiteConfig;
+    requireThat(
+      matchState.phase === 'setup',
+      'PARAMETERS_LOCKED',
+      '活动设置已锁定。',
+    );
+    const previous = parseJson(matchState.site_json) as SiteConfig;
     const site = strict(raw.site, [
       'version',
       'title',
@@ -247,7 +255,7 @@ export function judgeAction(
     const reason = text(raw.reason, 500);
     site.version = previous.version + 1;
     db.exec('UPDATE matches SET site_json=?', JSON.stringify(site));
-    engine.audit(actor.id, path, m.id, reason, {
+    engine.audit(actor.id, path, matchState.id, reason, {
       requestId: id,
       status: 'executed',
       before: previous,
@@ -281,8 +289,8 @@ export function judgeAction(
       preview.payload === stableJson(payloadOf(raw)) &&
       !preview.used &&
       preview.expires > now &&
-      preview.revision === m.revision &&
-      integer(raw.expected_revision, 1) === m.revision,
+      preview.revision === matchState.revision &&
+      integer(raw.expected_revision, 1) === matchState.revision,
     'PREVIEW_EXPIRED',
     '预览已过期，请重新核对操作影响。',
   );
@@ -327,7 +335,7 @@ export function judgeAction(
     }
     case '/judge/arm-start': {
       const time = integer(raw.time);
-      const n = db.roster().length;
+      const playerCount = db.roster().length;
       db.exec("UPDATE matches SET phase='start_countdown',started_at=?", time);
       engine.schedule('match_start', 'match_start', 'utc', time, 0);
       for (const [kind, due] of [
@@ -338,7 +346,7 @@ export function judgeAction(
       ] as const) {
         engine.schedule(kind, kind, 'game', due, 0);
       }
-      for (const [index, due] of techSchedule(n).entries()) {
+      for (const [index, due] of techSchedule(playerCount).entries()) {
         engine.schedule(`tech:${index}`, 'tech_burst', 'game', due, 2);
       }
       engine.notice(
@@ -465,13 +473,13 @@ export function judgeAction(
           String(out.reason),
           'hunt_cutoff',
           TIMES.cutoff,
-          m.paused_at!,
+          matchState.paused_at!,
           'hunt_cutoff',
         );
       }
       db.exec('UPDATE matches SET hunt_finalized=?', now);
       closePause(engine, now);
-      autoFinish(engine, TIMES.cutoff, m.paused_at!, source);
+      autoFinish(engine, TIMES.cutoff, matchState.paused_at!, source);
       if (db.match().phase !== 'ended') {
         engine.notice(source, 'group', '最后狩猎开始', HUNT_START_COPY, game);
       }
@@ -637,7 +645,7 @@ export function judgeAction(
   engine.audit(
     actor.id,
     path,
-    typeof raw.target === 'string' ? raw.target : m.id,
+    typeof raw.target === 'string' ? raw.target : matchState.id,
     reason,
     {
       requestId: id,
@@ -655,8 +663,8 @@ export function judgeAction(
 }
 
 function closePause(engine: Engine, now: number): void {
-  const m = engine.db.match();
-  requireThat(m.paused_at !== null, 'NOT_PAUSED', '比赛当前未暂停。');
+  const matchState = engine.db.match();
+  requireThat(matchState.paused_at !== null, 'NOT_PAUSED', '比赛当前未暂停。');
   requireThat(
     engine.db.all<Record<string, SqlStorageValue>>(
       'UPDATE clock_pauses SET closed=? WHERE closed IS NULL RETURNING id',
@@ -667,7 +675,7 @@ function closePause(engine: Engine, now: number): void {
   );
   engine.db.exec(
     "UPDATE matches SET paused_total=paused_total+?,paused_at=NULL,pause_reason=''",
-    now - m.paused_at,
+    now - matchState.paused_at,
   );
 }
 export {previewAction} from './judge_preview';

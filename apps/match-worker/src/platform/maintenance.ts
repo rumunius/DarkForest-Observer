@@ -31,8 +31,8 @@ export async function bootstrap(
     '安装授权无效。',
     403,
   );
-  const p = object(raw);
-  const name = text(p.name, 100);
+  const payload = object(raw);
+  const name = text(payload.name, 100);
   const id = crypto.randomUUID();
   const invitation = token();
   const invitationId = crypto.randomUUID();
@@ -95,8 +95,8 @@ export async function maintenance(
     '独立维护凭据无效。',
     403,
   );
-  const p = object(raw);
-  const operation = text(p.operation, 100);
+  const requestPayload = object(raw);
+  const operation = text(requestPayload.operation, 100);
   if (operation === 'release-check') {
     const matches = host.db.all<Directory>(
       "SELECT * FROM match_directory WHERE kind='official' AND state IN ('available','archiving','archived','purge_pending') LIMIT 51",
@@ -135,9 +135,9 @@ export async function maintenance(
       ),
     });
   }
-  const id = requestId(p.operationId);
-  const reason = text(p.reason, 500);
-  const hash = await digest(stableJson(p));
+  const id = requestId(requestPayload.operationId);
+  const reason = text(requestPayload.reason, 500);
+  const hash = await digest(stableJson(requestPayload));
   if (operation === 'rescue-owner') {
     const old = host.db.one<{value: string}>(
       'SELECT value FROM platform_meta WHERE key=?',
@@ -157,7 +157,7 @@ export async function maintenance(
       return JSON.stringify(stored);
     }
     requireThat(
-      p.confirm === '恢复平台所有者访问',
+      requestPayload.confirm === '恢复平台所有者访问',
       'CONFIRM_REQUIRED',
       '请输入“恢复平台所有者访问”。',
     );
@@ -176,7 +176,7 @@ export async function maintenance(
       host.db.exec(
         "INSERT INTO platform_accounts(id,kind,name,status,created_utc) VALUES(?,'staff',?,'pending',?)",
         accountId,
-        text(p.name, 100),
+        text(requestPayload.name, 100),
         host.now(),
       );
       host.db.exec("INSERT INTO platform_roles VALUES(?,'owner')", accountId);
@@ -208,7 +208,7 @@ export async function maintenance(
   if (operation === 'rescue-delivery') {
     const row = host.db.one<{ciphertext: string; delivery_expires: number}>(
       "SELECT ciphertext,delivery_expires FROM invitations WHERE id=? AND issuer='root-rescue'",
-      text(p.invitationId, 100),
+      text(requestPayload.invitationId, 100),
     );
     requireThat(
       row?.ciphertext && row.delivery_expires > host.now(),
@@ -219,12 +219,12 @@ export async function maintenance(
       invitation: await decrypt(
         await platformKey(environment),
         row.ciphertext,
-        `invitation|${text(p.invitationId, 100)}`,
+        `invitation|${text(requestPayload.invitationId, 100)}`,
       ),
     });
   }
   if (operation === 'inspect-legacy') {
-    const matchId = text(p.matchId, 100);
+    const matchId = text(requestPayload.matchId, 100);
     requireThat(
       /^[A-Za-z0-9_-]+$/.test(matchId),
       'BAD_MATCH_ID',
@@ -248,7 +248,7 @@ export async function maintenance(
     return JSON.stringify(inventory);
   }
   if (operation === 'adopt-legacy') {
-    const matchId = text(p.matchId, 100);
+    const matchId = text(requestPayload.matchId, 100);
     const existing = host.db.one<Operation>(
       'SELECT * FROM platform_operations WHERE id=?',
       id,
@@ -279,17 +279,18 @@ export async function maintenance(
     };
     requireThat(
       inventory.id === matchId &&
-        p.checkpointDigest === (await digest(stableJson(inventory.checkpoint))),
+        requestPayload.checkpointDigest ===
+          (await digest(stableJson(inventory.checkpoint))),
       'BACKUP_RECEIPT_REQUIRED',
       '请保存检查点、回读校验后再登记旧比赛。',
     );
     requireThat(
-      p.confirm === `接入旧比赛 ${matchId}`,
+      requestPayload.confirm === `接入旧比赛 ${matchId}`,
       'CONFIRM_REQUIRED',
       `请输入“接入旧比赛 ${matchId}”。`,
     );
-    let op = existing;
-    if (!op) {
+    let pendingOperation = existing;
+    if (!pendingOperation) {
       const mappings = inventory.accounts.map(a => ({
         ...a,
         accountId: crypto.randomUUID(),
@@ -306,7 +307,7 @@ export async function maintenance(
         host.db.exec(
           "INSERT INTO match_directory(id,name,kind,state,object_name,created_utc,retention_days,audit_days,config) VALUES(?,?,'official','provisioning',?,?,44,365,'{}')",
           matchId,
-          text(p.name, 100),
+          text(requestPayload.name, 100),
           `match:${matchId}`,
           host.now(),
         );
@@ -343,23 +344,23 @@ export async function maintenance(
           reason,
         );
       });
-      op = host.db.one<Operation>(
+      pendingOperation = host.db.one<Operation>(
         'SELECT * FROM platform_operations WHERE id=?',
         id,
       )!;
     }
     requireThat(
-      op.body_hash === hash,
+      pendingOperation.body_hash === hash,
       'OPERATION_CONFLICT',
       '迁移编号对应不同内容。',
     );
-    const saved = parseJson(op.payload) as {
+    const saved = parseJson(pendingOperation.payload) as {
       mappings: Array<{id: string; accountId: string}>;
       expectedRevision: number;
     };
-    const d = host.directory(matchId);
+    const matchEntry = host.directory(matchId);
     const receipt = await host.control(
-      d,
+      matchEntry,
       `${id}:adopt`,
       'adopt-legacy',
       'root-maintainer',
@@ -392,10 +393,10 @@ export async function maintenance(
         '原对象、码本和比赛记录已保留；旧口令仅可在领取页面兑换一次长期口令，7天后失效。未知旧日志人员保持未确认。',
     });
   }
-  const d = host.directory(text(p.matchId, 100));
+  const directoryEntry = host.directory(text(requestPayload.matchId, 100));
   if (operation === 'carry-receipt') {
-    const carry = object(p.carry);
-    const savedDigest = text(p.sha256, 100);
+    const carry = object(requestPayload.carry);
+    const savedDigest = text(requestPayload.sha256, 100);
     requireThat(
       savedDigest === (await digest(stableJson(carry))),
       'CARRY_MISMATCH',
@@ -403,10 +404,10 @@ export async function maintenance(
     );
     host.db.exec(
       'INSERT OR REPLACE INTO platform_meta VALUES(?,?)',
-      `carry:${d.id}:${id}`,
+      `carry:${directoryEntry.id}:${id}`,
       JSON.stringify({digest: savedDigest, carryId: carry.id}),
     );
-    host.audit('root-maintainer', 'carry-saved', d.id, reason, {
+    host.audit('root-maintainer', 'carry-saved', directoryEntry.id, reason, {
       operationId: id,
     });
     return JSON.stringify({saved: true});
@@ -417,11 +418,11 @@ export async function maintenance(
       'RECOVERY_NOT_CONFIGURED',
       '比赛恢复凭据未配置。',
     );
-    const payload = object(p.payload);
+    const payload = object(requestPayload.payload);
     const action = text(payload.operation, 100);
     if (action === 'prepare' || action === 'launch') {
       requireThat(
-        erasureFloor(host, d.id) === 0,
+        erasureFloor(host, directoryEntry.id) === 0,
         'RESTORE_EXPIRED',
         '本场完整信息已清理，旧检查点不能重新开放比赛；请查看保留的正式战报。',
         410,
@@ -430,7 +431,7 @@ export async function maintenance(
     if (action === 'launch') {
       const receipt = host.db.one<{value: string}>(
         'SELECT value FROM platform_meta WHERE key=?',
-        `carry:${d.id}:${id}`,
+        `carry:${directoryEntry.id}:${id}`,
       );
       requireThat(
         receipt &&
@@ -440,28 +441,26 @@ export async function maintenance(
         '必须保存并回读校验carry材料，再登记收据后执行恢复。',
       );
       requireThat(
-        p.confirm === `恢复比赛 ${d.id}`,
+        requestPayload.confirm === `恢复比赛 ${directoryEntry.id}`,
         'CONFIRM_REQUIRED',
-        `请输入“恢复比赛 ${d.id}”。`,
+        `请输入“恢复比赛 ${directoryEntry.id}”。`,
       );
     }
     const signature = await controlSignature(
       environment,
-      stableJson({matchId: d.id, raw: payload}),
+      stableJson({matchId: directoryEntry.id, raw: payload}),
     );
     if (action === 'launch') {
       requireThat(
-        erasureFloor(host, d.id) === 0,
+        erasureFloor(host, directoryEntry.id) === 0,
         'RESTORE_EXPIRED',
         '本场资料已清理，不能恢复旧检查点。',
         410,
       );
     }
-    const reply = await environment.MATCH_DO.getByName(d.object_name).recovery(
-      environment.BOOTSTRAP_SECRET,
-      payload,
-      signature,
-    );
+    const reply = await environment.MATCH_DO.getByName(
+      directoryEntry.object_name,
+    ).recovery(environment.BOOTSTRAP_SECRET, payload, signature);
     requireThat(
       reply.status < 400,
       'RECOVERY_FAILED',
@@ -472,26 +471,26 @@ export async function maintenance(
       // The platform timeline never rolls back with a match. Reapply its current security facts.
       for (const row of host.db.all<{account_id: string}>(
         'SELECT account_id FROM account_match_index WHERE match_id=?',
-        d.id,
+        directoryEntry.id,
       )) {
-        const a = host.account(row.account_id);
+        const account = host.account(row.account_id);
         await host.control(
-          d,
-          `${id}:security:${a.id}:${a.auth_epoch}`,
+          directoryEntry,
+          `${id}:security:${account.id}:${account.auth_epoch}`,
           'fence',
           'root-maintainer',
           '恢复后应用最新平台撤销',
           {
-            accountId: a.id,
-            authEpoch: a.auth_epoch,
-            disabled: a.status !== 'active',
+            accountId: account.id,
+            authEpoch: account.auth_epoch,
+            disabled: account.status !== 'active',
           },
         );
       }
-      const generation = erasureFloor(host, d.id);
+      const generation = erasureFloor(host, directoryEntry.id);
       if (generation > 0) {
         await host.control(
-          d,
+          directoryEntry,
           `${id}:erase:${generation}`,
           'erase',
           'root-maintainer',
@@ -500,9 +499,15 @@ export async function maintenance(
         );
       }
     }
-    host.audit('root-maintainer', `recovery:${action}`, d.id, reason, {
-      operationId: id,
-    });
+    host.audit(
+      'root-maintainer',
+      `recovery:${action}`,
+      directoryEntry.id,
+      reason,
+      {
+        operationId: id,
+      },
+    );
     return reply.body;
   }
   throw new Fault(

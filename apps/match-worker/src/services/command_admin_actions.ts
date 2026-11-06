@@ -36,28 +36,28 @@ import {finishRecovery} from './recovery';
 /** Execute admin commands inside the caller's existing preview or commit transaction. */
 export function handleAdminAction(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
 ): unknown {
-  const spec = commandSpec(n)!;
+  const spec = commandSpec(commandNode)!;
 
   permission(commandContext.actor, spec.permission);
 
-  validateCommandArguments(n);
+  validateCommandArguments(commandNode);
 
-  const e = commandContext.e;
+  const engine = commandContext.engine;
 
-  const db = e.db;
+  const db = engine.db;
 
-  const m = db.match();
+  const matchState = db.match();
 
   const path = spec.path;
 
-  const a = n.words
+  const commandArguments = commandNode.words
     .slice(path.split(' ').length)
     .map(v => commandValue(v, commandContext));
 
   const chosen = (index = 0, pool = false) =>
-    selectTargets(commandContext, a[index]!, pool);
+    selectTargets(commandContext, commandArguments[index]!, pool);
 
   const each = (fn: (id: string) => void, pool = false) => {
     const ids = chosen(0, pool);
@@ -96,22 +96,23 @@ export function handleAdminAction(
   }
 
   if (path.startsWith('match ')) {
-    return matchTime(commandContext, path, a);
+    return matchTime(commandContext, path, commandArguments);
   }
 
   if (path === 'parameter set') {
     requireHeadJudge(commandContext);
     recordTableDependency(commandContext, 'settings');
-    requireCommandArgument(a[0]! in parameterKeys, '未知参数键');
-    const key = parameterKeys[a[0]!]!;
-    const p = {...db.parameters()};
-    const n = /^[+-]?\d+$/.test(a[1]!)
-      ? Number(a[1])
-      : durationMs(a[1]!) / (key === 'sightingIntervalMs' ? 1 : 1000);
-    p[key] = n;
-    validateParameters(p);
+    requireCommandArgument(commandArguments[0]! in parameterKeys, '未知参数键');
+    const key = parameterKeys[commandArguments[0]!]!;
+    const parameters = {...db.parameters()};
+    const parameterValue = /^[+-]?\d+$/.test(commandArguments[1]!)
+      ? Number(commandArguments[1])
+      : durationMs(commandArguments[1]!) /
+        (key === 'sightingIntervalMs' ? 1 : 1000);
+    parameters[key] = parameterValue;
+    validateParameters(parameters);
     return invokeJudgeAction(commandContext, '/judge/parameters', {
-      values: p,
+      values: parameters,
       expected_version: db.one<{version: number}>(
         "SELECT version FROM settings WHERE key='parameters'",
       )!.version,
@@ -120,19 +121,28 @@ export function handleAdminAction(
 
   if (path === 'setting set' || path === 'palette set') {
     permission(commandContext.actor, 'settings');
-    const site = parseJson(m.site_json) as SiteConfig;
+    const site = parseJson(matchState.site_json) as SiteConfig;
     const before = structuredClone(site);
     recordDependency(commandContext, 'site', site);
     if (path === 'setting set') {
-      requireCommandArgument(m.phase === 'setup', 'T0后活动设置冻结');
-      requireCommandArgument(a[0]! in settingKeys, '未知活动设置');
-      site[settingKeys[a[0]!]!] = text(a[1], 1000, 0);
+      requireCommandArgument(matchState.phase === 'setup', 'T0后活动设置冻结');
+      requireCommandArgument(
+        commandArguments[0]! in settingKeys,
+        '未知活动设置',
+      );
+      site[settingKeys[commandArguments[0]!]!] = text(
+        commandArguments[1],
+        1000,
+        0,
+      );
     } else {
       requireCommandArgument(
-        a[0]! in site.colors && /^#[\da-f]{6}$/i.test(a[1]!),
+        commandArguments[0]! in site.colors &&
+          /^#[\da-f]{6}$/i.test(commandArguments[1]!),
         '颜色ID或色值不正确',
       );
-      site.colors[a[0] as keyof typeof site.colors] = a[1]!;
+      site.colors[commandArguments[0] as keyof typeof site.colors] =
+        commandArguments[1]!;
     }
     site.version++;
     db.exec('UPDATE matches SET site_json=?', JSON.stringify(site));
@@ -142,16 +152,16 @@ export function handleAdminAction(
 
   if (path === 'template publish') {
     permission(commandContext.actor, 'settings');
-    renderCommandTemplate(commandContext, a[1]!, 'C01');
+    renderCommandTemplate(commandContext, commandArguments[1]!, 'C01');
     const rows = db.all<{version: number}>(
       "SELECT version FROM command_objects WHERE kind='template' AND json_extract(data,'$.name')=?",
-      a[0]!,
+      commandArguments[0]!,
     );
     const version = Math.max(0, ...rows.map(r => r.version)) + 1;
     const id = saveCommandObject(
       commandContext,
       'template',
-      {name: a[0], body: a[1]},
+      {name: commandArguments[0], body: commandArguments[1]},
       'TPL',
     );
     db.exec('UPDATE command_objects SET version=? WHERE id=?', version, id);
@@ -166,7 +176,10 @@ export function handleAdminAction(
 
   if (path.startsWith('account ')) {
     permission(commandContext.actor, 'system');
-    const account = db.one<Actor>('SELECT * FROM accounts WHERE id=?', a[0]!);
+    const account = db.one<Actor>(
+      'SELECT * FROM accounts WHERE id=?',
+      commandArguments[0]!,
+    );
     requireCommandArgument(account, '账号不存在');
     recordDependency(commandContext, 'account:' + account.id, {
       version: account.version,
@@ -181,7 +194,7 @@ export function handleAdminAction(
       commandContext.resetAccounts.add(account.id);
     }
     const delivery = updateAccount(
-      e,
+      engine,
       commandContext.actor,
       {
         target: account.id,
@@ -189,9 +202,12 @@ export function handleAdminAction(
         operation: path.endsWith('reset-credential')
           ? 'reset'
           : path.split(' ')[1],
-        duty: a[1] === 'communication' ? 'communications' : a[1],
+        duty:
+          commandArguments[1] === 'communication'
+            ? 'communications'
+            : commandArguments[1],
       },
-      e.commandCredentials[`${commandContext.actor.id}:${account.id}`],
+      engine.commandCredentials[`${commandContext.actor.id}:${account.id}`],
     );
     recordChange(
       commandContext,
@@ -204,7 +220,10 @@ export function handleAdminAction(
 
   if (path === 'session revoke') {
     permission(commandContext.actor, 'system');
-    const account = db.one<Actor>('SELECT * FROM accounts WHERE id=?', a[0]!);
+    const account = db.one<Actor>(
+      'SELECT * FROM accounts WHERE id=?',
+      commandArguments[0]!,
+    );
     requireCommandArgument(account, '账号不存在');
     requireCommandArgument(
       !accountPermissions(account).includes('system'),
@@ -218,19 +237,21 @@ export function handleAdminAction(
   if (path === 'recovery finalize') {
     requireHeadJudge(commandContext);
     permission(commandContext.actor, 'system');
-    finishRecovery(e);
+    finishRecovery(engine);
     recordChange(commandContext, '恢复核对', '待核对', '已完成，维持一般暂停');
     return;
   }
 
   if (path === 'export create') {
     requireCommandArgument(
-      ['report', 'audit', 'checkpoint'].includes(a[0]!),
+      ['report', 'audit', 'checkpoint'].includes(commandArguments[0]!),
       '未知导出类型',
     );
-    if (a[0] === 'checkpoint') {
+    if (commandArguments[0] === 'checkpoint') {
       requireCommandArgument(
-        m.phase === 'setup' || m.phase === 'ended' || m.paused_at !== null,
+        matchState.phase === 'setup' ||
+          matchState.phase === 'ended' ||
+          matchState.paused_at !== null,
         '检查点导出需要暂停、赛前或赛后',
       );
     }
@@ -238,8 +259,8 @@ export function handleAdminAction(
       commandContext,
       'export',
       {
-        kind: a[0],
-        download: `/api/judge/export?kind=${a[0]}`,
+        kind: commandArguments[0],
+        download: `/api/judge/export?kind=${commandArguments[0]}`,
         requiresAuthentication: true,
       },
       'EXP',
@@ -250,7 +271,7 @@ export function handleAdminAction(
       '无',
       '已创建受保护导出入口，下载时重新鉴权和核对',
     );
-    return {id, download: `/api/judge/export?kind=${a[0]}`};
+    return {id, download: `/api/judge/export?kind=${commandArguments[0]}`};
   }
 
   throw new Fault(400, 'UNKNOWN_COMMAND', '命令没有执行处理器：' + path);

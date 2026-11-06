@@ -22,8 +22,8 @@ export function managementImpact(
   body: Record<string, unknown>,
 ): Impact {
   const db = engine.db;
-  const m = db.match();
-  const target = scalarText(body.target ?? m.id);
+  const matchState = db.match();
+  const target = scalarText(body.target ?? matchState.id);
   const changes: Impact['changes'] = [];
   const consequences: string[] = [];
   const add = (label: string, before: unknown, after: unknown) =>
@@ -76,16 +76,20 @@ export function managementImpact(
     );
   };
   if (path === '/judge/correction') {
-    const p = db.player(target);
+    const playerState = db.player(target);
     if (body.field === 'restore') {
       restoring(target);
     } else if (body.field === 'nickname') {
-      add(`${target}昵称`, p.nickname, nickname(body.value));
+      add(`${target}昵称`, playerState.nickname, nickname(body.value));
     } else if (body.field === 'photons') {
-      add(`${target}光粒`, p.photons, Number(body.value));
-      add(`${target}技术升级`, p.tech, Number(body.value) === 1 ? 1 : p.tech);
+      add(`${target}光粒`, playerState.photons, Number(body.value));
+      add(
+        `${target}技术升级`,
+        playerState.tech,
+        Number(body.value) === 1 ? 1 : playerState.tech,
+      );
     } else {
-      add(`${target}剩余广播`, 2 - p.broadcasts, Number(body.value));
+      add(`${target}剩余广播`, 2 - playerState.broadcasts, Number(body.value));
     }
   } else if (path === '/judge/player-restore') {
     restoring(target);
@@ -95,22 +99,22 @@ export function managementImpact(
   ) {
     eliminating([target]);
   } else if (path === '/judge/equipment-correction') {
-    const f = db.flight(target);
+    const flight = db.flight(target);
     add(
       `${target}当前配置`,
-      f.code_id,
-      body.mode === 'reissue' ? '新配置（执行时随机签发）' : f.code_id,
+      flight.code_id,
+      body.mode === 'reissue' ? '新配置（执行时随机签发）' : flight.code_id,
     );
     add(
       `${target}航次`,
-      f.voyage,
-      body.mode === 'reissue' ? f.voyage + 1 : f.voyage,
+      flight.voyage,
+      body.mode === 'reissue' ? flight.voyage + 1 : flight.voyage,
     );
     add(
       `${target}飞船`,
-      f.status,
+      flight.status,
       body.mode === 'replace'
-        ? f.status
+        ? flight.status
         : body.mode === 'activate'
           ? 'active'
           : 'issued',
@@ -125,33 +129,40 @@ export function managementImpact(
       );
     }
   } else if (path === '/judge/attack-correction') {
-    const a = correctionTarget(engine, body.attack_id);
-    const before = parseJson(a.before_json!) as {
+    const attack = correctionTarget(engine, body.attack_id);
+    const before = parseJson(attack.before_json!) as {
       wrong: number;
       lockedUntil: number;
       actorHomeDestroyed: number | null;
     };
-    add('攻击记录有效性', !!a.valid, false);
-    if (a.wrong_index !== null) {
+    add('攻击记录有效性', !!attack.valid, false);
+    if (attack.wrong_index !== null) {
       const control = db.one<{wrong: number; locked_until: number}>(
         'SELECT * FROM attack_controls WHERE player_id=?',
-        a.actor,
+        attack.actor,
       )!;
-      add(`${a.actor}错误提交累计`, control.wrong, before.wrong);
-      add(`${a.actor}禁攻截止UTC`, control.locked_until, before.lockedUntil);
-      if (db.home(a.actor)?.source === `action:${a.actor}:${a.request_id}`) {
+      add(`${attack.actor}错误提交累计`, control.wrong, before.wrong);
+      add(
+        `${attack.actor}禁攻截止UTC`,
+        control.locked_until,
+        before.lockedUntil,
+      );
+      if (
+        db.home(attack.actor)?.source ===
+        `action:${attack.actor}:${attack.request_id}`
+      ) {
         add(
-          `${a.actor}母星毁灭时刻`,
-          db.home(a.actor)?.destroyed_game,
+          `${attack.actor}母星毁灭时刻`,
+          db.home(attack.actor)?.destroyed_game,
           before.actorHomeDestroyed,
         );
       }
     }
     const restored =
-      a.classification === 'hit'
-        ? a.target
-        : db.flight(a.actor).status === 'eliminated'
-          ? a.actor
+      attack.classification === 'hit'
+        ? attack.target
+        : db.flight(attack.actor).status === 'eliminated'
+          ? attack.actor
           : null;
     if (restored) {
       add(`${restored}飞船`, db.flight(restored).status, 'issued');
@@ -177,22 +188,29 @@ export function managementImpact(
     const count = (exclude: boolean) =>
       db.one<{count: number}>(
         `SELECT COUNT(DISTINCT target) AS count FROM attacks WHERE actor=? AND classification='hit' AND valid=1${exclude ? ' AND id<>?' : ''}`,
-        a.actor,
-        ...(exclude ? [a.id] : []),
+        attack.actor,
+        ...(exclude ? [attack.id] : []),
       )!.count;
-    add(`${a.actor}去重击毁`, count(false), count(true));
+    add(`${attack.actor}去重击毁`, count(false), count(true));
     consequences.push(
       '保留原攻击、既定抽签及已发通知，写入独立更正记录；已泄露情报无法收回。',
     );
   } else if (path === '/judge/accounts') {
-    const a = db.one<Actor>('SELECT * FROM accounts WHERE id=?', target)!;
-    add(`${target}账号版本`, a.version, a.version + 1);
+    const accountActor = db.one<Actor>(
+      'SELECT * FROM accounts WHERE id=?',
+      target,
+    )!;
+    add(`${target}账号版本`, accountActor.version, accountActor.version + 1);
     if (body.operation === 'disable' || body.operation === 'enable') {
-      add(`${target}账号可用`, !!a.enabled, body.operation === 'enable');
+      add(
+        `${target}账号可用`,
+        !!accountActor.enabled,
+        body.operation === 'enable',
+      );
     } else if (body.operation === 'duty') {
       add(
         `${target}职责权限`,
-        accountPermissions(a),
+        accountPermissions(accountActor),
         DUTIES[body.duty as keyof typeof DUTIES],
       );
     } else {
@@ -251,17 +269,21 @@ export function managementImpact(
       }
     }
   } else if (path === '/judge/event-trigger') {
-    const h = db.officialHome(String(body.code), true);
+    const homeworld = db.officialHome(String(body.code), true);
     add('手动歌者事件', '无', {
       clock: 'game',
       due: engine.game(),
       code: body.code,
-      target: h?.player_id ?? null,
+      target: homeworld?.player_id ?? null,
     });
-    if (h) {
-      add(`${h.player_id}母星`, '尚存', '毁灭');
-      if (!['active', 'eliminated'].includes(db.flight(h.player_id).status)) {
-        eliminating([h.player_id]);
+    if (homeworld) {
+      add(`${homeworld.player_id}母星`, '尚存', '毁灭');
+      if (
+        !['active', 'eliminated'].includes(
+          db.flight(homeworld.player_id).status,
+        )
+      ) {
+        eliminating([homeworld.player_id]);
       }
     }
     consequences.push(
@@ -306,7 +328,7 @@ export function managementImpact(
     const release = path.endsWith('release');
     add(
       release ? '统一发码UTC' : '统一开赛UTC',
-      release ? m.release_at : m.started_at,
+      release ? matchState.release_at : matchState.started_at,
       body.time,
     );
     add('正式参赛名单', db.roster(), body.expected_roster);
@@ -348,7 +370,7 @@ export function managementImpact(
       '保留原事件ID、原定生效时间和已有结算；不重抽既定随机结果。实际处理数量与剩余积压由返回结果提供。',
     );
   } else if (path === '/judge/recovery-finalize') {
-    add('恢复核对状态', m.recovery_state, '核对完成');
+    add('恢复核对状态', matchState.recovery_state, '核对完成');
     consequences.push('结束恢复审查；保持当前暂停，仍需单独确认恢复计时。');
   } else if (path === '/judge/report-correction') {
     const row =

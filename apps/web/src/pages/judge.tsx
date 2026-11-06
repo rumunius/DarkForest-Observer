@@ -71,10 +71,10 @@ export function JudgePages() {
   }
   if (area === 'players') {
     const id = route.split('/')[3];
-    const c = data.civilizations.find(c => c.id === id);
+    const civilization = data.civilizations.find(c => c.id === id);
     return id ? (
-      c ? (
-        <PlayerManagement c={c} />
+      civilization ? (
+        <PlayerManagement c={civilization} />
       ) : (
         <Empty title="文明不存在" to="/judge/players" />
       )

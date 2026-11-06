@@ -48,36 +48,39 @@ interface MacroData {
 /** 固定组合命令所引用的宏版本，避免确认前模板变化悄然改变执行内容。 */
 export function pin(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
   stack: string[] = [],
 ): void {
-  const spec = commandSpec(n);
+  const spec = commandSpec(commandNode);
   requireCommandArgument(spec, '未注册的命令');
-  validateCommandOptions(n);
+  validateCommandOptions(commandNode);
   permission(commandContext.actor, spec.permission);
   requireCommandArgument(
-    !['plan', 'confirm', 'request'].includes(n.words[0]!) && !spec.query,
+    !['plan', 'confirm', 'request'].includes(commandNode.words[0]!) &&
+      !spec.query,
     '授权控制及查询不能嵌入操作块',
   );
   if (spec.path === 'macro run') {
-    const name = unquoteArgument(n.words[2]);
-    const versionIndex = n.words.indexOf('version');
+    const name = unquoteArgument(commandNode.words[2]);
+    const versionIndex = commandNode.words.indexOf('version');
     const row = namedCommandObject(
       commandContext,
       'macro',
       name,
-      versionIndex >= 0 ? Number(n.words[versionIndex + 1]) : undefined,
+      versionIndex >= 0
+        ? Number(commandNode.words[versionIndex + 1])
+        : undefined,
     );
     requireCommandArgument(!stack.includes(name), '宏不能直接或间接递归');
     const data = parseJson(row.data) as MacroData;
     if (versionIndex < 0) {
-      n.words.push('version', String(row.version));
+      commandNode.words.push('version', String(row.version));
     }
     for (const node of data.block) {
       pin(commandContext, node, [...stack, name]);
     }
   }
-  for (const child of n.block ?? []) {
+  for (const child of commandNode.block ?? []) {
     if (spec.path === 'reveal' && child.words[0] === 'stats') {
       permission(commandContext.actor, 'overview');
       validateCommandOptions(child);
@@ -89,7 +92,10 @@ export function pin(
 }
 
 /** 解释共享命令树并复用领域处理器，维护组合深度、工作预算及原事务。 */
-export function run(commandContext: CommandContext, n: CommandNode): unknown {
+export function run(
+  commandContext: CommandContext,
+  commandNode: CommandNode,
+): unknown {
   requireCommandArgument(
     ++commandContext.depth <= COMMAND_LIMITS.depth,
     '执行嵌套超过32层',
@@ -110,65 +116,65 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
         '展开操作超出工作预算，请缩小批次。',
       );
     }
-    validateCommandOptions(n);
-    const spec = commandSpec(n)!;
+    validateCommandOptions(commandNode);
+    const spec = commandSpec(commandNode)!;
     permission(commandContext.actor, spec.permission);
-    commandContext.reason = n.options.reason ?? commandContext.reason;
-    commandContext.source = n.options.source ?? commandContext.source;
-    commandContext.caseId = n.options.case ?? commandContext.caseId;
+    commandContext.reason = commandNode.options.reason ?? commandContext.reason;
+    commandContext.source = commandNode.options.source ?? commandContext.source;
+    commandContext.caseId = commandNode.options.case ?? commandContext.caseId;
     if (commandContext.caseId) {
       const record = commandObject(
-        commandContext.e,
+        commandContext.engine,
         commandContext.caseId,
         'case',
       );
       recordDependency(commandContext, 'object:' + record.id, record);
     }
     if (spec.query) {
-      return query(commandContext, n);
+      return query(commandContext, commandNode);
     }
     if (spec.path === 'batch run') {
       requireCommandArgument(
-        n.words.length === 2 && n.block?.length,
+        commandNode.words.length === 2 && commandNode.block?.length,
         '用法：batch run { 操作; ... }',
       );
-      if (n.options.mode) {
+      if (commandNode.options.mode) {
         requireCommandArgument(
-          ['atomic', 'sequential'].includes(n.options.mode),
+          ['atomic', 'sequential'].includes(commandNode.options.mode),
           'mode须为atomic或sequential',
         );
       }
-      if (n.options.mode === 'sequential') {
-        return createJob(commandContext, n.block);
+      if (commandNode.options.mode === 'sequential') {
+        return createJob(commandContext, commandNode.block);
       }
       const results = [];
-      for (const child of n.block) {
+      for (const child of commandNode.block) {
         results.push(run(commandContext, child));
       }
       return results;
     }
     if (spec.path === 'execute') {
       requireCommandArgument(
-        n.block?.length && n.words.at(-1) === 'run',
+        commandNode.block?.length && commandNode.words.at(-1) === 'run',
         'execute需要run操作块',
       );
       let index = 1;
       let ids: Array<string | undefined> = [commandContext.self];
-      if (n.words[index] === 'as') {
-        ids = selectTargets(commandContext, n.words[index + 1]!);
+      if (commandNode.words[index] === 'as') {
+        ids = selectTargets(commandContext, commandNode.words[index + 1]!);
         index += 2;
       }
       const steps: Array<{unless: boolean; words: string[]}> = [];
-      while (index < n.words.length - 1) {
-        const kind = n.words[index++];
+      while (index < commandNode.words.length - 1) {
+        const kind = commandNode.words[index++];
         requireCommandArgument(
           kind === 'if' || kind === 'unless',
           'execute需要as/if/unless/run',
         );
         const start = index;
         let depth = 0;
-        while (index < n.words.length - 1) {
-          const w = n.words[index]!;
+        while (index < commandNode.words.length - 1) {
+          const w = commandNode.words[index]!;
           if (w === '(') {
             depth++;
           }
@@ -182,7 +188,7 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
         }
         steps.push({
           unless: kind === 'unless',
-          words: n.words.slice(start, index),
+          words: commandNode.words.slice(start, index),
         });
       }
       const out = [];
@@ -194,7 +200,7 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
           enabled = enabled && (step.unless ? !matches : matches);
         }
         if (enabled) {
-          for (const child of n.block) {
+          for (const child of commandNode.block) {
             out.push(run(commandContext, child));
           }
         } else {
@@ -206,20 +212,20 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
     if (spec.path === 'macro define') {
       requireHeadJudge(commandContext);
       requireCommandArgument(
-        n.block?.length && n.words.at(-1) === 'run',
+        commandNode.block?.length && commandNode.words.at(-1) === 'run',
         '宏定义需要run操作块',
       );
-      const name = commandValue(n.words[2], commandContext);
+      const name = commandValue(commandNode.words[2], commandContext);
       text(name, 200);
       const params: Array<{name: string; type: string}> = [];
-      if (n.words.length > 4) {
+      if (commandNode.words.length > 4) {
         requireCommandArgument(
-          n.words[3] === 'params' &&
-            n.words[4] === '(' &&
-            n.words.at(-2) === ')',
+          commandNode.words[3] === 'params' &&
+            commandNode.words[4] === '(' &&
+            commandNode.words.at(-2) === ')',
           '宏参数须使用params (...)',
         );
-        const declarations = n.words.slice(5, -2).join('').split(',');
+        const declarations = commandNode.words.slice(5, -2).join('').split(',');
         for (const decl of declarations) {
           const match =
             /^([A-Za-z][A-Za-z0-9_]*):(target|int|duration|text|bool)$/.exec(
@@ -232,7 +238,7 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
           params.push({name: match[1]!, type: match[2]!});
         }
       }
-      const block = structuredClone(n.block);
+      const block = structuredClone(commandNode.block);
       for (const node of block) {
         requireCommandArgument(
           !(
@@ -242,7 +248,7 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
         );
         pin(commandContext, node, [name]);
       }
-      const versions = commandContext.e.db.all<{version: number}>(
+      const versions = commandContext.engine.db.all<{version: number}>(
         "SELECT version FROM command_objects WHERE kind='macro' AND json_extract(data,'$.name')=?",
         name,
       );
@@ -253,7 +259,7 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
         {name, params, block},
         'MAC',
       );
-      commandContext.e.db.exec(
+      commandContext.engine.db.exec(
         'UPDATE command_objects SET version=? WHERE id=?',
         version,
         id,
@@ -267,13 +273,15 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
       return {id, version};
     }
     if (spec.path === 'macro run') {
-      const name = commandValue(n.words[2], commandContext);
-      const v = n.words.indexOf('version');
+      const name = commandValue(commandNode.words[2], commandContext);
+      const versionIndex = commandNode.words.indexOf('version');
       const row = namedCommandObject(
         commandContext,
         'macro',
         name,
-        v >= 0 ? Number(n.words[v + 1]) : undefined,
+        versionIndex >= 0
+          ? Number(commandNode.words[versionIndex + 1])
+          : undefined,
       );
       const data = parseJson(row.data) as MacroData;
       recordDependency(commandContext, 'object:' + row.id, row);
@@ -281,7 +289,10 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
         !commandContext.macroStack.includes(row.id),
         '宏不能递归',
       );
-      const rest = n.words.slice(3, v >= 0 ? v : undefined);
+      const rest = commandNode.words.slice(
+        3,
+        versionIndex >= 0 ? versionIndex : undefined,
+      );
       const args: string[] = [];
       if (rest.length) {
         requireCommandArgument(
@@ -337,25 +348,25 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
     }
     if (spec.path === 'macro retire') {
       requireHeadJudge(commandContext);
-      validateCommandArguments(n);
+      validateCommandArguments(commandNode);
       const row = namedCommandObject(
         commandContext,
         'macro',
-        commandValue(n.words[2], commandContext),
-        integer(Number(n.words[4]), 1),
+        commandValue(commandNode.words[2], commandContext),
+        integer(Number(commandNode.words[4]), 1),
       );
       updateCommandObject(commandContext, row, parseJson(row.data), 'retired');
       recordChange(commandContext, row.id, 'active', 'retired');
       return;
     }
     if (spec.path === 'schedule create') {
-      return createSchedule(commandContext, n);
+      return createSchedule(commandContext, commandNode);
     }
     if (spec.path === 'schedule cancel' || spec.path === 'job cancel') {
-      validateCommandArguments(n);
+      validateCommandArguments(commandNode);
       const row = commandObject(
-        commandContext.e,
-        commandValue(n.words[2], commandContext),
+        commandContext.engine,
+        commandValue(commandNode.words[2], commandContext),
         spec.path.startsWith('job') ? 'job' : 'schedule',
       );
       requireObjectOwner(commandContext, row);
@@ -368,7 +379,7 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
         parseJson(row.data),
         'cancelled',
       );
-      commandContext.e.db.exec(
+      commandContext.engine.db.exec(
         "UPDATE scheduled_events SET status='cancelled' WHERE (id=? OR json_extract(payload,'$.job')=?) AND status='pending'",
         row.id,
         row.id,
@@ -382,17 +393,17 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
       return;
     }
     const offset = commandContext.changes.length;
-    const result = dispatchCommandAction(commandContext, n);
+    const result = dispatchCommandAction(commandContext, commandNode);
     const changes = commandContext.changes.slice(offset);
     const ids = [
       ...new Set(
         changes.map(p => p.target).filter(id => /^C\d{2,3}$/.test(id)),
       ),
     ];
-    commandContext.e.audit(
+    commandContext.engine.audit(
       commandContext.actor.id,
       'command:' + spec.path,
-      ids.length === 1 ? ids[0]! : commandContext.e.db.match().id,
+      ids.length === 1 ? ids[0]! : commandContext.engine.db.match().id,
       commandContext.reason,
       {
         requestId: commandContext.id,
@@ -404,15 +415,15 @@ export function run(commandContext: CommandContext, n: CommandNode): unknown {
     );
     if (changes.length) {
       logEvent(
-        commandContext.e,
+        commandContext.engine,
         `command:${commandContext.actor.id}:${commandContext.id}:${commandContext.work}`,
         'review',
         /^(resource|photon|tech) /.test(spec.path) ? '资源调整' : '裁判指令',
         commandContext.reason,
         'global',
         ids,
-        commandContext.e.game(),
-        commandContext.e.now(),
+        commandContext.engine.game(),
+        commandContext.engine.now(),
       );
     }
     return result;
@@ -439,29 +450,36 @@ export interface TaskData {
   job?: string;
 }
 
-function macroBody(engine: Engine, n: CommandNode): CommandNode[] | undefined {
-  if (commandSpec(n)?.path !== 'macro run') {
+function macroBody(
+  engine: Engine,
+  commandNode: CommandNode,
+): CommandNode[] | undefined {
+  if (commandSpec(commandNode)?.path !== 'macro run') {
     return;
   }
-  const v = n.words.indexOf('version');
+  const v = commandNode.words.indexOf('version');
   const row = engine.db.one<{data: string}>(
     "SELECT data FROM command_objects WHERE kind='macro' AND json_extract(data,'$.name')=? AND version=?",
-    unquoteArgument(n.words[2]),
-    Number(n.words[v + 1]),
+    unquoteArgument(commandNode.words[2]),
+    Number(commandNode.words[v + 1]),
   );
   return row ? (parseJson(row.data) as MacroData).block : undefined;
 }
 
 /** 判断命令树是否仅产生管理消息，用于完赛后保留通知任务的策略。 */
-export function isMessage(engine: Engine, n: CommandNode): boolean {
+export function isMessage(engine: Engine, commandNode: CommandNode): boolean {
   if (
-    ['announce', 'tell', 'notice', 'reveal', 'replay'].includes(n.words[0]!)
+    ['announce', 'tell', 'notice', 'reveal', 'replay'].includes(
+      commandNode.words[0]!,
+    )
   ) {
     return true;
   }
   const block =
-    macroBody(engine, n) ??
-    (['batch', 'execute'].includes(n.words[0]!) ? n.block : undefined);
+    macroBody(engine, commandNode) ??
+    (['batch', 'execute'].includes(commandNode.words[0]!)
+      ? commandNode.block
+      : undefined);
   if (block) {
     return block.every(child => isMessage(engine, child));
   }
@@ -470,13 +488,13 @@ export function isMessage(engine: Engine, n: CommandNode): boolean {
 
 function collectSnapshot(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
   result: Record<string, string[]>,
 ): void {
-  for (const w of n.words) {
+  for (const w of commandNode.words) {
     if (/^@(a|alive|dead|random|pool)(\[|$)/.test(w)) {
       result[w] = targets(
-        commandContext.e,
+        commandContext.engine,
         w,
         commandContext.self,
         true,
@@ -484,40 +502,45 @@ function collectSnapshot(
       ).candidates;
     }
   }
-  for (const child of n.block ?? []) {
+  for (const child of commandNode.block ?? []) {
     collectSnapshot(commandContext, child, result);
   }
-  for (const child of macroBody(commandContext.e, n) ?? []) {
+  for (const child of macroBody(commandContext.engine, commandNode) ?? []) {
     collectSnapshot(commandContext, child, result);
   }
 }
 
 function createSchedule(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
 ): unknown {
   requireCommandArgument(
-    (n.block?.length && n.words.length === 7 && n.words[5] === 'run') ||
-      (n.block?.length && n.words.length === 6 && n.words[5] === 'run'),
+    (commandNode.block?.length &&
+      commandNode.words.length === 7 &&
+      commandNode.words[5] === 'run') ||
+      (commandNode.block?.length &&
+        commandNode.words.length === 6 &&
+        commandNode.words[5] === 'run'),
     '用法：schedule create utc|game in|at 时间 run { 操作 }',
   );
-  const clock = n.words[2];
-  const mode = n.words[3];
-  const raw = commandValue(n.words[4], commandContext);
+  const clock = commandNode.words[2];
+  const mode = commandNode.words[3];
+  const raw = commandValue(commandNode.words[4], commandContext);
   requireCommandArgument(
     clock === 'utc' || clock === 'game',
     '时基为utc或game',
   );
   requireCommandArgument(mode === 'at' || mode === 'in', '时间模式为at或in');
-  const block = structuredClone(n.block);
+  const block = structuredClone(commandNode.block);
   for (const node of block) {
     pin(commandContext, node);
   }
   let due: number;
   if (mode === 'in') {
     due =
-      (clock === 'utc' ? commandContext.e.now() : commandContext.e.game()) +
-      durationMs(raw);
+      (clock === 'utc'
+        ? commandContext.engine.now()
+        : commandContext.engine.game()) + durationMs(raw);
   } else if (clock === 'utc') {
     due = instantMs(raw);
   } else {
@@ -527,9 +550,10 @@ function createSchedule(
   }
   integer(due);
   const node: CommandNode = {words: ['batch', 'run'], block, options: {}};
-  const message = isMessage(commandContext.e, node);
-  const late = n.options.late ?? (message ? 'run' : 'review');
-  const afterEnd = n.options['after-end'] ?? (message ? 'keep' : 'cancel');
+  const message = isMessage(commandContext.engine, node);
+  const late = commandNode.options.late ?? (message ? 'run' : 'review');
+  const afterEnd =
+    commandNode.options['after-end'] ?? (message ? 'keep' : 'cancel');
   requireCommandArgument(
     ['run', 'skip', 'review'].includes(late),
     'late须为run/skip/review',
@@ -543,11 +567,12 @@ function createSchedule(
     '混合或战局任务不能在赛后执行',
   );
   requireCommandArgument(
-    !n.options.targets || ['live', 'snapshot'].includes(n.options.targets),
+    !commandNode.options.targets ||
+      ['live', 'snapshot'].includes(commandNode.options.targets),
     'targets为live或snapshot',
   );
   const snapshot: Record<string, string[]> = {};
-  if (n.options.targets === 'snapshot') {
+  if (commandNode.options.targets === 'snapshot') {
     collectSnapshot(commandContext, node, snapshot);
   }
   const data: TaskData = {
@@ -555,8 +580,8 @@ function createSchedule(
     due,
     clock,
     late: late as TaskData['late'],
-    maxLateness: n.options['max-lateness']
-      ? durationMs(n.options['max-lateness'])
+    maxLateness: commandNode.options['max-lateness']
+      ? durationMs(commandNode.options['max-lateness'])
       : null,
     afterEnd: afterEnd as TaskData['afterEnd'],
     snapshot,
@@ -571,12 +596,12 @@ function createSchedule(
     'SCH',
     'pending',
   );
-  commandContext.e.schedule(id, 'judge_command_task', clock, due, 3, {id});
+  commandContext.engine.schedule(id, 'judge_command_task', clock, due, 3, {id});
   recordChange(
     commandContext,
     id,
     '无定时任务',
-    `${clock === 'utc' ? new Date(due).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}) + ' 北京时间' : `有效比赛${due}毫秒`}；目标${n.options.targets ?? 'live'}；迟到${late}；赛后${afterEnd}`,
+    `${clock === 'utc' ? new Date(due).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}) + ' 北京时间' : `有效比赛${due}毫秒`}；目标${commandNode.options.targets ?? 'live'}；迟到${late}；赛后${afterEnd}`,
   );
   commandContext.notes.push(
     '到期时重新检查创建者权限、比赛暂停情况、现场核对记录和当前操作条件。随机目标在执行时抽取；淘汰或恢复文明可能影响提前完赛。',
@@ -613,11 +638,11 @@ function createJob(
     'JOB',
     'pending',
   );
-  commandContext.e.schedule(
+  commandContext.engine.schedule(
     `${id}:0`,
     'judge_command_job',
     'utc',
-    commandContext.e.now(),
+    commandContext.engine.now(),
     3,
     {
       job: id,
@@ -642,7 +667,7 @@ export function createCommandContext(
   preview = false,
 ): CommandContext {
   const initial = captureCommandDependencies(engine);
-  const m = engine.db.match();
+  const matchState = engine.db.match();
   for (const table of [
     'settings',
     'sighting_codes',
@@ -660,7 +685,7 @@ export function createCommandContext(
           );
   }
   return {
-    e: engine,
+    engine: engine,
     actor,
     id,
     prepared,
@@ -673,14 +698,14 @@ export function createCommandContext(
     notes: [],
     dependencies: {
       match: {
-        phase: m.phase,
-        release_at: m.release_at,
-        started_at: m.started_at,
-        start_settled: m.start_settled,
-        paused_at: m.paused_at,
-        pause_reason: m.pause_reason,
-        hunt_finalized: m.hunt_finalized,
-        recovery_state: m.recovery_state,
+        phase: matchState.phase,
+        release_at: matchState.release_at,
+        started_at: matchState.started_at,
+        start_settled: matchState.start_settled,
+        paused_at: matchState.paused_at,
+        pause_reason: matchState.pause_reason,
+        hunt_finalized: matchState.hunt_finalized,
+        recovery_state: matchState.recovery_state,
       },
       permissions: actor.permissions,
     },
@@ -701,17 +726,23 @@ export function simulate(
   prepared: PreparedCode[],
   reason: string,
 ): CommandContext {
-  const c = createCommandContext(engine, actor, id, prepared, true);
+  const commandContext = createCommandContext(
+    engine,
+    actor,
+    id,
+    prepared,
+    true,
+  );
   const rollback = new Error('COMMAND_PREVIEW_ROLLBACK');
-  c.reason = reason;
+  commandContext.reason = reason;
   const previous = engine.commandBatch;
   engine.commandBatch = true;
   try {
     engine.db.tx(() => {
-      run(c, node);
+      run(commandContext, node);
       const count = survivors(engine).length;
       if (engine.db.match().start_settled !== null && count <= 1) {
-        c.notes.push(`整批结束后存活${count}人，将提前完赛。`);
+        commandContext.notes.push(`整批结束后存活${count}人，将提前完赛。`);
       }
       throw rollback;
     });
@@ -722,7 +753,7 @@ export function simulate(
   } finally {
     engine.commandBatch = previous;
   }
-  return c;
+  return commandContext;
 }
 
 /** 从当前权威状态重新读取一项预览依赖，用于确认时检测过时计划。 */

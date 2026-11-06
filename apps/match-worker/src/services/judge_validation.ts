@@ -125,9 +125,9 @@ export function validate(
   actor: Actor,
 ): void {
   const db = engine.db;
-  const m = db.match();
+  const matchState = db.match();
   requireThat(
-    !m.recovery_state ||
+    !matchState.recovery_state ||
       ![
         '/judge/resume',
         '/judge/hunt-finalize',
@@ -141,7 +141,7 @@ export function validate(
   );
   if (path === '/judge/recovery-finalize') {
     requireThat(
-      m.recovery_state.startsWith('review:'),
+      matchState.recovery_state.startsWith('review:'),
       'RECOVERY_NOT_REVIEWING',
       '当前没有待核对的恢复。',
     );
@@ -158,7 +158,7 @@ export function validate(
   }
   if (['/judge/arm-code-release', '/judge/arm-start'].includes(path)) {
     requireThat(
-      m.phase === (path.endsWith('release') ? 'setup' : 'outfitting'),
+      matchState.phase === (path.endsWith('release') ? 'setup' : 'outfitting'),
       'WRONG_PHASE',
       '当前阶段不能安排这个时间。',
     );
@@ -184,26 +184,26 @@ export function validate(
       '至少需要两名正式玩家。',
     );
     for (const p of roster) {
-      const f = db.flight(p.id);
-      const h = db.home(p.id);
+      const flight = db.flight(p.id);
+      const homeworld = db.home(p.id);
       if (path.endsWith('release')) {
         requireThat(
-          f.status === 'staged' &&
-            f.departed !== null &&
-            f.staged !== null &&
-            f.code_id === null &&
-            h?.status === 'verified',
+          flight.status === 'staged' &&
+            flight.departed !== null &&
+            flight.staged !== null &&
+            flight.code_id === null &&
+            homeworld?.status === 'verified',
           'ROSTER_NOT_READY',
           '仍有正式玩家未完成准备。',
         );
       } else {
         requireThat(
-          f.status === 'ready' &&
-            f.ready !== null &&
-            f.code_id &&
+          flight.status === 'ready' &&
+            flight.ready !== null &&
+            flight.code_id &&
             db.one<Record<string, SqlStorageValue>>(
               "SELECT id FROM sighting_codes WHERE id=? AND player_id=? AND status='reserved'",
-              f.code_id,
+              flight.code_id,
               p.id,
             ),
           'ROSTER_NOT_READY',
@@ -212,7 +212,11 @@ export function validate(
       }
     }
   } else if (path === '/judge/roster') {
-    requireThat(m.phase === 'setup', 'ROSTER_LOCKED', '正式参赛名单已锁定。');
+    requireThat(
+      matchState.phase === 'setup',
+      'ROSTER_LOCKED',
+      '正式参赛名单已锁定。',
+    );
     requireThat(
       Array.isArray(body.members) &&
         body.members.length >= 2 &&
@@ -230,7 +234,11 @@ export function validate(
       );
     }
   } else if (path === '/judge/parameters') {
-    requireThat(m.phase === 'setup', 'PARAMETERS_LOCKED', '比赛参数已锁定。');
+    requireThat(
+      matchState.phase === 'setup',
+      'PARAMETERS_LOCKED',
+      '比赛参数已锁定。',
+    );
     requireThat(
       integer(body.expected_version, 1) ===
         db.one<{version: number}>(
@@ -242,24 +250,26 @@ export function validate(
     validateParameters(body.values);
   } else if (path === '/judge/pause') {
     requireThat(
-      m.start_settled !== null && m.phase !== 'ended' && m.paused_at === null,
+      matchState.start_settled !== null &&
+        matchState.phase !== 'ended' &&
+        matchState.paused_at === null,
       'CANNOT_PAUSE',
       '当前不能暂停比赛。',
     );
   } else if (path === '/judge/resume') {
     requireThat(
-      m.paused_at !== null &&
-        m.pause_reason !== 'hunt_review' &&
-        m.phase !== 'ended',
+      matchState.paused_at !== null &&
+        matchState.pause_reason !== 'hunt_review' &&
+        matchState.phase !== 'ended',
       'CANNOT_RESUME',
       '请先完成终局资格核验。',
     );
   } else if (path === '/judge/hunt-finalize') {
     requireThat(
-      m.phase === 'hunt' &&
-        m.paused_at !== null &&
-        m.pause_reason === 'hunt_review' &&
-        m.hunt_finalized === null,
+      matchState.phase === 'hunt' &&
+        matchState.paused_at !== null &&
+        matchState.pause_reason === 'hunt_review' &&
+        matchState.hunt_finalized === null,
       'HUNT_NOT_REVIEWING',
       '当前未进行终局资格核验。',
     );
@@ -271,15 +281,17 @@ export function validate(
     );
     const seen = new Set<string>();
     for (const raw of body.eliminations) {
-      const p = strict(raw, ['id', 'reason']);
-      const id = text(p.id, 16);
+      const payload = strict(raw, ['id', 'reason']);
+      const id = text(payload.id, 16);
       requireThat(
         survivors(engine).includes(id) && !seen.has(id),
         'HUNT_ROSTER_CHANGED',
         '淘汰名单已变化，请重新核对。',
       );
       requireThat(
-        ['no_share_at_cutoff', 'outside_at_cutoff'].includes(String(p.reason)),
+        ['no_share_at_cutoff', 'outside_at_cutoff'].includes(
+          String(payload.reason),
+        ),
         'BAD_REASON',
         '请选择裁决原因。',
         400,
@@ -288,7 +300,9 @@ export function validate(
     }
   } else if (path === '/judge/hunt-eliminate') {
     requireThat(
-      m.phase === 'hunt' && m.hunt_finalized !== null && m.paused_at === null,
+      matchState.phase === 'hunt' &&
+        matchState.hunt_finalized !== null &&
+        matchState.paused_at === null,
       'HUNT_NOT_RUNNING',
       '最后狩猎尚未开始。',
     );
@@ -307,7 +321,7 @@ export function validate(
     );
   } else if (path === '/judge/player-eliminate') {
     requireThat(
-      m.start_settled !== null && m.phase !== 'ended',
+      matchState.start_settled !== null && matchState.phase !== 'ended',
       'MATCH_NOT_RUNNING',
       '请在比赛正式开始后记录违规淘汰。',
     );
@@ -344,7 +358,7 @@ export function validate(
     }
   } else if (path.startsWith('/judge/roster/')) {
     requireThat(
-      ['setup', 'armed', 'outfitting'].includes(m.phase),
+      ['setup', 'armed', 'outfitting'].includes(matchState.phase),
       'ROSTER_LOCKED',
       '当前不能调整首航名单。',
     );
@@ -358,7 +372,8 @@ export function validate(
     const target = text(body.target, 16);
     db.player(target);
     requireThat(
-      (body.mode === 'replace' || m.paused_at !== null) && m.phase !== 'ended',
+      (body.mode === 'replace' || matchState.paused_at !== null) &&
+        matchState.phase !== 'ended',
       'PAUSE_REQUIRED',
       '请先暂停比赛。',
     );
@@ -371,7 +386,7 @@ export function validate(
     requireThat(
       db.flight(target).status ===
         (body.mode === 'activate' ? 'issued' : 'active') ||
-        (m.recovery_state.startsWith('review:') &&
+        (matchState.recovery_state.startsWith('review:') &&
           body.mode === 'reissue' &&
           ['issued', 'outfitting', 'ready'].includes(db.flight(target).status)),
       'FLIGHT_STATE_CONFLICT',
@@ -380,7 +395,7 @@ export function validate(
   } else if (path === '/judge/correction') {
     db.player(text(body.target, 16));
     requireThat(
-      m.phase !== 'ended',
+      matchState.phase !== 'ended',
       'RESULTS_SEALED',
       '比赛已结束，请通过赛后更正处理。',
     );
@@ -437,7 +452,7 @@ export function validate(
     );
     if (body.operation === 'cancel') {
       requireThat(
-        m.paused_at !== null &&
+        matchState.paused_at !== null &&
           event.status === 'pending' &&
           ['song_visit', 'tech_burst', 'judge_delayed_command'].includes(
             event.kind,
@@ -447,7 +462,7 @@ export function validate(
       );
     } else {
       requireThat(
-        !m.recovery_state,
+        !matchState.recovery_state,
         'RECOVERY_REVIEW',
         '请先完成比赛恢复核对，再重试赛事事件。',
       );
@@ -465,8 +480,8 @@ export function validate(
     }
   } else if (path === '/judge/event-trigger') {
     requireThat(
-      m.paused_at !== null &&
-        m.phase === 'forest' &&
+      matchState.paused_at !== null &&
+        matchState.phase === 'forest' &&
         engine.game() < TIMES.apocalypse,
       'PAUSE_REQUIRED',
       '请在第一阶段暂停后核对手动事件。',
@@ -507,10 +522,10 @@ export function validateParameters(raw: unknown): Parameters {
     'sightingIntervalMs',
     'sightingsPerMinute',
   ];
-  const p = strict(raw, names);
+  const parameters = strict(raw, names);
   const read = (name: keyof Parameters) =>
     integer(
-      p[name],
+      parameters[name],
       ['singerPercent', 'secondOutPercent', 'observerWaitSeconds'].includes(
         name,
       )

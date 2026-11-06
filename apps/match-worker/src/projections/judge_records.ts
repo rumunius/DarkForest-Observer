@@ -12,23 +12,23 @@ export type JudgeCollection = 'notices' | 'audits' | 'attacks';
 export type JudgeItems =
   Notice[] | AuditEntry[] | NonNullable<JudgeState['attacks']>;
 /** 将通知持久行转换为裁判可读记录，保留版本及复制、发送责任信息。 */
-export function noticeProjection(r: Record<string, SqlStorageValue>): Notice {
+export function noticeProjection(row: Record<string, SqlStorageValue>): Notice {
   return {
-    id: r.id as string,
-    target: r.target === 'group' ? '比赛QQ群' : (r.target as string),
-    channel: r.channel as Notice['channel'],
-    title: r.title as string,
-    body: r.body as string,
-    status: r.status as Notice['status'],
-    version: r.version as number,
-    gameMs: r.game_ms as number,
-    operator: r.operator as string,
-    priority: r.priority as number,
-    copiedBy: r.copied_by as string | null,
-    copiedUtcMs: r.copied_utc as number | null,
-    sentBy: r.sent_by as string | null,
-    sentUtcMs: r.sent_utc as number | null,
-    error: r.error as string,
+    id: row.id as string,
+    target: row.target === 'group' ? '比赛QQ群' : (row.target as string),
+    channel: row.channel as Notice['channel'],
+    title: row.title as string,
+    body: row.body as string,
+    status: row.status as Notice['status'],
+    version: row.version as number,
+    gameMs: row.game_ms as number,
+    operator: row.operator as string,
+    priority: row.priority as number,
+    copiedBy: row.copied_by as string | null,
+    copiedUtcMs: row.copied_utc as number | null,
+    sentBy: row.sent_by as string | null,
+    sentUtcMs: row.sent_utc as number | null,
+    error: row.error as string,
   };
 }
 /** 按集合权限读取稳定顺序的历史页，并返回下一页游标。 */
@@ -59,18 +59,18 @@ export function judgeRecords(
     kind === 'notices'
       ? rows.map(noticeProjection)
       : kind === 'audits'
-        ? rows.map(r => {
-            const detail = parseJson(r.detail as string) as {
+        ? rows.map(row => {
+            const detail = parseJson(row.detail as string) as {
               before?: unknown;
               after?: unknown;
               status?: string;
               preview?: unknown;
             };
             return {
-              id: r.id as string,
-              title: r.action as string,
-              operator: r.actor as string,
-              reason: r.reason as string,
+              id: row.id as string,
+              title: row.action as string,
+              operator: row.actor as string,
+              reason: row.reason as string,
               before:
                 detail.before === undefined
                   ? '历史记录未保存前态'
@@ -80,9 +80,9 @@ export function judgeRecords(
                 null,
                 2,
               ),
-              gameMs: (r.game_ms as number) ?? 0,
-              utcMs: r.utc_ms as number,
-              target: r.target as string,
+              gameMs: (row.game_ms as number) ?? 0,
+              utcMs: row.utc_ms as number,
+              target: row.target as string,
               status: detail.status ?? 'legacy',
             };
           })

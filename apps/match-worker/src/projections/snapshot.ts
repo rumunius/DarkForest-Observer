@@ -42,45 +42,49 @@ import {
 type Keys = Awaited<ReturnType<Engine['keys']>>;
 /** 生成赛事时钟和阶段的客户端投影；客户端不得以此代替写接口授权。 */
 export function matchProjection(engine: Engine): MatchState {
-  const m = engine.db.match();
+  const matchState = engine.db.match();
   return {
-    recoveryReview: m.recovery_state.startsWith('review:'),
-    id: m.id,
-    revision: m.revision,
+    recoveryReview: matchState.recovery_state.startsWith('review:'),
+    id: matchState.id,
+    revision: matchState.revision,
     stage:
-      m.phase === 'armed' || m.phase === 'start_countdown'
+      matchState.phase === 'armed' || matchState.phase === 'start_countdown'
         ? 'countdown'
-        : m.phase,
-    phase: m.phase,
+        : matchState.phase,
+    phase: matchState.phase,
     gameMs: engine.game(),
     serverUtcMs: engine.now(),
-    running: m.start_settled !== null && m.phase !== 'ended',
-    paused: m.paused_at !== null,
+    running: matchState.start_settled !== null && matchState.phase !== 'ended',
+    paused: matchState.paused_at !== null,
     pauseReason:
-      m.pause_reason === 'hunt_review' ? '终局资格确认中' : m.pause_reason,
-    verification: m.pause_reason === 'hunt_review' && m.hunt_finalized === null,
+      matchState.pause_reason === 'hunt_review'
+        ? '终局资格确认中'
+        : matchState.pause_reason,
+    verification:
+      matchState.pause_reason === 'hunt_review' &&
+      matchState.hunt_finalized === null,
     total: engine.db.roster().length,
     survivors: survivors(engine).length,
     homeworldsAlive: engine.db.one<{count: number}>(
       "SELECT COUNT(*) AS count FROM homeworlds h JOIN players p ON p.id=h.player_id WHERE h.status='verified' AND h.destroyed_game IS NULL AND p.entry_status='registered' AND p.id IN (SELECT player_id FROM roster_members)",
     )!.count,
-    releaseAt: m.release_at,
-    startAt: m.started_at,
+    releaseAt: matchState.release_at,
+    startAt: matchState.started_at,
   };
 }
 /** 按淘汰事实、管理撤销和真实UTC等待计算当前只读观战资格。 */
-export function observerAllowed(engine: Engine, p: Player): boolean {
+export function observerAllowed(engine: Engine, playerState: Player): boolean {
   const out = engine.db.one<{utc_ms: number}>(
     'SELECT utc_ms FROM eliminations WHERE player_id=? AND valid=1',
-    p.id,
+    playerState.id,
   );
   return (
     !!engine.db.one<Record<string, SqlStorageValue>>(
       'SELECT player_id FROM roster_members WHERE player_id=?',
-      p.id,
+      playerState.id,
     ) &&
-    engine.db.flight(p.id).status === 'eliminated' &&
-    !p.observer_revoked &&
+    engine.db.flight(playerState.id).status === 'eliminated' &&
+    !playerState.observer_revoked &&
     !!out &&
     engine.now() >=
       out.utc_ms + engine.db.parameters().observerWaitSeconds * 1000
@@ -94,9 +98,9 @@ export function playerProjection(
   own = false,
 ): PlayerState {
   const db = engine.db;
-  const p = db.player(id);
-  const f = db.flight(id);
-  const h = db.home(id);
+  const playerState = db.player(id);
+  const currentFlight = db.flight(id);
+  const homeworld = db.home(id);
   const out = db.one<{utc_ms: number; reason: string}>(
     'SELECT utc_ms,reason FROM eliminations WHERE player_id=? AND valid=1',
     id,
@@ -105,9 +109,9 @@ export function playerProjection(
     'SELECT * FROM attack_controls WHERE player_id=?',
     id,
   )!;
-  let flight = f.status as PlayerState['flight'];
+  let flight = currentFlight.status as PlayerState['flight'];
   if (
-    p.entry_status !== 'registered' ||
+    playerState.entry_status !== 'registered' ||
     (db.match().phase !== 'setup' &&
       !db.one<Record<string, SqlStorageValue>>(
         'SELECT player_id FROM roster_members WHERE player_id=?',
@@ -115,16 +119,16 @@ export function playerProjection(
       ))
   ) {
     flight = 'absent';
-  } else if (f.status === 'prelaunch') {
-    flight = !p.nickname
+  } else if (currentFlight.status === 'prelaunch') {
+    flight = !playerState.nickname
       ? 'nickname'
-      : !h
+      : !homeworld
         ? 'unregistered'
-        : h.status === 'pending'
+        : homeworld.status === 'pending'
           ? 'pending'
-          : h.status === 'rejected'
+          : homeworld.status === 'rejected'
             ? 'rejected'
-            : f.departed !== null
+            : currentFlight.departed !== null
               ? 'departed'
               : 'verified';
   }
@@ -147,24 +151,29 @@ export function playerProjection(
   };
   return {
     id,
-    nickname: p.nickname ?? '',
+    nickname: playerState.nickname ?? '',
     flight,
-    homeworld: h?.code ?? null,
-    homeAlive: !!h && h.status === 'verified' && h.destroyed_game === null,
-    homeVersion: h?.version ?? 0,
-    rejection: h?.rejection ?? '',
+    homeworld: homeworld?.code ?? null,
+    homeAlive:
+      !!homeworld &&
+      homeworld.status === 'verified' &&
+      homeworld.destroyed_game === null,
+    homeVersion: homeworld?.version ?? 0,
+    rejection: homeworld?.rejection ?? '',
     arms: engine.arms(currentCode(engine, id), keys),
-    flightNumber: f.voyage,
+    flightNumber: currentFlight.voyage,
     kills,
     wrongCount: control.wrong,
-    broadcasts: 2 - p.broadcasts,
-    photons: p.photons,
+    broadcasts: 2 - playerState.broadcasts,
+    photons: playerState.photons,
     attackLockedUntil: control.locked_until,
     respawnDeadline:
-      f.deadline === null ? null : Math.min(f.deadline, TIMES.apocalypse),
+      currentFlight.deadline === null
+        ? null
+        : Math.min(currentFlight.deadline, TIMES.apocalypse),
     eliminatedAt: out?.utc_ms ?? null,
     eliminationReason: out ? (reasons[out.reason] ?? '裁判判定淘汰') : '',
-    observerAllowed: observerAllowed(engine, p),
+    observerAllowed: observerAllowed(engine, playerState),
     actions: own ? allowedActions(engine, id) : [],
   };
 }
@@ -489,18 +498,23 @@ export function projectSnapshot(
         'SELECT id FROM players WHERE id IN (SELECT player_id FROM roster_members) ORDER BY id',
       )
       .map(({id}) => {
-        const c = civilization(engine, id, keys, permits.includes('equipment'));
+        const selectedCivilization = civilization(
+          engine,
+          id,
+          keys,
+          permits.includes('equipment'),
+        );
         // Communications judges can review homeworlds; equipment and audits need head permission.
         if (!permits.includes('homeworlds')) {
-          c.homeworld = null;
-          c.homeVersion = 0;
-          c.rejection = '';
+          selectedCivilization.homeworld = null;
+          selectedCivilization.homeVersion = 0;
+          selectedCivilization.rejection = '';
         }
         if (!permits.includes('equipment')) {
-          c.arms = null;
-          c.voyages = [];
+          selectedCivilization.arms = null;
+          selectedCivilization.voyages = [];
         }
-        return c;
+        return selectedCivilization;
       });
     snapshot.events = events(engine, actor, true);
   } else if (

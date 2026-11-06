@@ -104,18 +104,18 @@ export function RosterSettings() {
     return null;
   }
   const selected = members ?? config.members;
-  const n = selected.length;
+  const selectedCount = selected.length;
   const techCount = Math.min(
-    Math.max(1, Math.round(n / 3)),
-    Math.floor((n - 1) / 2),
+    Math.max(1, Math.round(selectedCount / 3)),
+    Math.floor((selectedCount - 1) / 2),
   );
   return (
     <section>
       <h2>参赛人数与正式名单</h2>
       <p>
-        参赛人数 N：{n}人。预注册账号共{config.accounts.length}
+        参赛人数 N：{selectedCount}人。预注册账号共{config.accounts.length}
         个，本场技术爆炸共
-        {n >= 2 ? techCount : '待确认'}次。
+        {selectedCount >= 2 ? techCount : '待确认'}次。
       </p>
       <div className="permission-list">
         {config.accounts.map(a => (
@@ -143,7 +143,7 @@ export function RosterSettings() {
           title="保存正式名单"
           path="/judge/roster"
           payload={{members: selected}}
-          ready={n >= 2 && n <= 350}
+          ready={selectedCount >= 2 && selectedCount <= 350}
         />
       )}
     </section>

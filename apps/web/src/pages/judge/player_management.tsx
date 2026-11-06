@@ -92,7 +92,7 @@ export function AttackReview() {
   const {data} = useApp();
   const [id, setId] = useState('C07');
   const [selectedAttack, setSelectedAttack] = useState('');
-  const c = data.civilizations.find(c => c.id === id);
+  const civilization = data.civilizations.find(c => c.id === id);
   const attacks = data.judge?.attacks?.filter(a => a.actor === id) ?? [];
   const attack = attacks.find(a => a.id === selectedAttack) ?? attacks[0];
   return (
@@ -108,16 +108,16 @@ export function AttackReview() {
           ))}
         </select>
       </Field>
-      {c && (
+      {civilization && (
         <>
           <div className="stat-lines">
             <div>
               <span>提交错误目击码的次数</span>
-              <strong>{c.wrongCount}</strong>
+              <strong>{civilization.wrongCount}</strong>
             </div>
             <div>
               <span>当前飞船状态</span>
-              <strong>{FLIGHT_NAMES[c.flight]}</strong>
+              <strong>{FLIGHT_NAMES[civilization.flight]}</strong>
             </div>
           </div>
           <Events
@@ -170,7 +170,7 @@ export function Equipment() {
   const {data} = useApp();
   const [id, setId] = useState('C07');
   const [mode, setMode] = useState('replace');
-  const c = data.civilizations.find(c => c.id === id);
+  const civilization = data.civilizations.find(c => c.id === id);
   return (
     <>
       <PageTitle title="手环处理" />
@@ -194,10 +194,10 @@ export function Equipment() {
           ))}
         </select>
       </Field>
-      {c?.arms && (
+      {civilization?.arms && (
         <>
           <h2>当前有效配置</h2>
-          <MiniArms arms={c.arms} />
+          <MiniArms arms={civilization.arms} />
         </>
       )}
       <Tabs
@@ -210,7 +210,7 @@ export function Equipment() {
         active={mode}
         onChange={setMode}
       />
-      {c?.flight === 'issued' && data.match!.paused ? (
+      {civilization?.flight === 'issued' && data.match!.paused ? (
         <ManagementForm
           title="确认穿戴并恢复出航"
           path="/judge/equipment-correction"

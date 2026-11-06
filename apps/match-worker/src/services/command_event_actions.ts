@@ -33,23 +33,23 @@ import {destroyHome, logEvent} from './life';
 /** Execute event commands inside the caller's existing preview or commit transaction. */
 export function handleEventAction(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
 ): unknown {
-  const spec = commandSpec(n)!;
+  const spec = commandSpec(commandNode)!;
 
   permission(commandContext.actor, spec.permission);
 
-  validateCommandArguments(n);
+  validateCommandArguments(commandNode);
 
-  const e = commandContext.e;
+  const engine = commandContext.engine;
 
-  const db = e.db;
+  const db = engine.db;
 
-  const m = db.match();
+  const matchState = db.match();
 
   const path = spec.path;
 
-  const a = n.words
+  const commandArguments = commandNode.words
     .slice(path.split(' ').length)
     .map(v => commandValue(v, commandContext));
 
@@ -60,12 +60,12 @@ export function handleEventAction(
     recordTableDependency(commandContext, 'scheduled_events');
     const event = db.one<Scheduled>(
       'SELECT * FROM scheduled_events WHERE id=?',
-      a[0]!,
+      commandArguments[0]!,
     );
     requireCommandArgument(event, '事件不存在');
     if (path.endsWith('cancel')) {
       requireThat(
-        m.paused_at !== null,
+        matchState.paused_at !== null,
         'PAUSE_REQUIRED',
         '请先暂停比赛后核对要取消的事件。',
       );
@@ -93,13 +93,13 @@ export function handleEventAction(
       return;
     }
     requireCommandArgument(event.status !== 'cancelled', '已取消事件不能重开');
-    const utc = dueUtc(e, event);
+    const utc = dueUtc(engine, event);
     requireCommandArgument(
-      event.status === 'settled' || (utc !== null && utc <= e.now()),
+      event.status === 'settled' || (utc !== null && utc <= engine.now()),
       '事件尚未到期',
     );
     if (event.status !== 'settled') {
-      settleDue(e);
+      settleDue(engine);
       recordChange(commandContext, event.id, event.status, 'settled');
     } else {
       commandContext.notes.push('事件已经结算，返回原结算事实，不重新执行。');
@@ -121,37 +121,37 @@ export function handleEventAction(
     requireHeadJudge(commandContext);
     requireForestPhase(commandContext);
     recordPopulationDependency(commandContext);
-    const code = coordinate(a[0]);
+    const code = coordinate(commandArguments[0]);
     const home = db.officialHome(code, true);
     if (home) {
       selectTargets(commandContext, home.player_id);
-      destroyHome(e, home.player_id, source, e.game(), e.now());
+      destroyHome(engine, home.player_id, source, engine.game(), engine.now());
     }
     logEvent(
-      e,
+      engine,
       source,
       'singer',
       '歌者清理',
       clearingCopy(
         'singer',
         code,
-        home ? e.identity(home.player_id) : undefined,
+        home ? engine.identity(home.player_id) : undefined,
       ),
       'public',
       home ? [home.player_id] : [],
-      e.game(),
-      e.now(),
+      engine.game(),
+      engine.now(),
       null,
       code,
     );
-    e.notice(
+    engine.notice(
       source,
       'group',
       '歌者清理',
       clearingCopy(
         'singer',
         code,
-        home ? e.identity(home.player_id) : undefined,
+        home ? engine.identity(home.player_id) : undefined,
       ),
     );
     recordChange(commandContext, code, '未清理', '新增管理清理，不消耗原计划');
@@ -161,7 +161,9 @@ export function handleEventAction(
   if (path === 'event trigger tech-burst') {
     requireHeadJudge(commandContext);
     requireForestPhase(commandContext);
-    const v = a[0] ?? '@alive[homeworld=alive,tech=0,sort=random,limit=1]';
+    const v =
+      commandArguments[0] ??
+      '@alive[homeworld=alive,tech=0,sort=random,limit=1]';
     return handlePlayerAction(commandContext, {
       words: ['tech', 'grant', v],
       options: {},
@@ -176,7 +178,7 @@ export function handleEventAction(
 
   if (path === 'scheduler settle-due') {
     requireHeadJudge(commandContext);
-    settleDue(e);
+    settleDue(engine);
     recordChange(commandContext, '事件积压', '待补结算', '已按顺序补结算');
     return;
   }
@@ -184,9 +186,9 @@ export function handleEventAction(
   if (path.startsWith('hunt draft ')) {
     requireHeadJudge(commandContext);
     requireCommandArgument(
-      m.phase === 'hunt' &&
-        m.pause_reason === 'hunt_review' &&
-        m.hunt_finalized === null,
+      matchState.phase === 'hunt' &&
+        matchState.pause_reason === 'hunt_review' &&
+        matchState.hunt_finalized === null,
       '当前不在终局核验窗口',
     );
     if (path.endsWith('create')) {
@@ -199,14 +201,16 @@ export function handleEventAction(
       recordChange(commandContext, id, '无', '空核验草稿');
       return id;
     }
-    const row = commandObject(e, a[0]!, 'hunt');
+    const row = commandObject(engine, commandArguments[0]!, 'hunt');
     const data = parseJson(row.data) as {
       eliminations: Array<{id: string; reason: string}>;
     };
-    const ids = selectTargets(commandContext, a[1]!);
+    const ids = selectTargets(commandContext, commandArguments[1]!);
     if (path.endsWith('set')) {
       requireCommandArgument(
-        ['no_share_at_cutoff', 'outside_at_cutoff'].includes(a[2]!),
+        ['no_share_at_cutoff', 'outside_at_cutoff'].includes(
+          commandArguments[2]!,
+        ),
         '未知截止原因',
       );
       for (const id of ids) {
@@ -215,7 +219,9 @@ export function handleEventAction(
     }
     data.eliminations = data.eliminations.filter(p => !ids.includes(p.id));
     if (path.endsWith('set')) {
-      data.eliminations.push(...ids.map(id => ({id, reason: a[2]!})));
+      data.eliminations.push(
+        ...ids.map(id => ({id, reason: commandArguments[2]!})),
+      );
     }
     updateCommandObject(commandContext, row, data);
     recordChange(commandContext, row.id, '原草稿', data);
@@ -225,7 +231,7 @@ export function handleEventAction(
   if (path === 'hunt finalize') {
     requireHeadJudge(commandContext);
     recordPopulationDependency(commandContext);
-    const row = commandObject(e, a[0]!, 'hunt');
+    const row = commandObject(engine, commandArguments[0]!, 'hunt');
     recordDependency(commandContext, 'object:' + row.id, row);
     invokeJudgeAction(
       commandContext,
@@ -239,16 +245,23 @@ export function handleEventAction(
   if (path === 'case open') {
     requireHeadJudge(commandContext);
     requireCommandArgument(
-      (a.length === 3 && a[1] === 'note') ||
-        (a.length === 5 && a[1] === 'ref' && a[3] === 'note'),
+      (commandArguments.length === 3 && commandArguments[1] === 'note') ||
+        (commandArguments.length === 5 &&
+          commandArguments[1] === 'ref' &&
+          commandArguments[3] === 'note'),
       '用法：case open 类型 [ref ID] note "说明"',
     );
     const id = saveCommandObject(
       commandContext,
       'case',
       {
-        kind: a[0],
-        evidence: [{ref: a.length === 5 ? a[2] : null, note: a.at(-1)}],
+        kind: commandArguments[0],
+        evidence: [
+          {
+            ref: commandArguments.length === 5 ? commandArguments[2] : null,
+            note: commandArguments.at(-1),
+          },
+        ],
       },
       'CASE',
     );

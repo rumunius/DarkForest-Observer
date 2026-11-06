@@ -31,18 +31,21 @@ export function dueUtc(engine: Engine, event: Scheduled): number | null {
   if (event.clock === 'utc') {
     return event.due;
   }
-  const m = engine.db.match();
+  const matchState = engine.db.match();
   if (
-    m.started_at === null ||
-    m.start_settled === null ||
-    m.phase === 'ended'
+    matchState.started_at === null ||
+    matchState.start_settled === null ||
+    matchState.phase === 'ended'
   ) {
     return null;
   }
-  if (m.paused_at !== null && event.due > gameTime(m, engine.now())) {
+  if (
+    matchState.paused_at !== null &&
+    event.due > gameTime(matchState, engine.now())
+  ) {
     return null;
   }
-  return m.started_at + m.paused_total + event.due;
+  return matchState.started_at + matchState.paused_total + event.due;
 }
 /** 保留事件失败身份及诊断，供受控故障查询和后续重试使用。 */
 export class EventFailure extends Fault {
@@ -141,7 +144,7 @@ export function settleDue(engine: Engine): void {
 }
 function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
   const db = engine.db;
-  const m = db.match();
+  const matchState = db.match();
   const payload = object(parseJson(event.payload));
   const game =
     event.clock === 'game'
@@ -156,7 +159,7 @@ function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
       break;
     case 'code_release':
       requireThat(
-        m.phase === 'armed',
+        matchState.phase === 'armed',
         'RELEASE_STATE_CONFLICT',
         '发码阶段需要裁判核查。',
       );
@@ -183,7 +186,7 @@ function settleEvent(engine: Engine, event: Scheduled, utc: number): void {
         "SELECT id FROM players WHERE entry_status='registered' AND id IN (SELECT player_id FROM roster_members)",
       );
       requireThat(
-        m.phase === 'start_countdown' && roster.length >= 2,
+        matchState.phase === 'start_countdown' && roster.length >= 2,
         'START_STATE_CONFLICT',
         '开赛状态需要裁判核查。',
       );

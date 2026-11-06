@@ -74,7 +74,7 @@ export function ManageMatch({
   if (!data) {
     return <p role="status">{error || '正在读取本场最新状态'}</p>;
   }
-  const d = data.match;
+  const matchEntry = data.match;
   const epoch =
     data.current.seatVersions?.find(s => s.id === seat)?.version ??
     data.current.assignments.find(
@@ -91,9 +91,10 @@ export function ManageMatch({
   };
   return (
     <>
-      <Header title={d.name}>
+      <Header title={matchEntry.name}>
         <Label>
-          {d.kind === 'trial' ? '试玩' : '正式比赛'}，{states[d.state]}
+          {matchEntry.kind === 'trial' ? '试玩' : '正式比赛'}，
+          {states[matchEntry.state]}
         </Label>
       </Header>
       <p>
@@ -111,7 +112,7 @@ export function ManageMatch({
             accepted={false}
           />
         )}
-        {d.state === 'available' &&
+        {matchEntry.state === 'available' &&
           data.current.members.some(
             m =>
               m.account_id === client.session?.account.id &&
@@ -256,7 +257,7 @@ export function ManageMatch({
                 })
               }
             >
-              确认交接 {d.name}，{seat}
+              确认交接 {matchEntry.name}，{seat}
             </Button>
           </section>
         )}
@@ -269,7 +270,7 @@ export function ManageMatch({
               <strong>{m.name}</strong>，{m.local_id ?? '尚未确认本场身份'}，
               {membershipStates[m.state]}
             </p>
-            {d.state === 'draft' && (
+            {matchEntry.state === 'draft' && (
               <button
                 type="button"
                 className="icon-button"
@@ -285,7 +286,7 @@ export function ManageMatch({
           </div>
         ))}
       </section>
-      {removal && d.state === 'draft' && (
+      {removal && matchEntry.state === 'draft' && (
         <ConfirmDialog
           title="移除本场成员？"
           confirmLabel="确认移除"
@@ -303,7 +304,7 @@ export function ManageMatch({
           }}
         >
           <p>
-            将 <strong>{removal.member.name}</strong> 移出“{d.name}”。
+            将 <strong>{removal.member.name}</strong> 移出“{matchEntry.name}”。
           </p>
           <p className="secondary">
             {removal.member.local_id
@@ -313,7 +314,7 @@ export function ManageMatch({
           </p>
         </ConfirmDialog>
       )}
-      {d.state === 'draft' && (
+      {matchEntry.state === 'draft' && (
         <Button
           onClick={() =>
             void run(() =>

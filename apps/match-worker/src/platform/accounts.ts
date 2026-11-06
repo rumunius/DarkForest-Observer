@@ -16,20 +16,20 @@ import type {Login} from './types';
 export async function createAccount(
   host: DarkForestPlatform,
   environment: BackendEnv,
-  s: Login,
+  session: Login,
   id: string,
-  p: Record<string, unknown>,
+  payload: Record<string, unknown>,
   hash: string,
   reason: string,
 ): Promise<RpcReply> {
-  const kind = p.kind;
+  const kind = payload.kind;
   requireThat(
     kind === 'player' || kind === 'staff',
     'BAD_KIND',
     '账号类别不正确。',
     400,
   );
-  const name = text(p.name, 100);
+  const name = text(payload.name, 100);
   const accountId = crypto.randomUUID();
   const invitation = token();
   const inviteId = crypto.randomUUID();
@@ -46,7 +46,7 @@ export async function createAccount(
       kind,
       name,
       'pending',
-      typeof p.tags === 'string' ? text(p.tags, 500, 0) : '',
+      typeof payload.tags === 'string' ? text(payload.tags, 500, 0) : '',
       host.now(),
     );
     host.db.exec(
@@ -57,11 +57,11 @@ export async function createAccount(
       host.now() + 7 * 86400000,
       cipher,
       host.now() + 86400000,
-      s.account_id,
+      session.account_id,
     );
     host.insertOperation(
       id,
-      s.account_id,
+      session.account_id,
       'account-create',
       accountId,
       hash,
@@ -89,19 +89,21 @@ export async function createAccount(
 /** 逐行验证并导入长期账号，保留行级错误和原请求的幂等结果。 */
 export async function importAccounts(
   host: DarkForestPlatform,
-  s: Login,
+  session: Login,
   id: string,
-  p: Record<string, unknown>,
+  payload: Record<string, unknown>,
   hash: string,
   reason: string,
 ): Promise<RpcReply> {
   requireThat(
-    Array.isArray(p.rows) && p.rows.length <= 100 && p.rows.length > 0,
+    Array.isArray(payload.rows) &&
+      payload.rows.length <= 100 &&
+      payload.rows.length > 0,
     'IMPORT_LIMIT',
     '每批须为1—100行，请分批导入。',
     400,
   );
-  const rows = p.rows.map((r, i) => {
+  const rows = payload.rows.map((r, index) => {
     try {
       const row = object(r);
       requireThat(
@@ -111,7 +113,7 @@ export async function importAccounts(
         400,
       );
       return {
-        line: i + 1,
+        line: index + 1,
         name: text(row.name, 100),
         kind: row.kind,
         accountId: typeof row.accountId === 'string' ? row.accountId : null,
@@ -119,7 +121,7 @@ export async function importAccounts(
       };
     } catch (error) {
       return {
-        line: i + 1,
+        line: index + 1,
         name: '',
         kind: 'player',
         accountId: null,
@@ -128,7 +130,7 @@ export async function importAccounts(
     }
   });
   const errors = rows.filter(r => r.error);
-  if (p.preview === true) {
+  if (payload.preview === true) {
     return {
       status: 200,
       body: {rows, valid: rows.length - errors.length, errors: errors.length},
@@ -140,8 +142,8 @@ export async function importAccounts(
     '请先修复预览中的行级错误。',
     400,
   );
-  const batch = text(p.batchId, 100);
-  const fileHash = await digest(stableJson(p.rows));
+  const batch = text(payload.batchId, 100);
+  const fileHash = await digest(stableJson(payload.rows));
   const old = host.db.one<{body_hash: string; result: string}>(
     'SELECT * FROM import_batches WHERE id=?',
     batch,
@@ -161,9 +163,9 @@ export async function importAccounts(
   host.db.tx(() => {
     for (const row of result) {
       if (row.accountId) {
-        const a = host.account(row.accountId);
+        const account = host.account(row.accountId);
         requireThat(
-          p.confirmMapping === true && a.kind === row.kind,
+          payload.confirmMapping === true && account.kind === row.kind,
           'MAPPING_REQUIRED',
           '已有账号需按明确ID确认映射。',
         );
@@ -187,11 +189,11 @@ export async function importAccounts(
       batch,
       fileHash,
       JSON.stringify({rows: result}),
-      s.account_id,
+      session.account_id,
     );
     host.insertOperation(
       id,
-      s.account_id,
+      session.account_id,
       'account-import',
       batch,
       hash,
@@ -213,15 +215,15 @@ export async function importAccounts(
 export async function changeAccount(
   host: DarkForestPlatform,
   environment: BackendEnv,
-  s: Login,
+  session: Login,
   id: string,
   path: string,
-  p: Record<string, unknown>,
+  payload: Record<string, unknown>,
   hash: string,
   reason: string,
 ): Promise<RpcReply> {
-  const account = host.account(text(p.accountId, 100));
-  assertVersion(host, account, p.expected_version);
+  const account = host.account(text(payload.accountId, 100));
+  assertVersion(host, account, payload.expected_version);
   if (
     path === '/platform/accounts/invite' ||
     path === '/platform/accounts/reset'
@@ -242,7 +244,7 @@ export async function changeAccount(
       `invitation|${inviteId}`,
     );
     host.db.tx(() => {
-      assertVersion(host, host.account(account.id), p.expected_version);
+      assertVersion(host, host.account(account.id), payload.expected_version);
       host.db.exec(
         'UPDATE invitations SET claimed=1,ciphertext=NULL WHERE account_id=?',
         account.id,
@@ -255,7 +257,7 @@ export async function changeAccount(
         host.now() + 7 * 86400000,
         cipher,
         host.now() + 86400000,
-        s.account_id,
+        session.account_id,
       );
       if (path.endsWith('/reset')) {
         host.db.exec(
@@ -274,7 +276,7 @@ export async function changeAccount(
       }
       host.insertOperation(
         id,
-        s.account_id,
+        session.account_id,
         'credential-invite',
         account.id,
         hash,
@@ -305,18 +307,18 @@ export async function changeAccount(
     404,
   );
   requireThat(
-    p.status === 'active' || p.status === 'disabled',
+    payload.status === 'active' || payload.status === 'disabled',
     'BAD_STATUS',
     '请选择启用或停用。',
     400,
   );
-  if (p.status === 'disabled' && p.emergency !== true) {
+  if (payload.status === 'disabled' && payload.emergency !== true) {
     for (const target of host.db.all<{match_id: string}>(
       'SELECT match_id FROM account_match_index WHERE account_id=?',
       account.id,
     )) {
-      const d = host.directory(target.match_id);
-      const current = await host.summary(d, s.account_id);
+      const matchEntry = host.directory(target.match_id);
+      const current = await host.summary(matchEntry, session.account_id);
       requireThat(
         !(
           current.members as Array<{
@@ -331,20 +333,20 @@ export async function changeAccount(
             m.state === 'bound',
         ),
         'HEAD_HANDOVER_REQUIRED',
-        `该账号仍任${d.name}的总裁判，请先交接岗位；凭据泄漏时可选择紧急停用。`,
+        `该账号仍任${matchEntry.name}的总裁判，请先交接岗位；凭据泄漏时可选择紧急停用。`,
       );
     }
   }
   host.db.tx(() => {
-    assertVersion(host, host.account(account.id), p.expected_version);
-    if (p.status === 'disabled' && p.emergency !== true) {
+    assertVersion(host, host.account(account.id), payload.expected_version);
+    if (payload.status === 'disabled' && payload.emergency !== true) {
       protectOwner(host, account.id);
     }
     host.db.exec(
       'UPDATE platform_accounts SET status=?,auth_epoch=auth_epoch+1,version=version+1 WHERE id=?',
-      p.status === 'active' && !account.credential_hash
+      payload.status === 'active' && !account.credential_hash
         ? 'pending'
-        : (p.status as string),
+        : (payload.status as string),
       account.id,
     );
     host.db.exec(
@@ -354,14 +356,14 @@ export async function changeAccount(
     const updated = host.account(account.id);
     host.insertOperation(
       id,
-      s.account_id,
+      session.account_id,
       'fence',
       account.id,
       hash,
       {
         accountId: account.id,
         authEpoch: updated.auth_epoch,
-        disabled: p.status === 'disabled',
+        disabled: payload.status === 'disabled',
       },
       reason,
     );

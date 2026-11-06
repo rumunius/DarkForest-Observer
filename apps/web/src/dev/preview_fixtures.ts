@@ -139,52 +139,52 @@ export function createPreviewSnapshot(
 ): Snapshot {
   const now = Date.now();
 
-  const civilizations: Civilization[] = nicknames.map((nickname, i) => ({
-    id: `C${String(i + 1).padStart(2, '0')}`,
+  const civilizations: Civilization[] = nicknames.map((nickname, index) => ({
+    id: `C${String(index + 1).padStart(2, '0')}`,
     nickname,
-    flight: i > 17 ? 'eliminated' : i === 3 ? 'returning' : 'active',
-    homeworld: String(1234 + i * 30271).padStart(6, '0'),
-    homeAlive: i < 16,
+    flight: index > 17 ? 'eliminated' : index === 3 ? 'returning' : 'active',
+    homeworld: String(1234 + index * 30271).padStart(6, '0'),
+    homeAlive: index < 16,
     homeVersion: 1,
     rejection: '',
-    arms: i > 17 || i === 3 ? null : buildArms(i),
-    flightNumber: (i % 3) + 1,
-    kills: i === 6 ? 3 : i % 4,
-    wrongCount: i % 2,
-    broadcasts: i % 3,
-    photons: i === 6 || i === 10 ? 1 : 0,
+    arms: index > 17 || index === 3 ? null : buildArms(index),
+    flightNumber: (index % 3) + 1,
+    kills: index === 6 ? 3 : index % 4,
+    wrongCount: index % 2,
+    broadcasts: index % 3,
+    photons: index === 6 || index === 10 ? 1 : 0,
     attackLockedUntil: 0,
-    respawnDeadline: i === 3 ? 40 * 60000 : null,
-    eliminatedAt: i > 17 ? now - 600000 : null,
-    eliminationReason: i > 17 ? '飞船在最后一命时被击毁' : '',
-    observerAllowed: i > 17,
+    respawnDeadline: index === 3 ? 40 * 60000 : null,
+    eliminatedAt: index > 17 ? now - 600000 : null,
+    eliminationReason: index > 17 ? '飞船在最后一命时被击毁' : '',
+    observerAllowed: index > 17,
     actions: [],
     voyages: [
-      {number: 1, arms: buildArms(i + 8), startMs: 0, endMs: 12 * 60000},
+      {number: 1, arms: buildArms(index + 8), startMs: 0, endMs: 12 * 60000},
       {
         number: 2,
-        arms: buildArms(i),
+        arms: buildArms(index),
         startMs: 17 * 60000,
-        endMs: i > 17 ? 25 * 60000 : null,
+        endMs: index > 17 ? 25 * 60000 : null,
       },
     ],
     rank: null,
     tied: false,
   }));
 
-  const me = structuredClone(civilizations[6]!);
+  const civilization = structuredClone(civilizations[6]!);
 
-  me.flightNumber = 2;
+  civilization.flightNumber = 2;
 
-  me.arms = [['YL', 'SB'], ['WH']];
+  civilization.arms = [['YL', 'SB'], ['WH']];
 
-  me.photons = 1;
+  civilization.photons = 1;
 
-  me.broadcasts = 2;
+  civilization.broadcasts = 2;
 
-  me.wrongCount = 0;
+  civilization.wrongCount = 0;
 
-  me.actions = ['sighting', 'broadcast', 'photon', 'withdraw'];
+  civilization.actions = ['sighting', 'broadcast', 'photon', 'withdraw'];
 
   const events: GameEvent[] = [
     {
@@ -306,7 +306,7 @@ export function createPreviewSnapshot(
       releaseAt: null,
       startAt: null,
     },
-    player: judgeRole ? null : me,
+    player: judgeRole ? null : civilization,
     events,
     intel: [
       {
@@ -404,57 +404,57 @@ export function createPreviewSnapshot(
           : 'setup';
     match.gameMs = 0;
     match.running = false;
-    me.flight = preflightFlight;
-    me.actions = [];
-    me.arms = null;
-    me.kills = 0;
-    me.photons = 0;
+    civilization.flight = preflightFlight;
+    civilization.actions = [];
+    civilization.arms = null;
+    civilization.kills = 0;
+    civilization.photons = 0;
     if (scenario === 'nickname') {
-      me.nickname = '';
-      me.actions = ['nickname'];
-      me.homeworld = null;
+      civilization.nickname = '';
+      civilization.actions = ['nickname'];
+      civilization.homeworld = null;
     }
     if (scenario === 'registration' || scenario === 'rejected') {
-      me.homeworld = null;
-      me.actions = ['homeworld-submit'];
-      me.rejection =
+      civilization.homeworld = null;
+      civilization.actions = ['homeworld-submit'];
+      civilization.rejection =
         scenario === 'rejected'
           ? '请核对最新照片中的六位口令，确保与登记版本一致。'
           : '';
     }
     if (scenario === 'pending') {
-      me.actions = ['homeworld-submit'];
+      civilization.actions = ['homeworld-submit'];
       civilizations[2]!.flight = 'pending';
     }
     if (scenario === 'verified') {
-      me.actions = ['preflight-depart'];
+      civilization.actions = ['preflight-depart'];
     }
     if (scenario === 'staged') {
       match.releaseAt = now + 90000;
     }
     if (scenario === 'release') {
-      me.actions = ['preflight-issue-code'];
+      civilization.actions = ['preflight-issue-code'];
     }
     if (scenario === 'outfitting') {
-      me.arms = [['BK', 'OR'], ['WH']];
-      me.actions = ['preflight-ready'];
+      civilization.arms = [['BK', 'OR'], ['WH']];
+      civilization.actions = ['preflight-ready'];
     }
     if (scenario === 'ready') {
-      me.arms = [['BK', 'OR'], ['WH']];
+      civilization.arms = [['BK', 'OR'], ['WH']];
       match.startAt = now + 90000;
     }
   }
 
   if (scenario === 'limited') {
-    me.photons = 0;
-    me.broadcasts = 0;
-    me.actions = ['sighting', 'withdraw'];
+    civilization.photons = 0;
+    civilization.broadcasts = 0;
+    civilization.actions = ['sighting', 'withdraw'];
   }
 
   if (scenario === 'locked') {
-    me.wrongCount = 1;
-    me.attackLockedUntil = now + 135000;
-    me.actions = ['broadcast', 'photon', 'withdraw'];
+    civilization.wrongCount = 1;
+    civilization.attackLockedUntil = now + 135000;
+    civilization.actions = ['broadcast', 'photon', 'withdraw'];
   }
 
   if (
@@ -462,10 +462,11 @@ export function createPreviewSnapshot(
     scenario === 'preparing' ||
     scenario === 'issued'
   ) {
-    me.flight = scenario;
-    me.respawnDeadline = match.gameMs + 9 * 60000 + 24000;
-    me.arms = scenario === 'issued' ? [['BK', 'OR', 'SB'], ['GY']] : null;
-    me.actions = [
+    civilization.flight = scenario;
+    civilization.respawnDeadline = match.gameMs + 9 * 60000 + 24000;
+    civilization.arms =
+      scenario === 'issued' ? [['BK', 'OR', 'SB'], ['GY']] : null;
+    civilization.actions = [
       scenario === 'returning'
         ? 'return-confirm'
         : scenario === 'preparing'
@@ -475,21 +476,21 @@ export function createPreviewSnapshot(
   }
 
   if (scenario === 'last-life') {
-    me.homeAlive = false;
+    civilization.homeAlive = false;
   }
 
   if (scenario === 'apocalypse') {
     match.stage = 'apocalypse';
     match.gameMs = 72 * 60000;
-    me.homeAlive = false;
-    me.actions = ['sighting', 'withdraw'];
+    civilization.homeAlive = false;
+    civilization.actions = ['sighting', 'withdraw'];
   }
 
   if (scenario === 'transfer') {
     match.stage = 'transfer';
     match.gameMs = 93 * 60000;
-    me.homeAlive = false;
-    me.actions = [];
+    civilization.homeAlive = false;
+    civilization.actions = [];
   }
 
   if (scenario === 'verification') {
@@ -498,31 +499,32 @@ export function createPreviewSnapshot(
     match.paused = true;
     match.verification = true;
     match.pauseReason = '裁判正在核验终局资格';
-    me.actions = [];
+    civilization.actions = [];
   }
 
   if (scenario === 'hunt') {
     match.stage = 'hunt';
     match.gameMs = 102 * 60000;
-    me.homeAlive = false;
-    me.actions = ['sighting', 'withdraw'];
+    civilization.homeAlive = false;
+    civilization.actions = ['sighting', 'withdraw'];
   }
 
   if (scenario === 'paused') {
     match.paused = true;
     match.pauseReason = '现场安全检查，等待裁判通知';
-    me.actions = [];
+    civilization.actions = [];
   }
 
   if (['eliminated', 'observer'].includes(scenario) || role === 'observer') {
-    me.flight = 'eliminated';
-    me.arms = null;
-    me.actions = [];
-    me.homeAlive = false;
-    me.eliminatedAt =
+    civilization.flight = 'eliminated';
+    civilization.arms = null;
+    civilization.actions = [];
+    civilization.homeAlive = false;
+    civilization.eliminatedAt =
       now - (scenario === 'eliminated' && role !== 'observer' ? 45000 : 240000);
-    me.eliminationReason = '最后一命的飞船被目击击毁';
-    me.observerAllowed = role === 'observer' || scenario === 'observer';
+    civilization.eliminationReason = '最后一命的飞船被目击击毁';
+    civilization.observerAllowed =
+      role === 'observer' || scenario === 'observer';
   }
 
   if (['ended', 'no-champion'].includes(scenario)) {
@@ -530,13 +532,13 @@ export function createPreviewSnapshot(
     match.running = false;
     match.gameMs = 114 * 60000;
     match.survivors = scenario === 'no-champion' ? 0 : 1;
-    me.actions = [];
-    me.flight = scenario === 'no-champion' ? 'eliminated' : 'active';
-    me.homeAlive = false;
+    civilization.actions = [];
+    civilization.flight = scenario === 'no-champion' ? 'eliminated' : 'active';
+    civilization.homeAlive = false;
     if (scenario === 'no-champion') {
-      me.arms = null;
-      me.eliminatedAt = now;
-      me.eliminationReason = '终局资格核验未通过';
+      civilization.arms = null;
+      civilization.eliminatedAt = now;
+      civilization.eliminationReason = '终局资格核验未通过';
     }
     civilizations.forEach((c, i) => {
       c.flight = i === 6 && scenario === 'ended' ? 'active' : 'eliminated';
@@ -570,7 +572,7 @@ export function createPreviewSnapshot(
               : 'verified';
       c.actions = [];
     });
-    me.flight =
+    civilization.flight =
       scenario === 'ready'
         ? 'ready'
         : scenario === 'release'
@@ -579,7 +581,7 @@ export function createPreviewSnapshot(
   }
 
   civilizations[6] = {
-    ...structuredClone(me),
+    ...structuredClone(civilization),
     voyages: civilizations[6]!.voyages,
     rank: state.results ? 1 : null,
     tied: false,
@@ -606,9 +608,9 @@ export function createPreviewSnapshot(
 
   const currentVoyage = civilizations[6].voyages.at(-1);
 
-  if (currentVoyage && me.arms) {
-    currentVoyage.arms = structuredClone(me.arms);
-    currentVoyage.number = me.flightNumber;
+  if (currentVoyage && civilization.arms) {
+    currentVoyage.arms = structuredClone(civilization.arms);
+    currentVoyage.number = civilization.flightNumber;
   }
 
   match.survivors = civilizations.filter(c => c.flight !== 'eliminated').length;

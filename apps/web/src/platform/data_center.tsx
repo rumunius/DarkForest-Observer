@@ -33,26 +33,26 @@ export function Operations({
       <Header title="管理待办" />
       <Button onClick={() => void run(async () => {})}>刷新任务</Button>
       {error && <p role="alert">{error}</p>}
-      {data?.map(op => (
-        <article key={op.id} className="platform-match-row">
+      {data?.map(operation => (
+        <article key={operation.id} className="platform-match-row">
           <div>
-            <Label>{states[op.status]}</Label>
-            <h2>{OPERATION_NAMES[op.action] ?? '平台管理操作'}</h2>
-            <small>{op.id}</small>
-            <p>{op.error}</p>
+            <Label>{states[operation.status]}</Label>
+            <h2>{OPERATION_NAMES[operation.action] ?? '平台管理操作'}</h2>
+            <small>{operation.id}</small>
+            <p>{operation.error}</p>
             <details>
               <summary>各项处理结果与下一步</summary>
-              <HumanData value={op} />
+              <HumanData value={operation} />
             </details>
           </div>
-          {['failed', 'partial'].includes(op.status) && (
+          {['failed', 'partial'].includes(operation.status) && (
             <Button
               onClick={() =>
                 void run(() =>
                   client.mutate(
                     '/platform/operations/retry',
                     {
-                      operationId: op.id,
+                      operationId: operation.id,
                       reason: '已核对失败步骤，按原编号继续',
                     },
                     true,
@@ -98,10 +98,14 @@ export function DataCenter({
     token: string;
     details: unknown;
   } | null>(null);
-  const d = matches?.find(m => m.id === selected);
+  const matchEntry = matches?.find(m => m.id === selected);
   const held = data?.holds.some(hold => hold.match_id === selected);
   const planCleanup = async () => {
-    const body = {matchId: selected, expected_version: d?.version, reason};
+    const body = {
+      matchId: selected,
+      expected_version: matchEntry?.version,
+      reason,
+    };
     const path = '/platform/data/purge';
     const result = await client.request<{previewToken: string}>(
       '/platform/preview',
@@ -145,30 +149,32 @@ export function DataCenter({
         />
       </Field>
       <div className="platform-row-actions">
-        {d && (
-          <a href={`/m/${d.id}/history?audience=staff`}>查看与下载赛后资料</a>
+        {matchEntry && (
+          <a href={`/m/${matchEntry.id}/history?audience=staff`}>
+            查看与下载赛后资料
+          </a>
         )}
         <Button
           disabled={
-            !d ||
+            !matchEntry ||
             !reason ||
             !!held ||
-            d.state === 'purge_pending' ||
-            d.state === 'purged'
+            matchEntry.state === 'purge_pending' ||
+            matchEntry.state === 'purged'
           }
           onClick={() => void run(planCleanup)}
         >
           预览到期清理
         </Button>
         <Button
-          disabled={!d || !reason}
+          disabled={!matchEntry || !reason}
           onClick={() =>
             void run(() =>
               client.mutate(
                 '/platform/data/hold',
                 {
                   matchId: selected,
-                  expected_version: d?.version,
+                  expected_version: matchEntry?.version,
                   reason,
                   ...(held
                     ? {release: true}

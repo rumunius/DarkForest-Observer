@@ -178,11 +178,11 @@ export function Atmosphere() {
       media.removeEventListener('change', preference);
     };
   }, []);
-  const me = data.player;
+  const playerState = data.player;
   const match = data.match;
   if (
     data.session?.role !== 'player' ||
-    !me ||
+    !playerState ||
     !match ||
     match.stage === 'ended' ||
     !/^\/(player|observer)(\/|$)/.test(route)
@@ -190,22 +190,23 @@ export function Atmosphere() {
     return null;
   }
 
-  const restricted = me.flight === 'active' && me.attackLockedUntil > utc;
+  const restricted =
+    playerState.flight === 'active' && playerState.attackLockedUntil > utc;
   const state =
-    me.flight === 'eliminated'
-      ? me.observerAllowed
+    playerState.flight === 'eliminated'
+      ? playerState.observerAllowed
         ? 'observer'
         : 'eliminated'
-      : ['returning', 'preparing', 'issued'].includes(me.flight) &&
-          me.respawnDeadline !== null
+      : ['returning', 'preparing', 'issued'].includes(playerState.flight) &&
+          playerState.respawnDeadline !== null
         ? 'wreck'
-        : me.flight !== 'active'
+        : playerState.flight !== 'active'
           ? 'none'
           : match.stage === 'transfer' || match.verification
             ? 'transfer'
             : match.stage === 'hunt'
               ? 'hunt'
-              : !me.homeAlive
+              : !playerState.homeAlive
                 ? 'last-life'
                 : restricted
                   ? 'restricted'

@@ -23,35 +23,38 @@ export function AuditEntries() {
             search,
           ),
         )
-        .map(a => (
-          <Disclosure key={a.id} title={`${a.title}，${formatTime(a.gameMs)}`}>
-            <p>操作者：{a.operator}</p>
-            <p>原因：{a.reason}</p>
-            {a.target && (
+        .map(auditEntry => (
+          <Disclosure
+            key={auditEntry.id}
+            title={`${auditEntry.title}，${formatTime(auditEntry.gameMs)}`}
+          >
+            <p>操作者：{auditEntry.operator}</p>
+            <p>原因：{auditEntry.reason}</p>
+            {auditEntry.target && (
               <p>
-                对象：{a.target}；
-                {a.status === 'previewed'
+                对象：{auditEntry.target}；
+                {auditEntry.status === 'previewed'
                   ? '操作预览'
-                  : a.status === 'failed'
+                  : auditEntry.status === 'failed'
                     ? '执行失败'
                     : '执行记录'}
               </p>
             )}
-            {a.utcMs && (
+            {auditEntry.utcMs && (
               <p className="secondary">
-                记录时间：{new Date(a.utcMs).toLocaleString('zh-CN')}
+                记录时间：{new Date(auditEntry.utcMs).toLocaleString('zh-CN')}
               </p>
             )}
             <div className="change-row">
               <pre style={{whiteSpace: 'pre-wrap', overflowWrap: 'anywhere'}}>
-                {a.before}
+                {auditEntry.before}
               </pre>
               <Icon name="arrow" size={18} />
               <pre style={{whiteSpace: 'pre-wrap', overflowWrap: 'anywhere'}}>
-                {a.after}
+                {auditEntry.after}
               </pre>
             </div>
-            <p className="muted">记录编号：{a.id}</p>
+            <p className="muted">记录编号：{auditEntry.id}</p>
           </Disclosure>
         ))}
     </div>

@@ -27,15 +27,17 @@ import {LockedAction} from './action_controls';
 /** 提供本人六位母星登记与退回修改流程，保留审核版本约束。 */
 export function Homeworld() {
   const {reportError, data, operate, busy} = useApp();
-  const me = data.player!;
-  const [value, setValue] = useState(me.homeworld ?? '');
+  const playerState = data.player!;
+  const [value, setValue] = useState(playerState.homeworld ?? '');
   const [editing, setEditing] = useState(false);
-  const pending = me.flight === 'pending';
+  const pending = playerState.flight === 'pending';
   const editable = canAct(data, 'homeworld-submit') && (!pending || editing);
   return (
     <>
       <PageTitle title="母星登记" back="/player" />
-      {me.rejection && <p className="attention notice-block">{me.rejection}</p>}
+      {playerState.rejection && (
+        <p className="attention notice-block">{playerState.rejection}</p>
+      )}
       {editable ? (
         <form
           className="form-stack"
@@ -65,7 +67,7 @@ export function Homeworld() {
             </Button>
           )}
         </form>
-      ) : me.homeworld ? (
+      ) : playerState.homeworld ? (
         <>
           <Frame>
             <div className="card-heading">
@@ -75,8 +77,8 @@ export function Homeworld() {
               </Status>
             </div>
             <span className="eyebrow">已保存的六位口令</span>
-            <p className="secret-code numeric">{me.homeworld}</p>
-            <p className="secondary">第{me.homeVersion}次提交</p>
+            <p className="secret-code numeric">{playerState.homeworld}</p>
+            <p className="secondary">第{playerState.homeVersion}次提交</p>
           </Frame>
           {pending && (
             <>
@@ -106,14 +108,14 @@ export function Homeworld() {
 /** 按首航当前步骤展示准备与领码，等待T1前不开放攻防。 */
 export function Preflight() {
   const {data, operate, busy} = useApp();
-  const me = data.player!;
+  const playerState = data.player!;
   const match = data.match!;
   const [checked, setChecked] = useState(false);
   const submit = (action: Action) => void operate(`/action/${action}`);
   return (
     <>
       <PageTitle title="首航准备" back="/player" />
-      <p className="step-label">{FLIGHT_NAMES[me.flight]}</p>
+      <p className="step-label">{FLIGHT_NAMES[playerState.flight]}</p>
       {canAct(data, 'preflight-depart') ? (
         <>
           <h2>先离开母星</h2>
@@ -185,10 +187,10 @@ export function Preflight() {
             <Icon name="arrow" size={18} />
           </Button>
         </>
-      ) : me.flight === 'outfitting' && me.arms ? (
+      ) : playerState.flight === 'outfitting' && playerState.arms ? (
         <>
           <h2>需要佩戴的手环</h2>
-          <ArmsView arms={me.arms} />
+          <ArmsView arms={playerState.arms} />
           <p>
             请按图示佩戴手环，其余手环收入口袋。同侧顺序不限，两侧可以交换。
           </p>
@@ -203,7 +205,7 @@ export function Preflight() {
             </Button>
           )}
         </>
-      ) : me.flight === 'staged' ? (
+      ) : playerState.flight === 'staged' ? (
         <>
           <h2>准备已完成</h2>
           {match.releaseAt ? (
@@ -217,7 +219,7 @@ export function Preflight() {
             <p>等待裁判安排发码。</p>
           )}
         </>
-      ) : me.flight === 'ready' ? (
+      ) : playerState.flight === 'ready' ? (
         <>
           <h2>已穿戴就绪</h2>
           {match.startAt ? (
@@ -241,7 +243,11 @@ export function Preflight() {
       )}
       <Disclosure title="查看已完成的准备">
         <p className="secondary">
-          母星口令{me.homeworld ? `已保存为${me.homeworld}` : '尚未登记'}。
+          母星口令
+          {playerState.homeworld
+            ? `已保存为${playerState.homeworld}`
+            : '尚未登记'}
+          。
         </p>
       </Disclosure>
     </>
@@ -251,11 +257,11 @@ export function Preflight() {
 /** 按有效比赛时间期限展示返航、换码及出航步骤，过期状态由服务器裁决。 */
 export function Respawn() {
   const {reportError, data, operate, busy, go} = useApp();
-  const me = data.player!;
+  const playerState = data.player!;
   const [checked, setChecked] = useState(false);
   if (
-    !me.respawnDeadline ||
-    !['returning', 'preparing', 'issued'].includes(me.flight)
+    !playerState.respawnDeadline ||
+    !['returning', 'preparing', 'issued'].includes(playerState.flight)
   ) {
     return (
       <>
@@ -267,20 +273,24 @@ export function Respawn() {
   return (
     <>
       <PageTitle title="重生" back="/player" />
-      <Timer label="距离重生截止" deadline={me.respawnDeadline} large />
+      <Timer
+        label="距离重生截止"
+        deadline={playerState.respawnDeadline}
+        large
+      />
       <p className="notice-block">
         所有步骤共用此期限，必须在截止前完成出航。保持全部比赛手环未佩戴，换好新配置后再确认出航。
       </p>
       {data.match?.paused ? (
         <LockedAction />
-      ) : me.flight === 'returning' ? (
+      ) : playerState.flight === 'returning' ? (
         <>
           <h2>返回母星，发送现场照片</h2>
           <p>
             请正常步行返回母星，拍摄当前时间水印照片。复制本航次消息，到裁判QQ发送文字和照片。
           </p>
           <Disclosure title="查看本人母星口令">
-            <p className="secret-code numeric">{me.homeworld}</p>
+            <p className="secret-code numeric">{playerState.homeworld}</p>
           </Disclosure>
           <CopyText kind="respawn" label="复制重生消息" />
           <label className="check-label large">
@@ -302,7 +312,7 @@ export function Respawn() {
             </Button>
           )}
         </>
-      ) : me.flight === 'preparing' ? (
+      ) : playerState.flight === 'preparing' ? (
         <>
           <h2>离开母星至少50米</h2>
           <p>
@@ -327,10 +337,10 @@ export function Respawn() {
           )}
         </>
       ) : (
-        me.arms && (
+        playerState.arms && (
           <>
             <h2>需要佩戴的手环</h2>
-            <ArmsView arms={me.arms} />
+            <ArmsView arms={playerState.arms} />
             <p>
               请在安全位置按图示佩戴，其余手环收入衣袋。同侧顺序不限，两侧可以交换。
             </p>
@@ -352,11 +362,11 @@ export function Respawn() {
           </>
         )
       )}
-      {me.attackLockedUntil > (data.match?.serverUtcMs ?? 0) && (
+      {playerState.attackLockedUntil > (data.match?.serverUtcMs ?? 0) && (
         <Timer
           label="距离恢复目击攻击"
           clock="utc"
-          deadline={me.attackLockedUntil}
+          deadline={playerState.attackLockedUntil}
         />
       )}
     </>

@@ -98,62 +98,69 @@ export function Matches({
       <div className="platform-match-list">
         {data
           ?.filter(d => filter === 'all' || d.kind === filter)
-          .map(d => (
-            <article key={d.id} className="platform-match-row">
+          .map(matchEntry => (
+            <article key={matchEntry.id} className="platform-match-row">
               <div>
-                <Label>{d.kind === 'trial' ? '试玩' : '正式比赛'}</Label>
-                <span className="secondary">{states[d.state] ?? d.state}</span>
-                <h2>{d.name}</h2>
+                <Label>
+                  {matchEntry.kind === 'trial' ? '试玩' : '正式比赛'}
+                </Label>
+                <span className="secondary">
+                  {states[matchEntry.state] ?? matchEntry.state}
+                </span>
+                <h2>{matchEntry.name}</h2>
                 <small>
-                  {new Date(d.created_utc).toLocaleDateString('zh-CN')}
-                  ，完整复盘保留 {d.retention_days} 天
+                  {new Date(matchEntry.created_utc).toLocaleDateString('zh-CN')}
+                  ，完整复盘保留 {matchEntry.retention_days} 天
                 </small>
-                {d.synced_utc && (
+                {matchEntry.synced_utc && (
                   <small>
-                    更新于 {new Date(d.synced_utc).toLocaleString('zh-CN')}
+                    更新于{' '}
+                    {new Date(matchEntry.synced_utc).toLocaleString('zh-CN')}
                   </small>
                 )}
               </div>
               <div className="platform-row-actions">
                 {manage ? (
-                  <a href={`/manage/matches/${d.id}`}>管理比赛</a>
+                  <a href={`/manage/matches/${matchEntry.id}`}>管理比赛</a>
                 ) : (
                   <>
-                    {d.membership?.state === 'bound' &&
-                      d.state === 'available' && (
+                    {matchEntry.membership?.state === 'bound' &&
+                      matchEntry.state === 'available' && (
                         <a
-                          href={`/m/${d.id}/${client.audience === 'staff' ? 'judge' : 'player'}`}
+                          href={`/m/${matchEntry.id}/${client.audience === 'staff' ? 'judge' : 'player'}`}
                         >
                           进入比赛
                         </a>
                       )}
-                    {(d.membership?.state === 'invited' ||
-                      (d.membership?.state === 'accepted' &&
+                    {(matchEntry.membership?.state === 'invited' ||
+                      (matchEntry.membership?.state === 'accepted' &&
                         client.audience === 'player')) && (
                       <>
                         <AcceptInvitation
-                          key={`${d.id}:${d.membership.state}`}
+                          key={`${matchEntry.id}:${matchEntry.membership.state}`}
                           client={client}
-                          id={d.id}
+                          id={matchEntry.id}
                           run={run}
-                          accepted={d.membership.state === 'accepted'}
+                          accepted={matchEntry.membership.state === 'accepted'}
                         />
                       </>
                     )}
-                    {d.membership?.state === 'bound' && (
+                    {matchEntry.membership?.state === 'bound' && (
                       <span>
-                        已加入本场，身份为 {d.membership.local_id}
-                        {d.state === 'draft' ? '，等待发布比赛' : ''}
+                        已加入本场，身份为 {matchEntry.membership.local_id}
+                        {matchEntry.state === 'draft' ? '，等待发布比赛' : ''}
                       </span>
                     )}
-                    {d.membership?.state === 'accepted' &&
+                    {matchEntry.membership?.state === 'accepted' &&
                       client.audience === 'staff' && (
                         <span>已接受邀请，等待安排裁判岗位</span>
                       )}
                   </>
                 )}
-                {matchEnded(d) && (
-                  <a href={`/m/${d.id}/history?audience=${client.audience}`}>
+                {matchEnded(matchEntry) && (
+                  <a
+                    href={`/m/${matchEntry.id}/history?audience=${client.audience}`}
+                  >
                     赛后资料与版本
                   </a>
                 )}

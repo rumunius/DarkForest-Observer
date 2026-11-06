@@ -47,8 +47,8 @@ export function Endgame() {
 /** 展示淘汰后的现场指引和真实UTC观战等待，不授予管理身份。 */
 export function Eliminated() {
   const {data} = useApp();
-  const me = data.player!;
-  if (me.flight !== 'eliminated') {
+  const playerState = data.player!;
+  if (playerState.flight !== 'eliminated') {
     return (
       <>
         <PageTitle title="淘汰后安排" back="/player" />
@@ -60,30 +60,30 @@ export function Eliminated() {
     <>
       <PageTitle title="淘汰后安排" back="/player" />
       <h2>维度跃迁</h2>
-      <p>{me.eliminationReason}</p>
+      <p>{playerState.eliminationReason}</p>
       <p className="notice-block message-body">
         {dimensionCopy(data.parameters?.observerWaitSeconds ?? 180)}
       </p>
-      {me.eliminatedAt && (
+      {playerState.eliminatedAt && (
         <p className="secondary">
           淘汰生效时间：
-          {new Date(me.eliminatedAt).toLocaleTimeString('zh-CN', {
+          {new Date(playerState.eliminatedAt).toLocaleTimeString('zh-CN', {
             timeZone: data.site.timezone,
           })}
         </p>
       )}
-      {me.observerAllowed ? (
+      {playerState.observerAllowed ? (
         <Link className="text-link" to="/observer">
           进入宇宙观测
           <Icon name="arrow" size={18} />
         </Link>
       ) : (
-        me.eliminatedAt && (
+        playerState.eliminatedAt && (
           <Timer
             label="距离开放宇宙观测"
             clock="utc"
             deadline={
-              me.eliminatedAt +
+              playerState.eliminatedAt +
               (data.parameters?.observerWaitSeconds ?? 180) * 1000
             }
             large

@@ -11,17 +11,17 @@ export function restoration(
   intervention = false,
 ): {status: string; deadline: number | null} {
   const db = engine.db;
-  const m = db.match();
-  const p = db.player(target);
+  const matchState = db.match();
+  const playerState = db.player(target);
   requireThat(
-    m.paused_at !== null &&
-      ['forest', 'apocalypse', 'transfer', 'hunt'].includes(m.phase),
+    matchState.paused_at !== null &&
+      ['forest', 'apocalypse', 'transfer', 'hunt'].includes(matchState.phase),
     'RESTORE_REQUIRES_REVIEW',
     '请在比赛暂停后核对淘汰记录，完赛后的争议使用战报更正。',
   );
   requireThat(
     db.roster().includes(target) &&
-      p.entry_status === 'registered' &&
+      playerState.entry_status === 'registered' &&
       db.flight(target).status === 'eliminated',
     'TARGET_NOT_ELIMINATED',
     '请选择本场正式名单中已永久淘汰的文明。',
@@ -45,7 +45,7 @@ export function restoration(
       return {status: 'issued', deadline: null};
     }
     requireThat(
-      m.phase === 'forest' &&
+      matchState.phase === 'forest' &&
         db.home(target)?.destroyed_game === null &&
         prior.deadline !== null &&
         engine.game() < Math.min(prior.deadline, TIMES.apocalypse),
@@ -81,7 +81,7 @@ export function restoration(
     return {status: 'issued', deadline: null};
   }
   requireThat(
-    m.phase === 'forest' && db.home(target)?.destroyed_game === null,
+    matchState.phase === 'forest' && db.home(target)?.destroyed_game === null,
     'RESTORE_REQUIRES_REVIEW',
     '跨阶段恢复须关联人工淘汰记录；攻击判罚请使用攻击更正。',
   );

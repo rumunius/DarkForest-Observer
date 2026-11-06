@@ -50,7 +50,7 @@ export function Actions({sightingOnly = false}: {sightingOnly?: boolean}) {
 
 function ResourceAction({action}: {action: 'broadcast' | 'photon'}) {
   const {data} = useApp();
-  const me = data.player!;
+  const playerState = data.player!;
   const available = canAct(data, action);
   const content = (
     <>
@@ -59,9 +59,9 @@ function ResourceAction({action}: {action: 'broadcast' | 'photon'}) {
         {action === 'broadcast' ? '发送广播' : '发射光粒'}
         <small>
           {action === 'broadcast'
-            ? `剩余${me.broadcasts}次`
-            : me.photons > 0
-              ? `剩余${me.photons}枚光粒`
+            ? `剩余${playerState.broadcasts}次`
+            : playerState.photons > 0
+              ? `剩余${playerState.photons}枚光粒`
               : '无光粒'}
         </small>
       </span>

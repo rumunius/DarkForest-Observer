@@ -129,20 +129,20 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
 
   /** 逐次核对会话UTC有效期、撤销状态和账号授权世代。 */
   login(hash: string): Login {
-    const s = this.db.one<Login>(
+    const session = this.db.one<Login>(
       'SELECT * FROM platform_sessions WHERE token_hash=? AND revoked=0 AND expires>?',
       hash,
       this.now(),
     );
-    requireThat(s, 'UNAUTHENTICATED', '请重新登录长期账号。', 401);
-    const a = this.account(s.account_id);
+    requireThat(session, 'UNAUTHENTICATED', '请重新登录长期账号。', 401);
+    const a = this.account(session.account_id);
     requireThat(
-      a.status === 'active' && a.auth_epoch === s.auth_epoch,
+      a.status === 'active' && a.auth_epoch === session.auth_epoch,
       'UNAUTHENTICATED',
       '账号已停用或凭据已更新，请重新登录。',
       401,
     );
-    return s;
+    return session;
   }
 
   /** 组合当前公开会话及平台任职，不返回会话存储摘要。 */
@@ -169,27 +169,27 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
 
   /** 读取本平台池中的比赛目录，未知ID不会自动创建比赛。 */
   directory(id: string): Directory {
-    const d = this.db.one<Directory>(
+    const matchEntry = this.db.one<Directory>(
       'SELECT * FROM match_directory WHERE id=?',
       id,
     );
     requireThat(
-      d && d.pool_id === 'default',
+      matchEntry && matchEntry.pool_id === 'default',
       'MATCH_NOT_FOUND',
       '比赛不存在或当前不可用。',
       404,
     );
-    return d;
+    return matchEntry;
   }
 
   /** 供持久任务复核长期账号有效性与本场索引关系。 */
   taskAllowed(accountId: string, matchId: string): boolean {
-    const a = this.db.one<Account>(
+    const account = this.db.one<Account>(
       "SELECT * FROM platform_accounts WHERE id=? AND status='active'",
       accountId,
     );
     return (
-      !!a &&
+      !!account &&
       !!this.db.one<Record<string, SqlStorageValue>>(
         'SELECT account_id FROM account_match_index WHERE account_id=? AND match_id=?',
         accountId,
@@ -200,7 +200,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
 
   /** 向指定比赛对象发送绑定操作和UTC期限的签名控制请求。 */
   async control(
-    d: Directory,
+    matchEntry: Directory,
     id: string,
     action: string,
     actor: string,
@@ -209,7 +209,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
   ) {
     const request: ControlRequest = {
       id,
-      matchId: d.id,
+      matchId: matchEntry.id,
       action,
       actor,
       reason,
@@ -217,7 +217,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       expires: this.now() + 30000,
     };
     const result = parseJson(
-      await this.env.MATCH_DO.getByName(d.object_name).control(
+      await this.env.MATCH_DO.getByName(matchEntry.object_name).control(
         request,
         await controlSignature(this.env, stableJson(request)),
       ),
@@ -233,9 +233,9 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
   }
 
   /** 读取本场权威摘要并更新目录缓存，目录不能成为第二权威状态源。 */
-  async summary(d: Directory, actor: string) {
+  async summary(matchEntry: Directory, actor: string) {
     const summary = await this.control(
-      d,
+      matchEntry,
       crypto.randomUUID(),
       'summary',
       actor,
@@ -252,7 +252,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         players: summary.players,
       }),
       this.now(),
-      d.id,
+      matchEntry.id,
     );
     return summary;
   }
@@ -309,20 +309,25 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
   }
 
   /** 验证第二因素时间步或一次性恢复码，并原子标记消费以阻止重放。 */
-  private async factor(a: Account, raw: unknown): Promise<boolean> {
-    if (!a.totp_ciphertext) {
+  private async factor(account: Account, raw: unknown): Promise<boolean> {
+    if (!account.totp_ciphertext) {
       return false;
     }
     const code = typeof raw === 'string' ? raw : '';
     const secret = await decrypt(
       await platformKey(this.env),
-      a.totp_ciphertext,
-      `totp|${a.id}`,
+      account.totp_ciphertext,
+      `totp|${account.id}`,
     );
-    const step = await verifyTotp(secret, code, a.last_totp_step, this.now());
+    const step = await verifyTotp(
+      secret,
+      code,
+      account.last_totp_step,
+      this.now(),
+    );
     if (step >= 0) {
       return this.db.tx(() => {
-        const current = this.account(a.id);
+        const current = this.account(account.id);
         requireThat(
           current.last_totp_step < step,
           'TOTP_REPLAY',
@@ -332,7 +337,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         this.db.exec(
           'UPDATE platform_accounts SET last_totp_step=? WHERE id=?',
           step,
-          a.id,
+          account.id,
         );
         return true;
       });
@@ -340,7 +345,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     const hash = await digest(code);
     const r = this.db.one<Record<string, SqlStorageValue>>(
       'SELECT hash FROM recovery_codes WHERE account_id=? AND hash=? AND used=0',
-      a.id,
+      account.id,
       hash,
     );
     if (r) {
@@ -355,24 +360,24 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     const {path, method} = input;
     if (path === '/auth/exchange' && method === 'POST') {
       this.limit(`login:${input.clientKey}`, 30);
-      const p = object(input.body);
-      const hash = await digest(text(p.credential, 128, 32));
+      const payload = object(input.body);
+      const hash = await digest(text(payload.credential, 128, 32));
       const kind =
-        p.audience === 'player'
+        payload.audience === 'player'
           ? 'player'
-          : p.audience === 'staff' || p.audience === 'judge'
+          : payload.audience === 'staff' || payload.audience === 'judge'
             ? 'staff'
             : '';
       requireThat(kind, 'BAD_AUDIENCE', '登录入口不正确。', 400);
-      const a = this.db.one<Account>(
+      const account = this.db.one<Account>(
         "SELECT * FROM platform_accounts WHERE credential_hash=? AND kind=? AND status='active'",
         hash,
         kind,
       );
-      requireThat(a, 'INVALID_CREDENTIAL', '登录口令无效。', 401);
-      const factor = await this.factor(a, p.code);
+      requireThat(account, 'INVALID_CREDENTIAL', '登录口令无效。', 401);
+      const factor = await this.factor(account, payload.code);
       requireThat(
-        !a.totp_ciphertext || factor,
+        !account.totp_ciphertext || factor,
         'SECOND_FACTOR_REQUIRED',
         '请输入第二因素验证码或一次性恢复码。',
         401,
@@ -382,7 +387,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       const csrf = token();
       this.db.tx(() => {
         requireThat(
-          this.account(a.id).auth_epoch === a.auth_epoch,
+          this.account(account.id).auth_epoch === account.auth_epoch,
           'AUTH_CHANGED',
           '凭据已更新。',
           401,
@@ -390,8 +395,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         this.db.exec(
           'INSERT INTO platform_sessions VALUES(?,?,?,?,?,?,?,?,0)',
           tokenHash,
-          a.id,
-          a.auth_epoch,
+          account.id,
+          account.auth_epoch,
           csrf,
           this.now(),
           this.now() + 43200000,
@@ -407,8 +412,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     }
     if (path === '/auth/claim' && method === 'POST') {
       this.limit(`claim:${input.clientKey}`, 20);
-      const p = object(input.body);
-      const hash = await digest(text(p.invitation, 100, 32));
+      const requestPayload = object(input.body);
+      const hash = await digest(text(requestPayload.invitation, 100, 32));
       const invite = this.db.one<{
         id: string;
         account_id: string;
@@ -481,20 +486,20 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     if (input.path === '/auth/session' && !hash) {
       return {status: 200, body: null};
     }
-    const s = this.login(hash);
+    const session = this.login(hash);
     const path = new URL(input.path, 'https://internal').pathname;
-    this.limit(`account:${s.account_id}`, 300);
+    this.limit(`account:${session.account_id}`, 300);
     if (input.method === 'POST') {
       requireThat(
-        input.csrf === s.csrf,
+        input.csrf === session.csrf,
         'CSRF_REJECTED',
         '请刷新页面后重试。',
         403,
       );
     }
-    const p = input.method === 'POST' ? object(input.body) : {};
+    const requestPayload = input.method === 'POST' ? object(input.body) : {};
     if (path === '/auth/session') {
-      return {status: 200, body: this.view(s)};
+      return {status: 200, body: this.view(session)};
     }
     if (path === '/auth/logout') {
       requireThat(input.method === 'POST', 'METHOD', '请提交退出请求。', 405);
@@ -505,17 +510,18 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       return {status: 200, body: {loggedOut: true}, clearCookie: true};
     }
     if (path === '/auth/reauth' && input.method === 'POST') {
-      const a = this.account(s.account_id);
-      this.limit(`reauth:${a.id}`, 10);
+      const targetAccount = this.account(session.account_id);
+      this.limit(`reauth:${targetAccount.id}`, 10);
       requireThat(
-        (await digest(text(p.credential, 128, 32))) === a.credential_hash,
+        (await digest(text(requestPayload.credential, 128, 32))) ===
+          targetAccount.credential_hash,
         'INVALID_CREDENTIAL',
         '口令无效。',
         401,
       );
-      const factor = await this.factor(a, p.code);
+      const factor = await this.factor(targetAccount, requestPayload.code);
       requireThat(
-        !a.totp_ciphertext || factor,
+        !targetAccount.totp_ciphertext || factor,
         'SECOND_FACTOR_REQUIRED',
         '验证码无效或已使用。',
         401,
@@ -529,7 +535,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     }
     if (path === '/me/security/disable' && input.method === 'POST') {
       requireThat(
-        s.second_factor === 1,
+        session.second_factor === 1,
         'SECOND_FACTOR_REQUIRED',
         '请先使用验证码或恢复码验证第二因素。',
         403,
@@ -537,21 +543,21 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       this.db.tx(() => {
         this.db.exec(
           'UPDATE platform_accounts SET totp_ciphertext=NULL,last_totp_step=-1 WHERE id=?',
-          s.account_id,
+          session.account_id,
         );
         this.db.exec(
           'DELETE FROM recovery_codes WHERE account_id=?',
-          s.account_id,
+          session.account_id,
         );
         this.db.exec('DELETE FROM platform_meta WHERE key=?', `totp:${hash}`);
         this.db.exec(
           'UPDATE platform_sessions SET second_factor=0 WHERE account_id=?',
-          s.account_id,
+          session.account_id,
         );
         this.audit(
-          s.account_id,
+          session.account_id,
           'second_factor_disabled',
-          s.account_id,
+          session.account_id,
           '本人关闭第二因素验证',
         );
       });
@@ -559,7 +565,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     }
     if (path === '/me/security/setup' && input.method === 'POST') {
       requireThat(
-        !this.account(s.account_id).totp_ciphertext,
+        !this.account(session.account_id).totp_ciphertext,
         'ALREADY_CONFIGURED',
         '请使用现有第二因素或受控找回。',
       );
@@ -578,12 +584,12 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         status: 200,
         body: {
           secret,
-          uri: `otpauth://totp/DarkForest:${s.account_id}?secret=${secret}&issuer=DarkForest`,
+          uri: `otpauth://totp/DarkForest:${session.account_id}?secret=${secret}&issuer=DarkForest`,
         },
       };
     }
     if (path === '/me/security/confirm' && input.method === 'POST') {
-      this.limit(`factor:${s.account_id}`, 10);
+      this.limit(`factor:${session.account_id}`, 10);
       const row = this.db.one<{value: string}>(
         'SELECT value FROM platform_meta WHERE key=?',
         `totp:${hash}`,
@@ -603,18 +609,23 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         pending.cipher,
         `pending-totp|${hash}`,
       );
-      const step = await verifyTotp(secret, String(p.code), -1, this.now());
+      const step = await verifyTotp(
+        secret,
+        String(requestPayload.code),
+        -1,
+        this.now(),
+      );
       requireThat(step >= 0, 'INVALID_CODE', '验证码不正确。', 401);
       const cipher = await encrypt(
         await platformKey(this.env),
         secret,
-        `totp|${s.account_id}`,
+        `totp|${session.account_id}`,
       );
       const codes = Array.from({length: 8}, () => token());
       const hashes = await Promise.all(codes.map(digest));
       this.db.tx(() => {
         requireThat(
-          !this.account(s.account_id).totp_ciphertext,
+          !this.account(session.account_id).totp_ciphertext,
           'ALREADY_CONFIGURED',
           '第二因素已设置。',
         );
@@ -622,7 +633,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
           'UPDATE platform_accounts SET totp_ciphertext=?,last_totp_step=? WHERE id=?',
           cipher,
           step,
-          s.account_id,
+          session.account_id,
         );
         this.db.exec(
           'UPDATE platform_sessions SET second_factor=1 WHERE token_hash=?',
@@ -630,14 +641,14 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         );
         this.db.exec(
           'UPDATE platform_sessions SET revoked=1 WHERE account_id=? AND token_hash!=?',
-          s.account_id,
+          session.account_id,
           hash,
         );
         this.db.exec('DELETE FROM platform_meta WHERE key=?', `totp:${hash}`);
         for (const h of hashes) {
           this.db.exec(
             'INSERT INTO recovery_codes VALUES(?,?,0)',
-            s.account_id,
+            session.account_id,
             h,
           );
         }
@@ -653,19 +664,19 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
           revoked: number;
         }>(
           'SELECT created_utc,expires,revoked FROM platform_sessions WHERE account_id=? ORDER BY created_utc DESC LIMIT 100',
-          s.account_id,
+          session.account_id,
         ),
       };
     }
     if (path === '/me/sessions/revoke' && input.method === 'POST') {
       this.db.exec(
         'UPDATE platform_sessions SET revoked=1 WHERE account_id=?',
-        s.account_id,
+        session.account_id,
       );
       return {status: 200, body: {revoked: true}, clearCookie: true};
     }
     if (path === '/me' && input.method === 'GET') {
-      return {status: 200, body: this.view(s)};
+      return {status: 200, body: this.view(session)};
     }
     const personalOperation =
       /^\/me\/operations\/([A-Za-z0-9_-]+)(\/resolve)?$/.exec(path);
@@ -677,7 +688,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       );
       if (old) {
         requireThat(
-          old.actor === s.account_id,
+          old.actor === session.account_id,
           'NOT_FOUND',
           '操作不存在。',
           404,
@@ -694,9 +705,9 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
           ) {
             this.insertOperation(
               id,
-              s.account_id,
+              session.account_id,
               'cancel-unreceived',
-              s.account_id,
+              session.account_id,
               'cancelled',
               {},
               '确认未接收操作，阻止迟到请求',
@@ -718,7 +729,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     if (path === '/me/matches' && input.method === 'GET') {
       const entries = this.db.all<Omit<MatchEntry, 'membership'>>(
         'SELECT d.id,d.name,d.kind,d.state,d.version,d.created_utc,d.summary,d.synced_utc,d.recommended,d.retention_days,d.audit_days FROM match_directory d JOIN account_match_index i ON i.match_id=d.id WHERE i.account_id=? ORDER BY d.created_utc DESC LIMIT 200',
-        s.account_id,
+        session.account_id,
       );
       return {
         status: 200,
@@ -734,13 +745,13 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
               }
               const current = await this.summary(
                 this.directory(entry.id),
-                s.account_id,
+                session.account_id,
               );
               return {
                 ...entry,
                 phase: current.phase,
                 membership: (current.members as MatchMember[]).find(
-                  member => member.account_id === s.account_id,
+                  member => member.account_id === session.account_id,
                 ),
               };
             }),
@@ -751,16 +762,16 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       };
     }
     if (path.startsWith('/matches/')) {
-      return this.matchRequest(input, s);
+      return this.matchRequest(input, session);
     }
-    this.admin(s, ['owner', 'admin', 'archivist']);
+    this.admin(session, ['owner', 'admin', 'archivist']);
     if (input.method === 'GET') {
-      return this.readPlatform(path, input, s);
+      return this.readPlatform(path, input, session);
     }
     if (path === '/platform/preview') {
-      this.admin(s, ['owner', 'admin', 'archivist']);
-      const target = text(p.path, 200);
-      const payload = object(p.payload);
+      this.admin(session, ['owner', 'admin', 'archivist']);
+      const target = text(requestPayload.path, 200);
+      const payload = object(requestPayload.payload);
       const id = token();
       const bodyHash = await digest(stableJson(payload));
       if (target.startsWith('/platform/data/')) {
@@ -770,23 +781,23 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
           '该操作已不再提供。',
           404,
         );
-        this.admin(s, ['owner', 'archivist']);
+        this.admin(session, ['owner', 'archivist']);
         if (payload.matchId) {
           requireThat(
-            this.dataScope(s.account_id, scalarText(payload.matchId)),
+            this.dataScope(session.account_id, scalarText(payload.matchId)),
             'ARCHIVE_SCOPE_REQUIRED',
             '当前账号未获本场数据管理权限。',
             403,
           );
         }
       } else {
-        this.admin(s, ['owner', 'admin']);
+        this.admin(session, ['owner', 'admin']);
       }
-      const preview = await this.previewDetails(target, payload, s);
+      const preview = await this.previewDetails(target, payload, session);
       this.db.exec(
         'INSERT INTO platform_previews VALUES(?,?,?,?,?)',
         id,
-        s.account_id,
+        session.account_id,
         target,
         bodyHash,
         this.now() + 300000,
@@ -810,16 +821,16 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       '/platform/matches/create',
     ].includes(path);
     this.admin(
-      s,
+      session,
       path.startsWith('/platform/data/')
         ? ['owner', 'archivist']
         : path.startsWith('/platform/roles')
           ? ['owner']
           : ['owner', 'admin'],
     );
-    const id = requestId(p.request_id);
-    const reason = text(p.reason, 500);
-    const body = {...p};
+    const id = requestId(requestPayload.request_id);
+    const reason = text(requestPayload.reason, 500);
+    const body = {...requestPayload};
     delete body.preview_token;
     delete body.request_id;
     const bodyHash = await digest(stableJson({path, body}));
@@ -829,7 +840,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     );
     if (prior) {
       requireThat(
-        prior.actor === s.account_id && prior.body_hash === bodyHash,
+        prior.actor === session.account_id && prior.body_hash === bodyHash,
         'OPERATION_CONFLICT',
         '操作编号已用于不同内容。',
       );
@@ -838,8 +849,8 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     if (sensitive) {
       const preview = this.db.one<{body_hash: string}>(
         'SELECT body_hash FROM platform_previews WHERE id=? AND actor=? AND path=? AND expires>?',
-        String(p.preview_token),
-        s.account_id,
+        String(requestPayload.preview_token),
+        session.account_id,
         path,
         this.now(),
       );
@@ -850,13 +861,13 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       );
     }
     if (path === '/platform/accounts/create') {
-      return this.createAccount(s, id, p, bodyHash, reason);
+      return this.createAccount(session, id, requestPayload, bodyHash, reason);
     }
     if (path === '/platform/accounts/import') {
-      return this.importAccounts(s, id, p, bodyHash, reason);
+      return this.importAccounts(session, id, requestPayload, bodyHash, reason);
     }
     if (path === '/platform/matches/create') {
-      const kind = p.kind;
+      const kind = requestPayload.kind;
       requireThat(
         kind === 'official' || kind === 'trial',
         'BAD_KIND',
@@ -864,24 +875,30 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         400,
       );
       const matchId = crypto.randomUUID();
-      const name = text(p.name, 100);
+      const name = text(requestPayload.name, 100);
       const retention = integer(
-        p.retentionDays ?? (kind === 'trial' ? 14 : 44),
+        requestPayload.retentionDays ?? (kind === 'trial' ? 14 : 44),
         1,
         3650,
       );
-      const auditDays = integer(p.auditDays ?? 365, retention, 3650);
+      const auditDays = integer(
+        requestPayload.auditDays ?? 365,
+        retention,
+        3650,
+      );
       requireThat(
-        p.retentionConfirmed === true,
+        requestPayload.retentionConfirmed === true,
         'RETENTION_CONFIRM',
         '请确认向参与者告知的数据保留期限。',
         400,
       );
       let description =
-        typeof p.description === 'string' ? text(p.description, 2000, 0) : '';
+        typeof requestPayload.description === 'string'
+          ? text(requestPayload.description, 2000, 0)
+          : '';
       let template: Record<string, unknown> | undefined;
-      if (p.copyFrom) {
-        const source = this.directory(text(p.copyFrom, 100));
+      if (requestPayload.copyFrom) {
+        const source = this.directory(text(requestPayload.copyFrom, 100));
         requireThat(
           source.state !== 'imported_archive',
           'SOURCE_READONLY',
@@ -891,7 +908,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
           source,
           crypto.randomUUID(),
           'template',
-          s.account_id,
+          session.account_id,
           '复制已核对的活动设置白名单',
           {},
         );
@@ -912,7 +929,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         );
         this.insertOperation(
           id,
-          s.account_id,
+          session.account_id,
           'create',
           matchId,
           bodyHash,
@@ -924,41 +941,51 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       return {status: 202, body: {operationId: id, matchId, status: 'pending'}};
     }
     if (path.startsWith('/platform/accounts/')) {
-      return this.changeAccount(s, id, path, p, bodyHash, reason);
+      return this.changeAccount(
+        session,
+        id,
+        path,
+        requestPayload,
+        bodyHash,
+        reason,
+      );
     }
     if (path === '/platform/roles/update') {
-      const account = this.account(text(p.accountId, 100));
+      const account = this.account(text(requestPayload.accountId, 100));
       requireThat(
         account.kind === 'staff' && account.status === 'active',
         'ACTIVE_STAFF_REQUIRED',
         '请选择已激活工作人员。',
       );
       requireThat(
-        ['owner', 'admin', 'archivist'].includes(String(p.role)),
+        ['owner', 'admin', 'archivist'].includes(String(requestPayload.role)),
         'BAD_ROLE',
         '角色无效。',
         400,
       );
       const grantMatch =
-        p.role === 'archivist' && p.enabled !== false
-          ? this.directory(text(p.matchId, 100))
+        requestPayload.role === 'archivist' && requestPayload.enabled !== false
+          ? this.directory(text(requestPayload.matchId, 100))
           : null;
       this.db.tx(() => {
-        this.assertVersion(account, p.expected_version);
-        if (p.enabled === false && p.role === 'owner') {
+        this.assertVersion(account, requestPayload.expected_version);
+        if (
+          requestPayload.enabled === false &&
+          requestPayload.role === 'owner'
+        ) {
           this.protectOwner(account.id);
         }
-        if (p.enabled === false) {
+        if (requestPayload.enabled === false) {
           this.db.exec(
             'DELETE FROM platform_roles WHERE account_id=? AND role=?',
             account.id,
-            p.role as string,
+            requestPayload.role as string,
           );
         } else {
           this.db.exec(
             'INSERT OR IGNORE INTO platform_roles VALUES(?,?)',
             account.id,
-            p.role as string,
+            requestPayload.role as string,
           );
         }
         if (grantMatch) {
@@ -967,12 +994,15 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
             account.id,
             grantMatch.id,
             integer(
-              p.expiresUtc ?? this.now() + 30 * 86400000,
+              requestPayload.expiresUtc ?? this.now() + 30 * 86400000,
               this.now() + 60000,
             ),
           );
         }
-        if (p.enabled === false && p.role === 'archivist') {
+        if (
+          requestPayload.enabled === false &&
+          requestPayload.role === 'archivist'
+        ) {
           this.db.exec(
             'DELETE FROM archive_grants WHERE account_id=?',
             account.id,
@@ -984,7 +1014,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         );
         this.insertOperation(
           id,
-          s.account_id,
+          session.account_id,
           'roles',
           account.id,
           bodyHash,
@@ -996,19 +1026,19 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       return {status: 200, body: {operationId: id, status: 'succeeded'}};
     }
     if (path === '/platform/matches/recommend') {
-      const d = this.directory(text(p.matchId, 100));
-      this.assertVersion(d, p.expected_version);
+      const matchEntry = this.directory(text(requestPayload.matchId, 100));
+      this.assertVersion(matchEntry, requestPayload.expected_version);
       this.db.tx(() => {
         this.db.exec('UPDATE match_directory SET recommended=0');
         this.db.exec(
           'UPDATE match_directory SET recommended=1,version=version+1 WHERE id=?',
-          d.id,
+          matchEntry.id,
         );
         this.insertOperation(
           id,
-          s.account_id,
+          session.account_id,
           'recommend',
-          d.id,
+          matchEntry.id,
           bodyHash,
           {},
           reason,
@@ -1018,25 +1048,25 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       return {status: 200, body: {status: 'succeeded', operationId: id}};
     }
     if (path === '/platform/operations/retry') {
-      const op = this.db.one<Operation>(
+      const operation = this.db.one<Operation>(
         'SELECT * FROM platform_operations WHERE id=?',
-        text(p.operationId, 100),
+        text(requestPayload.operationId, 100),
       );
       requireThat(
-        op && ['partial', 'failed'].includes(op.status),
+        operation && ['partial', 'failed'].includes(operation.status),
         'NOT_RETRYABLE',
         '任务没有可重试步骤。',
       );
       this.db.tx(() => {
         this.db.exec(
           "UPDATE platform_operations SET status='pending',next_attempt=0,attempts=0,error='' WHERE id=?",
-          op.id,
+          operation.id,
         );
         this.insertOperation(
           id,
-          s.account_id,
+          session.account_id,
           'retry',
-          op.id,
+          operation.id,
           bodyHash,
           {},
           reason,
@@ -1044,38 +1074,44 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         );
       });
       await this.arm();
-      return {status: 202, body: {operationId: op.id, status: 'pending'}};
+      return {
+        status: 202,
+        body: {operationId: operation.id, status: 'pending'},
+      };
     }
     if (path === '/platform/data/hold') {
-      const d = this.directory(text(p.matchId, 100));
+      const directoryEntry = this.directory(text(requestPayload.matchId, 100));
       requireThat(
-        this.dataScope(s.account_id, d.id),
+        this.dataScope(session.account_id, directoryEntry.id),
         'ARCHIVE_SCOPE_REQUIRED',
         '当前账号未获本场数据管理权限。',
         403,
       );
-      this.assertVersion(d, p.expected_version);
+      this.assertVersion(directoryEntry, requestPayload.expected_version);
       this.db.tx(() => {
-        if (p.release === true) {
-          this.db.exec('DELETE FROM retention_holds WHERE match_id=?', d.id);
+        if (requestPayload.release === true) {
+          this.db.exec(
+            'DELETE FROM retention_holds WHERE match_id=?',
+            directoryEntry.id,
+          );
         } else {
           this.db.exec(
             'INSERT OR REPLACE INTO retention_holds VALUES(?,?,?,?)',
-            d.id,
+            directoryEntry.id,
             reason,
-            s.account_id,
-            integer(p.reviewUtc, this.now() + 60000),
+            session.account_id,
+            integer(requestPayload.reviewUtc, this.now() + 60000),
           );
         }
         this.db.exec(
           'UPDATE match_directory SET version=version+1 WHERE id=?',
-          d.id,
+          directoryEntry.id,
         );
         this.insertOperation(
           id,
-          s.account_id,
+          session.account_id,
           'hold',
-          d.id,
+          directoryEntry.id,
           bodyHash,
           {},
           reason,
@@ -1085,15 +1121,15 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       return {status: 200, body: {status: 'succeeded', operationId: id}};
     }
     if (path === '/platform/data/purge') {
-      const d = this.directory(text(p.matchId, 100));
+      const d = this.directory(text(requestPayload.matchId, 100));
       requireThat(
-        this.dataScope(s.account_id, d.id),
+        this.dataScope(session.account_id, d.id),
         'ARCHIVE_SCOPE_REQUIRED',
         '当前账号未获本场数据管理权限。',
         403,
       );
-      this.assertVersion(d, p.expected_version);
-      const summary = await this.summary(d, s.account_id);
+      this.assertVersion(d, requestPayload.expected_version);
+      const summary = await this.summary(d, session.account_id);
       requireThat(
         summary.phase === 'ended',
         'ENDED_REQUIRED',
@@ -1116,7 +1152,10 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         '正式战报尚未生成，暂不能清理。',
       );
       this.db.tx(() => {
-        this.assertVersion(this.directory(d.id), p.expected_version);
+        this.assertVersion(
+          this.directory(d.id),
+          requestPayload.expected_version,
+        );
         requireThat(
           d.state !== 'purge_pending' && erasureFloor(this, d.id) === 0,
           'CLEANUP_ALREADY_REQUESTED',
@@ -1136,11 +1175,11 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         );
         this.insertOperation(
           id,
-          s.account_id,
+          session.account_id,
           'purge',
           d.id,
           bodyHash,
-          p,
+          requestPayload,
           reason,
         );
         this.db.exec(
@@ -1153,22 +1192,22 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       return {status: 202, body: {operationId: id, status: 'pending'}};
     }
     if (path === '/platform/data/cancel-purge') {
-      const op = this.db.one<Operation>(
+      const pendingOperation = this.db.one<Operation>(
         "SELECT * FROM platform_operations WHERE id=? AND action='purge' AND status='pending'",
-        text(p.operationId, 100),
+        text(requestPayload.operationId, 100),
       );
       requireThat(
-        op &&
+        pendingOperation &&
           !this.db.one<Record<string, SqlStorageValue>>(
             'SELECT match_id FROM erasure_ledger WHERE match_id=? AND status!=?',
-            op.target,
+            pendingOperation.target,
             'cancelled',
           ),
         'CANNOT_CANCEL',
         '清理已进入不可撤销步骤。',
       );
       requireThat(
-        this.dataScope(s.account_id, op.target),
+        this.dataScope(session.account_id, pendingOperation.target),
         'ARCHIVE_SCOPE_REQUIRED',
         '当前账号未获本场数据管理权限。',
         403,
@@ -1176,17 +1215,17 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       this.db.tx(() => {
         this.db.exec(
           "UPDATE platform_operations SET status='cancelled' WHERE id=?",
-          op.id,
+          pendingOperation.id,
         );
         this.db.exec(
           "UPDATE match_directory SET state='available',version=version+1 WHERE id=?",
-          op.target,
+          pendingOperation.target,
         );
         this.insertOperation(
           id,
-          s.account_id,
+          session.account_id,
           'cancel-purge',
-          op.target,
+          pendingOperation.target,
           bodyHash,
           {},
           reason,

@@ -23,28 +23,28 @@ export function accountCsv(
   let cell = '';
   let quoted = false;
   const input = source.replace(/^\uFEFF/, '');
-  for (let i = 0; i < input.length; i++) {
-    const c = input[i]!;
+  for (let index = 0; index < input.length; index++) {
+    const character = input[index]!;
     if (quoted) {
-      if (c === '"' && input[i + 1] === '"') {
+      if (character === '"' && input[index + 1] === '"') {
         cell += '"';
-        i++;
-      } else if (c === '"') {
+        index++;
+      } else if (character === '"') {
         quoted = false;
       } else {
-        cell += c;
+        cell += character;
       }
-    } else if (c === '"') {
+    } else if (character === '"') {
       if (cell) {
         throw new Error('CSV引号只能从字段开头开始。');
       }
       quoted = true;
-    } else if (c === ',') {
+    } else if (character === ',') {
       row.push(cell);
       cell = '';
-    } else if (c === '\r' || c === '\n') {
-      if (c === '\r' && input[i + 1] === '\n') {
-        i++;
+    } else if (character === '\r' || character === '\n') {
+      if (character === '\r' && input[index + 1] === '\n') {
+        index++;
       }
       row.push(cell);
       if (row.some(v => v !== '')) {
@@ -53,7 +53,7 @@ export function accountCsv(
       row = [];
       cell = '';
     } else {
-      cell += c;
+      cell += character;
     }
   }
   if (quoted) {

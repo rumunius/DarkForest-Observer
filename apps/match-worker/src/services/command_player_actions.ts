@@ -35,30 +35,30 @@ import {restorePlayer} from './player_correction';
 /** Execute player commands inside the caller's existing preview or commit transaction. */
 export function handlePlayerAction(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
 ): unknown {
-  const spec = commandSpec(n)!;
+  const spec = commandSpec(commandNode)!;
 
   permission(commandContext.actor, spec.permission);
 
-  validateCommandArguments(n);
+  validateCommandArguments(commandNode);
 
-  const e = commandContext.e;
+  const engine = commandContext.engine;
 
-  const db = e.db;
+  const db = engine.db;
 
-  const m = db.match();
+  const matchState = db.match();
 
   const path = spec.path;
 
-  const a = n.words
+  const commandArguments = commandNode.words
     .slice(path.split(' ').length)
     .map(v => commandValue(v, commandContext));
 
   const source = `judge:${commandContext.actor.id}:${commandContext.id}:${commandContext.work}`;
 
   const chosen = (index = 0, pool = false) =>
-    selectTargets(commandContext, a[index]!, pool);
+    selectTargets(commandContext, commandArguments[index]!, pool);
 
   const each = (fn: (id: string) => void, pool = false) => {
     const ids = chosen(0, pool);
@@ -102,7 +102,7 @@ export function handlePlayerAction(
     recordPopulationDependency(commandContext);
     return each(id => {
       requireLivingTarget(commandContext, id);
-      const reason = a[1] ?? 'judge_intervention';
+      const reason = commandArguments[1] ?? 'judge_intervention';
       requireCommandArgument(
         (path === 'hunt eliminate'
           ? ['left_zone', 'sharing_stopped', 'location_violation']
@@ -112,14 +112,22 @@ export function handlePlayerAction(
       );
       if (path === 'hunt eliminate') {
         requireThat(
-          m.phase === 'hunt' &&
-            m.hunt_finalized !== null &&
-            m.paused_at === null,
+          matchState.phase === 'hunt' &&
+            matchState.hunt_finalized !== null &&
+            matchState.paused_at === null,
           'HUNT_NOT_RUNNING',
           '最后狩猎尚未开始。',
         );
       }
-      eliminate(e, id, reason, source, e.game(), e.now(), source);
+      eliminate(
+        engine,
+        id,
+        reason,
+        source,
+        engine.game(),
+        engine.now(),
+        source,
+      );
     });
   }
 
@@ -130,7 +138,7 @@ export function handlePlayerAction(
     recordTableDependency(commandContext, 'sighting_codes');
     return each(id =>
       restorePlayer(
-        e,
+        engine,
         id,
         `${commandContext.id}-${commandContext.work}-${id}`,
         `${source}:${id}`,
@@ -142,7 +150,9 @@ export function handlePlayerAction(
 
   if (path === 'player rename') {
     return each(id => {
-      const name = nickname(renderCommandTemplate(commandContext, a[1]!, id));
+      const name = nickname(
+        renderCommandTemplate(commandContext, commandArguments[1]!, id),
+      );
       requireCommandArgument(
         !db.one<Record<string, SqlStorageValue>>(
           'SELECT id FROM players WHERE nickname=? AND id<>?',
@@ -167,18 +177,21 @@ export function handlePlayerAction(
     requireHeadJudge(commandContext);
     requireRunningMatch(commandContext);
     return each(id => {
-      const p = db.player(id);
-      const key = path.startsWith('resource') ? a[1]! : 'photons';
+      const playerState = db.player(id);
+      const key = path.startsWith('resource')
+        ? commandArguments[1]!
+        : 'photons';
       requireCommandArgument(
         ['tech-level', 'photons', 'broadcasts'].includes(key),
         '资源键不正确',
       );
-      const before = key === 'tech-level' ? p.tech : score(e, id, key);
+      const before =
+        key === 'tech-level' ? playerState.tech : score(engine, id, key);
       const delta =
         path === 'photon revoke'
           ? 0
           : path.startsWith('resource')
-            ? Number(a[2])
+            ? Number(commandArguments[2])
             : 1;
       const after = path === 'resource add' ? before + delta : delta;
       integer(after, 0, key === 'broadcasts' ? 2 : 1);
@@ -211,21 +224,21 @@ export function handlePlayerAction(
       const title = path === 'tech grant' ? '技术爆炸' : '资源调整';
       const message =
         path === 'tech grant'
-          ? techBurstCopy(e.identity(id))
-          : `${e.identity(id)}的${resourceName}由${before}调整为${after}。`;
+          ? techBurstCopy(engine.identity(id))
+          : `${engine.identity(id)}的${resourceName}由${before}调整为${after}。`;
       logEvent(
-        e,
+        engine,
         `${source}:resource:${id}`,
         path === 'tech grant' ? 'tech' : 'notice',
         title,
         message,
         'personal',
         [id],
-        e.game(),
-        e.now(),
+        engine.game(),
+        engine.now(),
         id,
       );
-      e.notice(source, id, title, message);
+      engine.notice(source, id, title, message);
     });
   }
 
@@ -240,12 +253,14 @@ export function handlePlayerAction(
       if (path === 'penalty wrong-set') {
         db.exec(
           'UPDATE attack_controls SET wrong=? WHERE player_id=?',
-          integer(Number(a[1]), 0, 3),
+          integer(Number(commandArguments[1]), 0, 3),
           id,
         );
       } else {
         const until =
-          path === 'penalty clear' ? 0 : e.now() + durationMs(a[2]!);
+          path === 'penalty clear'
+            ? 0
+            : engine.now() + durationMs(commandArguments[2]!);
         integer(until);
         db.exec(
           'UPDATE attack_controls SET locked_until=? WHERE player_id=?',
@@ -267,7 +282,7 @@ export function handlePlayerAction(
 
   if (path === 'tag add' || path === 'tag remove') {
     return each(id => {
-      const tag = text(a[1], 1024);
+      const tag = text(commandArguments[1], 1024);
       if (path === 'tag add') {
         db.exec('INSERT OR IGNORE INTO command_tags VALUES(?,?)', id, tag);
       } else {
@@ -288,7 +303,10 @@ export function handlePlayerAction(
 
   if (path === 'preflight note') {
     return each(id => {
-      saveCommandObject(commandContext, 'preflight', {target: id, note: a[1]});
+      saveCommandObject(commandContext, 'preflight', {
+        target: id,
+        note: commandArguments[1],
+      });
     }, true);
   }
 
@@ -308,32 +326,40 @@ export function handlePlayerAction(
     requireForestPhase(commandContext);
     recordPopulationDependency(commandContext);
     return each(id => {
-      const h = db.home(id);
+      const homeworld = db.home(id);
       requireThat(
-        h?.status === 'verified',
+        homeworld?.status === 'verified',
         'HOME_NOT_VERIFIED',
         '目标尚无已审核母星。',
       );
       if (path.endsWith('destroy')) {
-        if (destroyHome(e, id, `${source}:${id}`, e.game(), e.now())) {
+        if (
+          destroyHome(
+            engine,
+            id,
+            `${source}:${id}`,
+            engine.game(),
+            engine.now(),
+          )
+        ) {
           logEvent(
-            e,
+            engine,
             `${source}:home:${id}`,
             'review',
             '裁判母星毁灭',
-            `文明${e.identity(id)}的母星${h.code}已被摧毁。`,
+            `文明${engine.identity(id)}的母星${homeworld.code}已被摧毁。`,
             'public',
             [id],
-            e.game(),
-            e.now(),
+            engine.game(),
+            engine.now(),
             null,
-            h.code,
+            homeworld.code,
           );
-          e.notice(
+          engine.notice(
             `${source}:home`,
             'group',
             '母星毁灭',
-            `文明${e.identity(id)}的母星${h.code}已被摧毁。`,
+            `文明${engine.identity(id)}的母星${homeworld.code}已被摧毁。`,
           );
         }
       } else {
@@ -341,11 +367,11 @@ export function handlePlayerAction(
           'UPDATE homeworlds SET destroyed_game=NULL WHERE player_id=?',
           id,
         );
-        e.notice(
+        engine.notice(
           source,
           id,
           '母星恢复',
-          `文明${e.identity(id)}，你的母星${h.code}已恢复。请打开本人官网查看状态和后续行动。`,
+          `文明${engine.identity(id)}，你的母星${homeworld.code}已恢复。请打开本人官网查看状态和后续行动。`,
         );
       }
     });

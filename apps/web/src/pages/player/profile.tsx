@@ -21,35 +21,35 @@ import {
 /** 展示本人资源、状态和偏好入口，资源权威值取自服务端快照。 */
 export function Me() {
   const {data} = useApp();
-  const me = data.player!;
+  const playerState = data.player!;
   return (
     <>
       <PageTitle title="我的" />
       <div className="profile-heading">
-        <Identity id={me.id} nickname={me.nickname} />
+        <Identity id={playerState.id} nickname={playerState.nickname} />
         <PlayerStatus />
       </div>
       <div className="stat-lines">
         <div>
           <span>母星状态</span>
-          <strong>{me.homeAlive ? '尚存' : '已毁灭'}</strong>
+          <strong>{playerState.homeAlive ? '尚存' : '已毁灭'}</strong>
         </div>
         <div>
           <span>当前航次</span>
-          <strong className="numeric">{me.flightNumber}</strong>
+          <strong className="numeric">{playerState.flightNumber}</strong>
         </div>
         <div>
           <span>广播额度</span>
           <strong>
-            剩余<span className="numeric">{me.broadcasts}</span>次
+            剩余<span className="numeric">{playerState.broadcasts}</span>次
           </strong>
         </div>
         <div>
           <span>光粒额度</span>
           <strong>
-            {me.photons > 0 ? (
+            {playerState.photons > 0 ? (
               <>
-                剩余<span className="numeric">{me.photons}</span>枚
+                剩余<span className="numeric">{playerState.photons}</span>枚
               </>
             ) : (
               '无光粒'
@@ -58,18 +58,18 @@ export function Me() {
         </div>
         <div>
           <span>已击毁的不同文明数</span>
-          <strong className="numeric">{me.kills}</strong>
+          <strong className="numeric">{playerState.kills}</strong>
         </div>
         <div>
           <span>提交错误手环颜色的次数</span>
-          <strong className="numeric">{me.wrongCount}</strong>
+          <strong className="numeric">{playerState.wrongCount}</strong>
         </div>
       </div>
-      {me.arms && (
+      {playerState.arms && (
         <Link className="row-link" to="/player/bracelets">
           <span>
             本航次手环
-            <MiniArms arms={me.arms} />
+            <MiniArms arms={playerState.arms} />
           </span>
           <Icon name="arrow" size={18} />
         </Link>
@@ -95,23 +95,23 @@ export function Me() {
 /** 展示本人当前手环配置；编码与六位母星坐标保持独立。 */
 export function Bracelets() {
   const {data} = useApp();
-  const me = data.player!;
+  const playerState = data.player!;
   return (
     <>
       <PageTitle
         title={
-          me.flight === 'outfitting' || me.flight === 'issued'
+          playerState.flight === 'outfitting' || playerState.flight === 'issued'
             ? '需要佩戴的手环'
             : '本航次手环'
         }
         back="/player/me"
       />
       <p className="secondary">
-        第{me.flightNumber}航次{me.arms ? '' : '，配置已失效'}
+        第{playerState.flightNumber}航次{playerState.arms ? '' : '，配置已失效'}
       </p>
-      {me.arms ? (
+      {playerState.arms ? (
         <>
-          <ArmsView arms={me.arms} />
+          <ArmsView arms={playerState.arms} />
           <p>同侧顺序不限，两侧可以交换。未佩戴的其他手环收入口袋。</p>
         </>
       ) : (

@@ -77,25 +77,31 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
       '内部迁移授权无效。',
       403,
     );
-    const e = this.scopedEngine();
-    requireThat(e.matchId === matchId, 'MATCH_MISMATCH', '旧比赛编号不匹配。');
-    const m = e.db.match();
+    const engine = this.scopedEngine();
     requireThat(
-      m.phase === 'setup' || m.phase === 'ended' || m.paused_at !== null,
+      engine.matchId === matchId,
+      'MATCH_MISMATCH',
+      '旧比赛编号不匹配。',
+    );
+    const matchState = engine.db.match();
+    requireThat(
+      matchState.phase === 'setup' ||
+        matchState.phase === 'ended' ||
+        matchState.paused_at !== null,
       'PAUSE_REQUIRED',
       '请先由总裁判暂停旧比赛。',
     );
     return JSON.stringify({
-      id: m.id,
-      phase: m.phase,
-      revision: m.revision,
-      accounts: e.db.all<Record<string, SqlStorageValue>>(
+      id: matchState.id,
+      phase: matchState.phase,
+      revision: matchState.revision,
+      accounts: engine.db.all<Record<string, SqlStorageValue>>(
         'SELECT id,role,name,credential_hash,permissions FROM accounts',
       ),
-      issued: e.db.one<Record<string, SqlStorageValue>>(
+      issued: engine.db.one<Record<string, SqlStorageValue>>(
         'SELECT COUNT(*) AS count FROM sighting_codes',
       ),
-      checkpoint: await createCheckpoint(e),
+      checkpoint: await createCheckpoint(engine),
     });
   }
 

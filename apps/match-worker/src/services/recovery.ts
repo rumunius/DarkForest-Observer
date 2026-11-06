@@ -70,10 +70,10 @@ function safeState(m: {phase: unknown; paused_at: unknown}): void {
 }
 /** 在安全状态捕获检查点并绑定数据库书签，失败时解除临时恢复标记。 */
 export async function createCheckpoint(engine: Engine): Promise<Checkpoint> {
-  const m = engine.db.match();
-  safeState(m);
+  const matchState = engine.db.match();
+  safeState(matchState);
   requireThat(
-    !m.recovery_state,
+    !matchState.recovery_state,
     'RECOVERY_IN_PROGRESS',
     '正在处理比赛恢复，请稍后重试。',
   );
@@ -84,9 +84,9 @@ export async function createCheckpoint(engine: Engine): Promise<Checkpoint> {
     const bookmark = await engine.db.storage.getCurrentBookmark();
     const header: Omit<Checkpoint, 'ciphertext'> = {
       format: 'darkforest-checkpoint-v1',
-      matchId: m.id,
+      matchId: matchState.id,
       schemaVersion: SCHEMA_VERSION,
-      revision: m.revision,
+      revision: matchState.revision,
       createdUtc: engine.now(),
       bookmark,
       marker,
@@ -110,7 +110,7 @@ export async function openCheckpoint(
   engine: Engine,
   raw: unknown,
 ): Promise<{envelope: Checkpoint; tables: Tables}> {
-  const c = strict(raw, [
+  const character = strict(raw, [
     'format',
     'matchId',
     'schemaVersion',
@@ -121,9 +121,9 @@ export async function openCheckpoint(
     'ciphertext',
   ]);
   requireThat(
-    c.format === 'darkforest-checkpoint-v1' &&
-      c.matchId === engine.matchId &&
-      c.schemaVersion === SCHEMA_VERSION,
+    character.format === 'darkforest-checkpoint-v1' &&
+      character.matchId === engine.matchId &&
+      character.schemaVersion === SCHEMA_VERSION,
     'CHECKPOINT_MISMATCH',
     '恢复文件的场次或数据版本不匹配。',
     400,
@@ -132,11 +132,11 @@ export async function openCheckpoint(
     format: 'darkforest-checkpoint-v1',
     matchId: engine.matchId,
     schemaVersion: SCHEMA_VERSION,
-    revision: integer(c.revision, 1),
-    createdUtc: integer(c.createdUtc, 1),
-    bookmark: text(c.bookmark, 256),
-    marker: text(c.marker, 100),
-    ciphertext: text(c.ciphertext, 16_000_000),
+    revision: integer(character.revision, 1),
+    createdUtc: integer(character.createdUtc, 1),
+    bookmark: text(character.bookmark, 256),
+    marker: text(character.marker, 100),
+    ciphertext: text(character.ciphertext, 16_000_000),
   };
   const {ciphertext, ...header} = envelope;
   const keys = await engine.keys();
@@ -171,10 +171,10 @@ export async function prepareRecovery(
   const body = strict(raw, ['target', 'reason']);
   const reason = text(body.reason, 500);
   const {envelope} = await openCheckpoint(engine, body.target);
-  const m = engine.db.match();
-  safeState(m);
+  const matchState = engine.db.match();
+  safeState(matchState);
   requireThat(
-    !m.recovery_state,
+    !matchState.recovery_state,
     'RECOVERY_IN_PROGRESS',
     '已有恢复操作正在进行。',
   );
@@ -183,10 +183,16 @@ export async function prepareRecovery(
   engine.db.tx(() => {
     engine.db.exec('UPDATE matches SET recovery_state=?', `prepared:${id}`);
     engine.db.bump();
-    engine.audit('recovery-operator', 'prepare_recovery', m.id, reason, {
-      id,
-      targetRevision: envelope.revision,
-    });
+    engine.audit(
+      'recovery-operator',
+      'prepare_recovery',
+      matchState.id,
+      reason,
+      {
+        id,
+        targetRevision: envelope.revision,
+      },
+    );
   });
   try {
     const latest = capture(engine);
@@ -194,11 +200,11 @@ export async function prepareRecovery(
     const ciphertext = await encrypt(
       keys.encryption,
       JSON.stringify({target: envelope, latest, reason} satisfies RecoveryData),
-      `recovery|${m.id}|${id}|${createdUtc}`,
+      `recovery|${matchState.id}|${id}|${createdUtc}`,
     );
     const carry: Carry = {
       format: 'darkforest-recovery-v1',
-      matchId: m.id,
+      matchId: matchState.id,
       id,
       createdUtc,
       ciphertext,
@@ -270,13 +276,13 @@ export async function configureRestore(
   raw: unknown,
 ): Promise<void> {
   const {envelope, data} = await openCarry(engine, raw);
-  const m = engine.db.match();
+  const matchState = engine.db.match();
   requireThat(
-    m.recovery_state === `prepared:${envelope.id}`,
+    matchState.recovery_state === `prepared:${envelope.id}`,
     'RECOVERY_STATE_CONFLICT',
     '恢复准备状态不匹配。',
   );
-  safeState(m);
+  safeState(matchState);
   const log = engine.db.one<{detail: string}>(
     'SELECT detail FROM recovery_log WHERE id=?',
     envelope.id,
@@ -335,7 +341,7 @@ export async function completeRecovery(
 ): Promise<{id: string; issuedCount: number}> {
   const {envelope, data} = await openCarry(engine, raw);
   const db = engine.db;
-  const m = db.match();
+  const matchState = db.match();
   const old = db.one<{state: string}>(
     'SELECT state FROM recovery_log WHERE id=?',
     envelope.id,
@@ -349,14 +355,14 @@ export async function completeRecovery(
     };
   }
   requireThat(
-    m.recovery_state === data.target.marker,
+    matchState.recovery_state === data.target.marker,
     'RECOVERY_STATE_CONFLICT',
     '目标时间点尚未恢复，请核对恢复状态。',
   );
   const target = await openCheckpoint(engine, data.target);
   // A native restore must have recovered the exact checkpoint state, not merely a supplied marker.
   requireThat(
-    m.revision === data.target.revision &&
+    matchState.revision === data.target.revision &&
       stableJson(
         db.all<Record<string, SqlStorageValue>>(
           'SELECT * FROM sighting_codes ORDER BY id',
@@ -625,12 +631,18 @@ export async function completeRecovery(
     ) {
       throw new Error('RECOVERY_MUST_REMAIN_PAUSED');
     }
-    engine.audit('recovery-operator', 'complete_recovery', m.id, data.reason, {
-      id: envelope.id,
-      issuedCount: db.all<Record<string, SqlStorageValue>>(
-        'SELECT id FROM sighting_codes',
-      ).length,
-    });
+    engine.audit(
+      'recovery-operator',
+      'complete_recovery',
+      matchState.id,
+      data.reason,
+      {
+        id: envelope.id,
+        issuedCount: db.all<Record<string, SqlStorageValue>>(
+          'SELECT id FROM sighting_codes',
+        ).length,
+      },
+    );
   });
   return {
     id: envelope.id,
@@ -641,9 +653,9 @@ export async function completeRecovery(
 }
 /** 结束已核对的恢复审查；比赛仍保持暂停，恢复计时需另行确认。 */
 export function finishRecovery(engine: Engine): void {
-  const m = engine.db.match();
+  const matchState = engine.db.match();
   requireThat(
-    m.recovery_state.startsWith('review:'),
+    matchState.recovery_state.startsWith('review:'),
     'RECOVERY_NOT_REVIEWING',
     '当前没有待核对的恢复。',
   );
@@ -657,7 +669,7 @@ export function finishRecovery(engine: Engine): void {
   );
   engine.db.exec(
     "UPDATE recovery_log SET state='complete' WHERE id=?",
-    m.recovery_state.slice('review:'.length),
+    matchState.recovery_state.slice('review:'.length),
   );
   engine.db.exec("UPDATE matches SET recovery_state=''");
 }

@@ -27,15 +27,15 @@ export function Link({
       href={`${base}${to}`}
       aria-current={current ? 'page' : undefined}
       className={className}
-      onClick={e => {
+      onClick={event => {
         if (
-          e.button === 0 &&
-          !e.ctrlKey &&
-          !e.metaKey &&
-          !e.shiftKey &&
-          !e.altKey
+          event.button === 0 &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.shiftKey &&
+          !event.altKey
         ) {
-          e.preventDefault();
+          event.preventDefault();
           go(to);
         }
       }}
@@ -303,15 +303,17 @@ export function Identity({id, nickname}: {id: string; nickname: string}) {
 /** 展示当前本人飞船与阶段状态，行动入口另按许可矩阵判断。 */
 export function PlayerStatus() {
   const {data} = useApp();
-  const me = data.player;
+  const playerState = data.player;
   const danger =
-    me &&
-    ['eliminated', 'returning', 'preparing', 'issued'].includes(me.flight);
-  const attention = me?.flight === 'active' && !me.homeAlive;
+    playerState &&
+    ['eliminated', 'returning', 'preparing', 'issued'].includes(
+      playerState.flight,
+    );
+  const attention = playerState?.flight === 'active' && !playerState.homeAlive;
   return (
-    me && (
+    playerState && (
       <Status tone={danger ? 'danger' : attention ? 'attention' : ''}>
-        {FLIGHT_NAMES[me.flight]}
+        {FLIGHT_NAMES[playerState.flight]}
       </Status>
     )
   );

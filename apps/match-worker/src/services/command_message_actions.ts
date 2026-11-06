@@ -25,53 +25,59 @@ import {judgeAction} from './judge';
 /** Execute message commands inside the caller's existing preview or commit transaction. */
 export function handleMessageAction(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
 ): unknown {
-  const spec = commandSpec(n)!;
+  const spec = commandSpec(commandNode)!;
 
   permission(commandContext.actor, spec.permission);
 
-  validateCommandArguments(n);
+  validateCommandArguments(commandNode);
 
-  const e = commandContext.e;
+  const engine = commandContext.engine;
 
-  const db = e.db;
+  const db = engine.db;
 
   const path = spec.path;
 
-  const a = n.words
+  const commandArguments = commandNode.words
     .slice(path.split(' ').length)
     .map(v => commandValue(v, commandContext));
 
   const chosen = (index = 0, pool = false) =>
-    selectTargets(commandContext, a[index]!, pool);
+    selectTargets(commandContext, commandArguments[index]!, pool);
 
   if (path === 'reveal') {
     const ids = chosen();
     let stats: unknown;
-    if (n.block) {
+    if (commandNode.block) {
       requireCommandArgument(
-        a[1] === 'run' &&
-          n.block.length === 1 &&
-          n.block[0]!.words[0] === 'stats',
+        commandArguments[1] === 'run' &&
+          commandNode.block.length === 1 &&
+          commandNode.block[0]!.words[0] === 'stats',
         'reveal run只接受一条统计查询',
       );
-      stats = statistic(commandContext, n.block[0]!);
+      stats = statistic(commandContext, commandNode.block[0]!);
     } else {
-      requireCommandArgument(a.length === 2, 'reveal需要目标和统计项');
-      if (a[1] === 'alive-homeworlds') {
+      requireCommandArgument(
+        commandArguments.length === 2,
+        'reveal需要目标和统计项',
+      );
+      if (commandArguments[1] === 'alive-homeworlds') {
         stats = {
           aliveHomeworlds: db.one<{n: number}>(
             "SELECT COUNT(*) n FROM homeworlds WHERE status='verified' AND destroyed_game IS NULL AND player_id IN (SELECT player_id FROM roster_members)",
           )!.n,
         };
-      } else if (a[1] === 'unused-photoids') {
+      } else if (commandArguments[1] === 'unused-photoids') {
         stats = statistic(commandContext, {
           words: ['stats', 'sum', 'photons', 'of', '@alive'],
           options: {},
         });
       } else {
-        requireCommandArgument(a[1] === 'kills-last-10min', '未知快捷统计');
+        requireCommandArgument(
+          commandArguments[1] === 'kills-last-10min',
+          '未知快捷统计',
+        );
         stats = statistic(commandContext, {
           words: ['stats', 'events', 'sighting-hit', 'window', '10m'],
           options: {},
@@ -82,7 +88,7 @@ export function handleMessageAction(
       commandContext,
       ids,
       '赛事统计：' + JSON.stringify(stats),
-      a[0] === '@a',
+      commandArguments[0] === '@a',
     );
     return;
   }
@@ -91,14 +97,14 @@ export function handleMessageAction(
     const ids = chosen();
     for (const r of db.all<{title: string; body: string; code: string | null}>(
       "SELECT title,body,code FROM event_log WHERE audience='public' ORDER BY seq DESC LIMIT ?",
-      integer(Number(a[2]), 1, COMMAND_LIMITS.maxPage),
+      integer(Number(commandArguments[2]), 1, COMMAND_LIMITS.maxPage),
     )) {
       commandContext.work++;
       emitCommandMessage(
         commandContext,
         ids,
         `重播：${r.title}\n${r.body}${r.code ? '\n坐标：' + r.code : ''}`,
-        a[0] === '@a',
+        commandArguments[0] === '@a',
       );
     }
     return;
@@ -107,21 +113,21 @@ export function handleMessageAction(
   if (path === 'message retract') {
     const row = db.one<Record<string, SqlStorageValue>>(
       'SELECT * FROM event_log WHERE id=? AND kind=?',
-      a[0]!,
+      commandArguments[0]!,
       'notice',
     );
     requireCommandArgument(row, '只能撤回管理消息');
     saveCommandObject(commandContext, 'retraction', {
-      message: a[0],
+      message: commandArguments[0],
       reason: commandContext.reason,
     });
     db.exec(
       "UPDATE event_log SET body='[裁判已撤回此消息；已阅读及QQ发送事实保留]' WHERE id=?",
-      a[0]!,
+      commandArguments[0]!,
     );
     recordChange(
       commandContext,
-      a[0]!,
+      commandArguments[0]!,
       '可见',
       '网站标记撤回，已阅读/已发送事实保留',
     );
@@ -131,7 +137,7 @@ export function handleMessageAction(
   if (path === 'notice mark' || path === 'notice retry') {
     const row = db.one<{id: string; version: number; status: string}>(
       'SELECT * FROM notice_queue WHERE id=?',
-      a[0]!,
+      commandArguments[0]!,
     );
     requireCommandArgument(row, '通知不存在');
     recordDependency(commandContext, 'notice:' + row.id, row);
@@ -147,18 +153,18 @@ export function handleMessageAction(
       return;
     }
     requireCommandArgument(
-      ['copied', 'sent', 'failed'].includes(a[1]!),
+      ['copied', 'sent', 'failed'].includes(commandArguments[1]!),
       '状态为copied/sent/failed',
     );
     return judgeAction(
-      e,
+      engine,
       commandContext.actor,
       `${commandContext.id}-${commandContext.work}`,
-      `/judge/notices/${row.id}/${a[1] === 'failed' ? 'error' : a[1]}`,
+      `/judge/notices/${row.id}/${commandArguments[1] === 'failed' ? 'error' : commandArguments[1]}`,
       {
         request_id: `${commandContext.id}-${commandContext.work}`,
         expected_version: row.version,
-        reason: a[2] ?? commandContext.reason,
+        reason: commandArguments[2] ?? commandContext.reason,
       },
       commandContext.prepared,
     );

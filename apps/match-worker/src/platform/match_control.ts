@@ -103,12 +103,15 @@ function bindCivilization(engine: Engine, accountId: string, name: string) {
   const used = new Set(
     db.all<{id: string}>('SELECT id FROM players').map(p => p.id),
   );
-  let n = 1;
-  while (n <= 350 && used.has(`C${String(n).padStart(2, '0')}`)) {
-    n++;
+  let civilizationNumber = 1;
+  while (
+    civilizationNumber <= 350 &&
+    used.has(`C${String(civilizationNumber).padStart(2, '0')}`)
+  ) {
+    civilizationNumber++;
   }
-  requireThat(n <= 350, 'CAPACITY', '本场最多绑定350个文明。');
-  const id = `C${String(n).padStart(2, '0')}`;
+  requireThat(civilizationNumber <= 350, 'CAPACITY', '本场最多绑定350个文明。');
+  const id = `C${String(civilizationNumber).padStart(2, '0')}`;
   db.exec(
     'INSERT INTO accounts(id,match_id,role,name,credential_hash,permissions) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,credential_hash=excluded.credential_hash,enabled=1,version=accounts.version+1',
     id,
@@ -179,7 +182,7 @@ export async function matchControl(
     );
     return parseJson(prior.result);
   }
-  const p = object(request.payload);
+  const payload = object(request.payload);
   if (request.action === 'initialize') {
     engine.platformKeys = true;
   }
@@ -208,7 +211,7 @@ export async function matchControl(
         '已有比赛禁止覆盖。',
       );
       requireThat(
-        p.kind === 'official' || p.kind === 'trial',
+        payload.kind === 'official' || payload.kind === 'trial',
         'BAD_KIND',
         '请选择正式或试玩。',
         400,
@@ -219,10 +222,10 @@ export async function matchControl(
         fingerprint,
         JSON.stringify({
           ...DEFAULT_SITE,
-          title: text(p.name, 100),
+          title: text(payload.name, 100),
           description:
-            typeof p.description === 'string'
-              ? text(p.description, 2000, 0)
+            typeof payload.description === 'string'
+              ? text(payload.description, 2000, 0)
               : DEFAULT_SITE.description,
         }),
         engine.now(),
@@ -230,12 +233,12 @@ export async function matchControl(
       db.exec(
         'INSERT INTO match_identity(id,kind,creation_id,body_hash) VALUES(?,?,?,?)',
         request.matchId,
-        p.kind,
+        payload.kind,
         request.id,
         hash,
       );
-      if (p.template) {
-        const template = object(p.template);
+      if (payload.template) {
+        const template = object(payload.template);
         const site = parseJson(db.match().site_json) as typeof DEFAULT_SITE;
         site.colors = object(template.colors) as typeof DEFAULT_SITE.colors;
         db.exec('UPDATE matches SET site_json=?', JSON.stringify(site));
@@ -251,7 +254,7 @@ export async function matchControl(
         state: 'draft',
       };
     } else if (request.action === 'adopt-legacy') {
-      const m = db.match();
+      const matchState = db.match();
       requireThat(
         !db.one<Record<string, SqlStorageValue>>(
           'SELECT id FROM match_identity',
@@ -260,29 +263,31 @@ export async function matchControl(
         '旧比赛已登记。',
       );
       requireThat(
-        m.revision === Number(p.expectedRevision),
+        matchState.revision === Number(payload.expectedRevision),
         'VERSION_CONFLICT',
         '旧比赛记录已变化，请重新检查与保存备份。',
       );
       requireThat(
-        m.phase === 'setup' || m.phase === 'ended' || m.paused_at !== null,
+        matchState.phase === 'setup' ||
+          matchState.phase === 'ended' ||
+          matchState.paused_at !== null,
         'PAUSE_REQUIRED',
         '旧比赛须先暂停。',
       );
       requireThat(
-        Array.isArray(p.accounts),
+        Array.isArray(payload.accounts),
         'BAD_MAPPING',
         '请核对旧账号逐项映射。',
         400,
       );
       db.exec(
         "INSERT INTO match_identity(id,kind,creation_id,body_hash,key_version,management_state) VALUES(?,?,?,?,1,'available')",
-        m.id,
-        p.kind as string,
+        matchState.id,
+        payload.kind as string,
         request.id,
         hash,
       );
-      for (const raw of p.accounts) {
+      for (const raw of payload.accounts) {
         const row = object(raw);
         const localId = text(row.localId, 16);
         const account = db.one<Actor>(
@@ -313,7 +318,7 @@ export async function matchControl(
         }
         if (
           account.role === 'player' &&
-          m.start_settled !== null &&
+          matchState.start_settled !== null &&
           db.one<Record<string, SqlStorageValue>>(
             'SELECT player_id FROM roster_members WHERE player_id=?',
             localId,
@@ -335,12 +340,12 @@ export async function matchControl(
       db.exec('UPDATE sessions SET revoked=1');
       db.exec('DELETE FROM previews');
       result = {
-        matchId: m.id,
-        revision: m.revision,
+        matchId: matchState.id,
+        revision: matchState.revision,
         issued: db.one<Record<string, SqlStorageValue>>(
           'SELECT COUNT(*) AS count FROM sighting_codes',
         ),
-        accounts: p.accounts.length,
+        accounts: payload.accounts.length,
       };
     } else {
       requireThat(
@@ -381,7 +386,7 @@ export async function matchControl(
           'ENDED_REQUIRED',
           '进行中的比赛不能清理。',
         );
-        const generation = integer(p.generation, 1);
+        const generation = integer(payload.generation, 1);
         const identity = db.one<{erasure_generation: number}>(
           'SELECT erasure_generation FROM match_identity',
         )!;
@@ -455,13 +460,13 @@ export async function matchControl(
           verified: true,
         };
       } else if (request.action === 'summary') {
-        const m = db.match();
+        const currentMatch = db.match();
         result = {
-          phase: m.phase,
-          revision: m.revision,
-          paused: m.paused_at !== null,
-          endedUtc: m.ended_utc,
-          recovering: !!m.recovery_state,
+          phase: currentMatch.phase,
+          revision: currentMatch.revision,
+          paused: currentMatch.paused_at !== null,
+          endedUtc: currentMatch.ended_utc,
+          recovering: !!currentMatch.recovery_state,
           reportVersion: db.one<{version: number}>(
             'SELECT MAX(version) AS version FROM result_reports',
           )?.version,
@@ -488,10 +493,10 @@ export async function matchControl(
           )?.management_state,
         };
       } else if (request.action === 'invite') {
-        if (p.kind === 'player') {
+        if (payload.kind === 'player') {
           freezeCheck(engine);
         }
-        const account = text(p.accountId, 100);
+        const account = text(payload.accountId, 100);
         requireThat(
           !db.one<Record<string, SqlStorageValue>>(
             'SELECT account_id FROM memberships WHERE account_id=?',
@@ -503,8 +508,8 @@ export async function matchControl(
         db.exec(
           'INSERT INTO memberships(account_id,kind,name,state) VALUES(?,?,?,?)',
           account,
-          p.kind as string,
-          text(p.name, 100),
+          payload.kind as string,
+          text(payload.name, 100),
           'invited',
         );
         result = {invited: true};
@@ -518,11 +523,11 @@ export async function matchControl(
         );
         freezeCheck(engine);
         requireThat(
-          db.match().revision === integer(p.expectedRevision, 0),
+          db.match().revision === integer(payload.expectedRevision, 0),
           'VERSION_CONFLICT',
           '本场成员或状态已变化，请刷新后重新确认移除。',
         );
-        const account = text(p.accountId, 100);
+        const account = text(payload.accountId, 100);
         const member = db.one<{
           kind: string;
           local_id: string | null;
@@ -576,7 +581,7 @@ export async function matchControl(
           403,
         );
         requireThat(
-          p.consent === true,
+          payload.consent === true,
           'CONSENT_REQUIRED',
           '请先确认活动说明与数据期限。',
           400,
@@ -608,8 +613,8 @@ export async function matchControl(
         );
         result = bindCivilization(engine, request.actor, member.name);
       } else if (request.action === 'assign') {
-        const account = text(p.accountId, 100);
-        const seat = text(p.seat, 3);
+        const account = text(payload.accountId, 100);
+        const seat = text(payload.seat, 3);
         requireThat(seats[seat], 'BAD_SEAT', '请选择三个既有裁判岗位。', 400);
         const member = db.one<{
           kind: string;
@@ -630,7 +635,7 @@ export async function matchControl(
         );
         const epoch = current ? current.version + 1 : 1;
         requireThat(
-          Number(p.expectedVersion) === (current?.version ?? 0),
+          Number(payload.expectedVersion) === (current?.version ?? 0),
           'VERSION_CONFLICT',
           '席位已变化，请重新预览。',
         );
@@ -680,18 +685,18 @@ export async function matchControl(
       } else if (request.action === 'fence') {
         db.exec(
           'INSERT INTO authorization_fences VALUES(?,?,?) ON CONFLICT(account_id) DO UPDATE SET auth_epoch=MAX(auth_epoch,excluded.auth_epoch),disabled=CASE WHEN excluded.auth_epoch>=auth_epoch THEN excluded.disabled ELSE disabled END',
-          text(p.accountId, 100),
-          integer(p.authEpoch, 1),
-          p.disabled === true ? 1 : 0,
+          text(payload.accountId, 100),
+          integer(payload.authEpoch, 1),
+          payload.disabled === true ? 1 : 0,
         );
         const member = db.one<{local_id: string | null}>(
           'SELECT local_id FROM memberships WHERE account_id=?',
-          p.accountId as string,
+          payload.accountId as string,
         );
-        if (p.disabled && member?.local_id) {
+        if (payload.disabled && member?.local_id) {
           cancelManagement(engine, member.local_id);
         }
-        result = {fenced: true, authEpoch: p.authEpoch};
+        result = {fenced: true, authEpoch: payload.authEpoch};
       } else if (request.action === 'publish') {
         requireThat(
           db.one<Record<string, SqlStorageValue>>(

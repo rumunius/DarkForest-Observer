@@ -25,21 +25,21 @@ export function HomeworldReview() {
   const [reason, setReason] = useState('');
   const [confirm, setConfirm] = useState(false);
   const [returning, setReturning] = useState(false);
-  const c = pending.find(c => c.id === id) ?? pending[0];
+  const civilization = pending.find(c => c.id === id) ?? pending[0];
   return (
     <>
       <PageTitle title="母星审核" />
       <p className="secondary">
         在QQ与高德地图软件中核对当前版本、照片及母星互不重复的要求。
       </p>
-      {!c ? (
+      {!civilization ? (
         <Empty title="当前没有待审核母星" to="/judge" action="返回工作台" />
       ) : (
         <div className="master-detail">
           <div className="master-list">
             {pending.map(item => (
               <button
-                className={item.id === c.id ? 'selected' : ''}
+                className={item.id === civilization.id ? 'selected' : ''}
                 key={item.id}
                 onClick={() => {
                   setId(item.id);
@@ -55,9 +55,9 @@ export function HomeworldReview() {
             ))}
           </div>
           <Frame>
-            <Identity id={c.id} nickname={c.nickname} />
-            <p className="secret-code numeric">{c.homeworld}</p>
-            <p>正在核对第{c.homeVersion}次提交的口令。</p>
+            <Identity id={civilization.id} nickname={civilization.nickname} />
+            <p className="secret-code numeric">{civilization.homeworld}</p>
+            <p>正在核对第{civilization.homeVersion}次提交的口令。</p>
             <label className="check-label large">
               <input
                 type="checkbox"
@@ -71,9 +71,9 @@ export function HomeworldReview() {
                 className="primary full"
                 disabled={busy}
                 onClick={() =>
-                  void operate(`/judge/homeworld/${c.id}/verify`, {
-                    expected_version: c.homeVersion,
-                    expected_code: c.homeworld,
+                  void operate(`/judge/homeworld/${civilization.id}/verify`, {
+                    expected_version: civilization.homeVersion,
+                    expected_code: civilization.homeworld,
                     decision: 'approve',
                   })
                 }
@@ -100,9 +100,9 @@ export function HomeworldReview() {
                 <Button
                   disabled={busy || !reason.trim()}
                   onClick={() =>
-                    void operate(`/judge/homeworld/${c.id}/verify`, {
-                      expected_version: c.homeVersion,
-                      expected_code: c.homeworld,
+                    void operate(`/judge/homeworld/${civilization.id}/verify`, {
+                      expected_version: civilization.homeVersion,
+                      expected_code: civilization.homeworld,
                       decision: 'reject',
                       reason,
                     })
@@ -145,22 +145,27 @@ export function PreflightManagement() {
             </tr>
           </thead>
           <tbody>
-            {roster.map(c => (
-              <tr key={c.id}>
+            {roster.map(civilization => (
+              <tr key={civilization.id}>
                 <td>
-                  <Identity id={c.id} nickname={c.nickname} />
+                  <Identity
+                    id={civilization.id}
+                    nickname={civilization.nickname}
+                  />
                 </td>
                 <td>
-                  {['pending', 'unregistered', 'rejected'].includes(c.flight)
+                  {['pending', 'unregistered', 'rejected'].includes(
+                    civilization.flight,
+                  )
                     ? '未审核通过'
                     : '已通过'}
                 </td>
-                <td>{FLIGHT_NAMES[c.flight]}</td>
+                <td>{FLIGHT_NAMES[civilization.flight]}</td>
                 <td>
-                  <MiniArms arms={c.arms} />
+                  <MiniArms arms={civilization.arms} />
                 </td>
                 <td>
-                  <Link to={`/judge/players/${c.id}`}>查看</Link>
+                  <Link to={`/judge/players/${civilization.id}`}>查看</Link>
                 </td>
               </tr>
             ))}

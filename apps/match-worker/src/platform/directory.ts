@@ -13,15 +13,16 @@ export async function readPlatform(
   environment: BackendEnv,
   path: string,
   input: RpcInput,
-  s: Login,
+  session: Login,
 ): Promise<RpcReply> {
   const url = new URL(input.path, 'https://internal');
   const manager = host
-    .roles(s.account_id)
+    .roles(session.account_id)
     .some(role => ['owner', 'admin'].includes(role));
-  const canSee = (id: string) => manager || host.dataScope(s.account_id, id);
+  const canSee = (id: string) =>
+    manager || host.dataScope(session.account_id, id);
   if (path === '/platform/accounts') {
-    host.admin(s);
+    host.admin(session);
     const after = url.searchParams.get('after') ?? '';
     return {
       status: 200,
@@ -50,25 +51,26 @@ export async function readPlatform(
         .all<Operation>(
           'SELECT * FROM platform_operations ORDER BY created_utc DESC LIMIT 100',
         )
-        .filter(op => op.actor === s.account_id || canSee(op.target))
+        .filter(op => op.actor === session.account_id || canSee(op.target))
         .map(op => operationView(host, op)),
     };
   }
   if (path.startsWith('/platform/operations/')) {
-    const op = host.db.one<Operation>(
+    const operation = host.db.one<Operation>(
       'SELECT * FROM platform_operations WHERE id=?',
       path.slice(21),
     );
     requireThat(
-      op && (op.actor === s.account_id || canSee(op.target)),
+      operation &&
+        (operation.actor === session.account_id || canSee(operation.target)),
       'NOT_FOUND',
       '任务不存在或当前账号不能查看。',
       404,
     );
-    return {status: 200, body: operationView(host, op)};
+    return {status: 200, body: operationView(host, operation)};
   }
   if (path === '/platform/security') {
-    host.admin(s, ['owner']);
+    host.admin(session, ['owner']);
     return {
       status: 200,
       body: {
@@ -82,21 +84,21 @@ export async function readPlatform(
     };
   }
   if (path === '/platform/data') {
-    host.admin(s, ['owner', 'archivist']);
+    host.admin(session, ['owner', 'archivist']);
     return {
       status: 200,
       body: {
         holds: host.db
           .all<{match_id: string}>('SELECT * FROM retention_holds')
-          .filter(row => host.dataScope(s.account_id, row.match_id)),
+          .filter(row => host.dataScope(session.account_id, row.match_id)),
         ledger: host.db
           .all<{match_id: string}>('SELECT * FROM erasure_ledger')
-          .filter(row => host.dataScope(s.account_id, row.match_id)),
+          .filter(row => host.dataScope(session.account_id, row.match_id)),
       },
     };
   }
   if (path.startsWith('/platform/invitations/')) {
-    host.admin(s, ['owner', 'admin']);
+    host.admin(session, ['owner', 'admin']);
     const row = host.db.one<{
       id: string;
       ciphertext: string | null;
@@ -108,7 +110,7 @@ export async function readPlatform(
     );
     requireThat(
       row &&
-        row.issuer === s.account_id &&
+        row.issuer === session.account_id &&
         row.ciphertext &&
         row.delivery_expires > host.now(),
       'DELIVERY_EXPIRED',
@@ -120,7 +122,7 @@ export async function readPlatform(
       row.ciphertext,
       `invitation|${row.id}`,
     );
-    host.admin(host.login(s.token_hash), ['owner', 'admin']);
+    host.admin(host.login(session.token_hash), ['owner', 'admin']);
     return {status: 200, body: {invitation}};
   }
   throw new Fault(404, 'NOT_FOUND', '页面数据不存在。');
@@ -130,19 +132,24 @@ export async function readPlatform(
 export async function previewDetails(
   host: DarkForestPlatform,
   path: string,
-  p: Record<string, unknown>,
-  s: Login,
+  payload: Record<string, unknown>,
+  session: Login,
 ): Promise<Record<string, unknown>> {
-  if (p.matchId) {
-    const d = host.directory(text(p.matchId, 100));
-    const summary = await host.summary(d, s.account_id);
+  if (payload.matchId) {
+    const matchEntry = host.directory(text(payload.matchId, 100));
+    const summary = await host.summary(matchEntry, session.account_id);
     return {
-      match: {id: d.id, name: d.name, kind: d.kind, version: d.version},
+      match: {
+        id: matchEntry.id,
+        name: matchEntry.name,
+        kind: matchEntry.kind,
+        version: matchEntry.version,
+      },
       current: path.startsWith('/platform/data/')
         ? {
             phase: summary.phase,
-            retention_days: d.retention_days,
-            audit_days: d.audit_days,
+            retention_days: matchEntry.retention_days,
+            audit_days: matchEntry.audit_days,
           }
         : summary,
       warning: path.includes('purge')
@@ -150,8 +157,8 @@ export async function previewDetails(
         : '权限与比赛状态将在提交时再次检查。',
     };
   }
-  if (p.accountId) {
-    const a = host.account(text(p.accountId, 100));
+  if (payload.accountId) {
+    const a = host.account(text(payload.accountId, 100));
     return {
       account: host.safeAccount(a),
       matches: host.db.all<Record<string, SqlStorageValue>>(

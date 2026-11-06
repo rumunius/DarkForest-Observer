@@ -21,47 +21,47 @@ export async function alarm(host: DarkForestPlatform) {
     "SELECT * FROM platform_operations WHERE status IN ('pending','partial') AND attempts<8 AND next_attempt<=? AND action!='adopt-legacy' ORDER BY created_utc LIMIT 4",
     host.now(),
   );
-  for (const op of operations) {
+  for (const operation of operations) {
     try {
-      const owner = host.account(op.actor);
+      const owner = host.account(operation.actor);
       requireThat(
         owner.status === 'active',
         'AUTHOR_DISABLED',
         '任务发起账号已停用，需要管理员重新核对。',
       );
-      if (!op.action.startsWith('control:')) {
+      if (!operation.action.startsWith('control:')) {
         requireThat(
           host
-            .roles(op.actor)
+            .roles(operation.actor)
             .some(r => ['owner', 'admin', 'archivist'].includes(r)),
           'AUTHOR_REVOKED',
           '任务发起人已失去管理权限。',
         );
       }
-      const p = parseJson(op.payload) as Record<string, unknown>;
+      const payload = parseJson(operation.payload) as Record<string, unknown>;
       let result: unknown = {};
-      if (op.action === 'create') {
-        const d = host.directory(op.target);
+      if (operation.action === 'create') {
+        const matchEntry = host.directory(operation.target);
         result = await host.control(
-          d,
-          op.id,
+          matchEntry,
+          operation.id,
           'initialize',
-          op.actor,
+          operation.actor,
           '网站新建独立比赛',
-          p,
+          payload,
         );
         host.db.exec(
           "UPDATE match_directory SET state='draft',version=version+1 WHERE id=?",
-          d.id,
+          matchEntry.id,
         );
-      } else if (op.action.startsWith('control:')) {
-        const d = host.directory(op.target);
-        const action = op.action.slice(8);
+      } else if (operation.action.startsWith('control:')) {
+        const directoryEntry = host.directory(operation.target);
+        const action = operation.action.slice(8);
         if (
           ['invite', 'remove-member', 'assign', 'publish'].includes(action) &&
-          !host.roles(op.actor).some(r => ['owner', 'admin'].includes(r))
+          !host.roles(operation.actor).some(r => ['owner', 'admin'].includes(r))
         ) {
-          const latest = await host.summary(d, op.actor);
+          const latest = await host.summary(directoryEntry, operation.actor);
           requireThat(
             (
               latest.members as Array<{
@@ -71,7 +71,7 @@ export async function alarm(host: DarkForestPlatform) {
               }>
             ).some(
               m =>
-                m.account_id === op.actor &&
+                m.account_id === operation.actor &&
                 m.local_id === 'J01' &&
                 m.state === 'bound',
             ),
@@ -79,54 +79,54 @@ export async function alarm(host: DarkForestPlatform) {
             '原总裁判已失去任职，请由新人重新提交。',
           );
         }
-        if (p.accountId && action !== 'remove-member') {
+        if (payload.accountId && action !== 'remove-member') {
           requireThat(
-            host.account(scalarText(p.accountId)).status !== 'disabled',
+            host.account(scalarText(payload.accountId)).status !== 'disabled',
             'ACCOUNT_DISABLED',
             '目标账号已停用。',
           );
         }
         result = await host.control(
-          d,
-          op.id,
+          directoryEntry,
+          operation.id,
           action,
-          scalarText(p.controlActor ?? op.actor),
+          scalarText(payload.controlActor ?? operation.actor),
           '网站本场管理',
-          p,
+          payload,
         );
         if (action === 'publish') {
           host.db.exec(
             "UPDATE match_directory SET state='available',version=version+1 WHERE id=?",
-            d.id,
+            directoryEntry.id,
           );
         }
-      } else if (op.action === 'fence') {
+      } else if (operation.action === 'fence') {
         const targets = host.db.all<{target: string}>(
           'SELECT target FROM operation_targets WHERE operation_id=? AND status!=? LIMIT 8',
-          op.id,
+          operation.id,
           'succeeded',
         );
         for (const target of targets) {
           try {
             const receipt = await host.control(
               host.directory(target.target),
-              `${op.id}:${target.target}`,
+              `${operation.id}:${target.target}`,
               'fence',
-              op.actor,
+              operation.actor,
               '全局账号授权更新',
-              p,
+              payload,
             );
             host.db.exec(
               "UPDATE operation_targets SET status='succeeded',receipt=? WHERE operation_id=? AND target=?",
               JSON.stringify(receipt),
-              op.id,
+              operation.id,
               target.target,
             );
           } catch {
             host.db.exec(
               "UPDATE operation_targets SET status='failed',receipt=? WHERE operation_id=? AND target=?",
               JSON.stringify({message: '连接未确认，请重试原步骤。'}),
-              op.id,
+              operation.id,
               target.target,
             );
           }
@@ -134,32 +134,32 @@ export async function alarm(host: DarkForestPlatform) {
         if (
           host.db.one<Record<string, SqlStorageValue>>(
             'SELECT target FROM operation_targets WHERE operation_id=? AND status!=?',
-            op.id,
+            operation.id,
             'succeeded',
           )
         ) {
           host.db.exec(
             "UPDATE platform_operations SET status='partial',attempts=attempts+1,next_attempt=? WHERE id=?",
-            host.now() + Math.min(300000, 1000 * 2 ** op.attempts),
-            op.id,
+            host.now() + Math.min(300000, 1000 * 2 ** operation.attempts),
+            operation.id,
           );
           continue;
         }
         result = {allFenced: true};
-      } else if (op.action === 'purge') {
+      } else if (operation.action === 'purge') {
         requireThat(
-          host.dataScope(op.actor, op.target),
+          host.dataScope(operation.actor, operation.target),
           'ARCHIVE_SCOPE_REQUIRED',
           '任务发起人已失去本场数据权限。',
         );
-        result = await erasureOperation(host, op);
+        result = await erasureOperation(host, operation);
       } else {
         throw new Error('UNKNOWN_OPERATION');
       }
       host.db.exec(
         "UPDATE platform_operations SET status='succeeded',result=?,error='' WHERE id=?",
         JSON.stringify(result),
-        op.id,
+        operation.id,
       );
     } catch (error) {
       host.db.exec(
@@ -167,7 +167,7 @@ export async function alarm(host: DarkForestPlatform) {
         error instanceof Fault
           ? error.message
           : '未取得完整收据，源数据保留；可重试原任务。',
-        op.id,
+        operation.id,
       );
     }
   }

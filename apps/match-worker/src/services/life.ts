@@ -245,7 +245,7 @@ export function archiveReport(engine: Engine, correctionReason: string): void {
         Number(b.alive) - Number(a.alive) ||
         (a.alive ? b.kills - a.kills : b.utc - a.utc || b.seq - a.seq),
     );
-  const ranked = standings.map((p, i) => {
+  const ranked = standings.map((p, index) => {
     const equal = (q: typeof p) =>
       p.alive === q.alive &&
       (p.alive ? p.kills === q.kills : !!p.group && p.group === q.group);
@@ -254,7 +254,7 @@ export function archiveReport(engine: Engine, correctionReason: string): void {
       ...p,
       rank: first + 1,
       tied: standings.filter(equal).length > 1,
-      index: i,
+      index: index,
     };
   });
   engine.db.exec(

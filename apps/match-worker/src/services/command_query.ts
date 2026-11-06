@@ -75,13 +75,13 @@ export const queryTables: Record<
 /** 以固定字段白名单和稳定游标读取一页，同时限制响应大小。 */
 export function page(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
   table: string,
   columns = '*',
   where = '1=1',
   bindings: SqlStorageValue[] = [],
 ): unknown {
-  const opts = n.options;
+  const opts = commandNode.options;
   const limit = integer(
     Number(opts.limit ?? COMMAND_LIMITS.page),
     1,
@@ -97,7 +97,7 @@ export function page(
     conditions += ' AND rowid<?';
     args.push(Number(opts.before));
   }
-  const fields = commandContext.e.db
+  const fields = commandContext.engine.db
     .all<{name: string}>(`PRAGMA table_info(${table})`)
     .map(r => r.name);
   const mappings: Record<string, string> = {
@@ -158,7 +158,7 @@ export function page(
       args.push(opts.search);
     }
   }
-  const rows = commandContext.e.db.all<Record<string, SqlStorageValue>>(
+  const rows = commandContext.engine.db.all<Record<string, SqlStorageValue>>(
     `SELECT rowid AS _cursor,${columns} FROM ${table} WHERE ${conditions} ORDER BY rowid DESC LIMIT ?`,
     ...args,
     limit + 1,
@@ -186,34 +186,42 @@ export function page(
   return {
     items,
     nextCursor: rows.length > count ? scalarText(items.at(-1)?._cursor) : null,
-    watermark: commandContext.e.db.match().revision,
+    watermark: commandContext.engine.db.match().revision,
   };
 }
 
 /** 在目标和字段白名单内计算只读统计，不修改赛事状态或奖励。 */
 export function statistic(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
 ): unknown {
-  const a = n.words.slice(2).map(v => commandValue(v, commandContext));
-  const e = commandContext.e;
-  if (n.words[1] === 'count') {
-    return {count: selectTargets(commandContext, a[0]!).length};
+  const commandArguments = commandNode.words
+    .slice(2)
+    .map(v => commandValue(v, commandContext));
+  const engine = commandContext.engine;
+  if (commandNode.words[1] === 'count') {
+    return {count: selectTargets(commandContext, commandArguments[0]!).length};
   }
-  if (n.words[1] === 'sum') {
-    requireCommandArgument(a[1] === 'of', '用法：stats sum 字段 of 目标');
+  if (commandNode.words[1] === 'sum') {
+    requireCommandArgument(
+      commandArguments[1] === 'of',
+      '用法：stats sum 字段 of 目标',
+    );
     return {
-      field: a[0],
-      sum: selectTargets(commandContext, a[2]!).reduce(
-        (sum, id) => sum + score(e, id, a[0]!),
+      field: commandArguments[0],
+      sum: selectTargets(commandContext, commandArguments[2]!).reduce(
+        (sum, id) => sum + score(engine, id, commandArguments[0]!),
         0,
       ),
     };
   }
-  const kind = a[0];
-  const window = a[2] ? durationMs(a[2]) : null;
-  requireCommandArgument(!a[1] || a[1] === 'window', '时间窗口须使用window');
-  const lower = window === null ? null : Math.max(0, e.game() - window);
+  const kind = commandArguments[0];
+  const window = commandArguments[2] ? durationMs(commandArguments[2]) : null;
+  requireCommandArgument(
+    !commandArguments[1] || commandArguments[1] === 'window',
+    '时间窗口须使用window',
+  );
+  const lower = window === null ? null : Math.max(0, engine.game() - window);
   let where =
     lower === null
       ? '1=1'
@@ -221,9 +229,13 @@ export function statistic(
         ? 'game_ms>=0 AND game_ms<=?'
         : 'game_ms>? AND game_ms<=?';
   const args: SqlStorageValue[] =
-    lower === null ? [] : lower === 0 ? [e.game()] : [lower, e.game()];
-  if (n.options.target) {
-    const ids = selectTargets(commandContext, n.options.target);
+    lower === null
+      ? []
+      : lower === 0
+        ? [engine.game()]
+        : [lower, engine.game()];
+  if (commandNode.options.target) {
+    const ids = selectTargets(commandContext, commandNode.options.target);
     where += ` AND ${kind === 'elimination' ? 'player_id' : 'actor'} IN (${ids.map(() => '?').join(',')})`;
     args.push(...ids);
   }
@@ -252,14 +264,14 @@ export function statistic(
       " AND ((kind IN ('singer','photon') AND civilization_ids<>'[]') OR title='裁判母星毁灭')";
   }
   for (const k of ['since', 'until']) {
-    if (n.options[k]) {
+    if (commandNode.options[k]) {
       where += ` AND ${kind === 'elimination' ? 'utc_ms' : kind === 'sighting-hit' ? 'committed_utc' : 'utc_ms'}${k === 'since' ? '>=' : '<='}?`;
-      args.push(instantMs(n.options[k]));
+      args.push(instantMs(commandNode.options[k]));
     }
   }
   return {
     kind,
-    count: e.db.one<{n: number}>(
+    count: engine.db.one<{n: number}>(
       `SELECT COUNT(*) n FROM ${table} WHERE ${where}`,
       ...args,
     )!.n,
@@ -268,18 +280,23 @@ export function statistic(
 }
 
 /** 执行已授权的注册查询并按职责隐藏秘密，不产生随机抽签或战局变更。 */
-export function query(commandContext: CommandContext, n: CommandNode): unknown {
-  const spec = commandSpec(n)!;
+export function query(
+  commandContext: CommandContext,
+  commandNode: CommandNode,
+): unknown {
+  const spec = commandSpec(commandNode)!;
   permission(commandContext.actor, spec.permission);
-  validateCommandArguments(n);
-  const e = commandContext.e;
-  const w = n.words;
-  const a = w
+  validateCommandArguments(commandNode);
+  const engine = commandContext.engine;
+  const words = commandNode.words;
+  const commandArguments = words
     .slice(spec.path.split(' ').length)
     .map(v => commandValue(v, commandContext));
   const path = spec.path;
   if (path === 'help') {
-    return COMMAND_SPECS.filter(s => !a[0] || s.path.startsWith(a[0]))
+    return COMMAND_SPECS.filter(
+      s => !commandArguments[0] || s.path.startsWith(commandArguments[0]),
+    )
       .filter(s =>
         accountPermissions(commandContext.actor).includes(s.permission),
       )
@@ -299,45 +316,47 @@ export function query(commandContext: CommandContext, n: CommandNode): unknown {
   if (path === 'whoami' || path === 'capability list') {
     return {
       actor: commandContext.actor.id,
-      match: e.db.match().id,
+      match: engine.db.match().id,
       permissions: accountPermissions(commandContext.actor),
     };
   }
   if (path === 'selector inspect') {
-    const t = targets(
-      e,
-      a[0]!,
+    const targetSet = targets(
+      engine,
+      commandArguments[0]!,
       commandContext.self,
       true,
       commandContext.bindings,
     );
     return {
-      candidates: t.candidates,
-      count: t.count,
-      random: t.random,
+      candidates: targetSet.candidates,
+      count: targetSet.count,
+      random: targetSet.random,
       draw: '查询不抽人',
     };
   }
   if (path === 'clock status' || path === 'match status') {
-    return matchProjection(e);
+    return matchProjection(engine);
   }
   if (path === 'clock pauses') {
-    return page(commandContext, n, 'clock_pauses');
+    return page(commandContext, commandNode, 'clock_pauses');
   }
   if (path === 'roster list') {
-    return e.db.roster().map(id => ({id, nickname: e.db.player(id).nickname}));
+    return engine.db
+      .roster()
+      .map(id => ({id, nickname: engine.db.player(id).nickname}));
   }
   if (path === 'preflight list') {
-    return e.db.roster().map(id => ({
+    return engine.db.roster().map(id => ({
       id,
-      flight: e.db.flight(id),
-      verified: e.db.home(id)?.status === 'verified',
+      flight: engine.db.flight(id),
+      verified: engine.db.home(id)?.status === 'verified',
     }));
   }
   if (path === 'player list') {
     return page(
       commandContext,
-      n,
+      commandNode,
       'players',
       'id,nickname,entry_status,tech,photons,broadcasts',
     );
@@ -345,9 +364,9 @@ export function query(commandContext: CommandContext, n: CommandNode): unknown {
   if (path === 'inspect') {
     const permits = accountPermissions(commandContext.actor);
     const result = civilization(
-      e,
-      singleTarget(commandContext, a[0]!),
-      e.resolvedKeys!,
+      engine,
+      singleTarget(commandContext, commandArguments[0]!),
+      engine.resolvedKeys!,
       permits.includes('equipment'),
     );
     if (!permits.includes('homeworlds')) {
@@ -362,132 +381,150 @@ export function query(commandContext: CommandContext, n: CommandNode): unknown {
     return result;
   }
   if (path === 'player resources') {
-    const id = singleTarget(commandContext, a[0]!);
+    const id = singleTarget(commandContext, commandArguments[0]!);
     return {
       id,
-      tech: e.db.player(id).tech,
-      photons: score(e, id, 'photons'),
-      broadcasts: score(e, id, 'broadcasts'),
-      sources: e.db.all<Record<string, SqlStorageValue>>(
+      tech: engine.db.player(id).tech,
+      photons: score(engine, id, 'photons'),
+      broadcasts: score(engine, id, 'broadcasts'),
+      sources: engine.db.all<Record<string, SqlStorageValue>>(
         'SELECT id,kind,title,game_ms FROM event_log WHERE owner=? ORDER BY seq',
         id,
       ),
     };
   }
   if (path === 'player restrictions') {
-    const id = singleTarget(commandContext, a[0]!);
+    const id = singleTarget(commandContext, commandArguments[0]!);
     return {
-      match: matchProjection(e),
-      flight: e.db.flight(id),
-      penalty: e.db.one<Record<string, SqlStorageValue>>(
+      match: matchProjection(engine),
+      flight: engine.db.flight(id),
+      penalty: engine.db.one<Record<string, SqlStorageValue>>(
         'SELECT wrong,locked_until FROM attack_controls WHERE player_id=?',
         id,
       ),
-      effects: e.db.all<Record<string, SqlStorageValue>>(
+      effects: engine.db.all<Record<string, SqlStorageValue>>(
         'SELECT * FROM admin_effects WHERE active=1 AND starts<=? AND ends>? AND (target=? OR target=?)',
-        e.now(),
-        e.now(),
+        engine.now(),
+        engine.now(),
         '@a',
         id,
       ),
     };
   }
   if (path === 'history') {
-    const id = singleTarget(commandContext, a[0]!);
-    const kind = a[2] ?? 'all';
-    return civilizationHistory(e, commandContext.actor, id, kind, n);
+    const id = singleTarget(commandContext, commandArguments[0]!);
+    const kind = commandArguments[2] ?? 'all';
+    return civilizationHistory(
+      engine,
+      commandContext.actor,
+      id,
+      kind,
+      commandNode,
+    );
   }
   if (path === 'homeworld pending') {
-    return page(commandContext, n, 'homeworlds', '*', "status='pending'");
+    return page(
+      commandContext,
+      commandNode,
+      'homeworlds',
+      '*',
+      "status='pending'",
+    );
   }
   if (path === 'homeworld inspect') {
-    return e.db.home(singleTarget(commandContext, a[0]!)) ?? null;
+    return (
+      engine.db.home(singleTarget(commandContext, commandArguments[0]!)) ?? null
+    );
   }
   if (path === 'codebook status') {
     return {
       capacity: 350,
-      issued: e.db.one<{n: number}>('SELECT COUNT(*) n FROM sighting_codes')!.n,
+      issued: engine.db.one<{n: number}>(
+        'SELECT COUNT(*) n FROM sighting_codes',
+      )!.n,
     };
   }
   if (path === 'tag list') {
-    return e.db.all<Record<string, SqlStorageValue>>(
+    return engine.db.all<Record<string, SqlStorageValue>>(
       'SELECT tag FROM command_tags WHERE player_id=? ORDER BY tag',
-      singleTarget(commandContext, a[0]!),
+      singleTarget(commandContext, commandArguments[0]!),
     );
   }
   if (path === 'observer status') {
-    const id = singleTarget(commandContext, a[0]!);
+    const id = singleTarget(commandContext, commandArguments[0]!);
     return {
       id,
-      revoked: e.db.player(id).observer_revoked,
-      flight: e.db.flight(id).status,
-      elimination: e.db.one<Record<string, SqlStorageValue>>(
+      revoked: engine.db.player(id).observer_revoked,
+      flight: engine.db.flight(id).status,
+      elimination: engine.db.one<Record<string, SqlStorageValue>>(
         'SELECT utc_ms FROM eliminations WHERE player_id=? AND valid=1',
         id,
       ),
-      waitSeconds: e.db.parameters().observerWaitSeconds,
+      waitSeconds: engine.db.parameters().observerWaitSeconds,
     };
   }
   if (path === 'scheduler health') {
     return {
-      health: e.db.one<Record<string, SqlStorageValue>>(
+      health: engine.db.one<Record<string, SqlStorageValue>>(
         'SELECT * FROM scheduler_health',
       ),
-      failed: e.db.all<Record<string, SqlStorageValue>>(
+      failed: engine.db.all<Record<string, SqlStorageValue>>(
         "SELECT id,last_error,last_error_utc,attempt_count FROM scheduled_events WHERE last_error<>'' AND status='pending'",
       ),
     };
   }
   if (path === 'hunt status') {
     return {
-      phase: e.db.match().phase,
-      paused: e.db.match().pause_reason,
-      finalized: e.db.match().hunt_finalized,
-      alive: survivors(e),
+      phase: engine.db.match().phase,
+      paused: engine.db.match().pause_reason,
+      finalized: engine.db.match().hunt_finalized,
+      alive: survivors(engine),
     };
   }
   if (path === 'parameter list') {
-    return e.db.parameters();
+    return engine.db.parameters();
   }
   if (path === 'parameter inspect') {
-    requireCommandArgument(a[0]! in parameterKeys, '未知参数');
+    requireCommandArgument(commandArguments[0]! in parameterKeys, '未知参数');
     return {
-      key: a[0],
+      key: commandArguments[0],
       value:
-        e.db.parameters()[
-          parameterKeys[a[0]!] as keyof ReturnType<typeof e.db.parameters>
+        engine.db.parameters()[
+          parameterKeys[commandArguments[0]!] as keyof ReturnType<
+            typeof engine.db.parameters
+          >
         ],
-      range: a[0]!.includes('percent')
+      range: commandArguments[0]!.includes('percent')
         ? '0—100'
-        : a[0] === 'sighting-min-interval'
+        : commandArguments[0] === 'sighting-min-interval'
           ? '1—60000毫秒'
-          : a[0] === 'sighting-per-minute'
+          : commandArguments[0] === 'sighting-per-minute'
             ? '1—120'
-            : a[0] === 'observer-wait'
+            : commandArguments[0] === 'observer-wait'
               ? '0—86400秒'
               : '1—86400秒',
     };
   }
   if (path === 'setting list' || path === 'palette list') {
-    const site = parseJson(e.db.match().site_json) as SiteConfig;
+    const site = parseJson(engine.db.match().site_json) as SiteConfig;
     return path === 'palette list' ? site.colors : site;
   }
   if (path === 'account list' || path === 'account inspect') {
-    const accounts = accountList(e, commandContext.actor);
+    const accounts = accountList(engine, commandContext.actor);
     return path.endsWith('list')
       ? accounts
-      : (accounts.find(x => x.id === a[0]) ?? null);
+      : (accounts.find(x => x.id === commandArguments[0]) ?? null);
   }
   if (path === 'session list') {
-    return e.db.all<Record<string, SqlStorageValue>>(
+    return engine.db.all<Record<string, SqlStorageValue>>(
       'SELECT account_id,expires,revoked FROM sessions WHERE account_id=?',
-      a[0]!,
+      commandArguments[0]!,
     );
   }
   if (path === 'recovery status' || path === 'recovery checklist') {
     return {
-      state: e.db.match().recovery_state,
-      match: matchProjection(e),
+      state: engine.db.match().recovery_state,
+      match: matchProjection(engine),
       checklist: [
         '核对实际阶段与暂停',
         '核对有效手环配置',
@@ -496,23 +533,23 @@ export function query(commandContext: CommandContext, n: CommandNode): unknown {
       ],
     };
   }
-  if (w[0] === 'stats') {
-    return statistic(commandContext, n);
+  if (words[0] === 'stats') {
+    return statistic(commandContext, commandNode);
   }
   if (
     ['case', 'schedule', 'macro', 'job', 'export', 'template'].includes(
-      w[0]!,
+      words[0]!,
     ) ||
     path === 'hunt draft inspect'
   ) {
-    const kind = path === 'hunt draft inspect' ? 'hunt' : w[0]!;
-    if (w[1] === 'list') {
+    const kind = path === 'hunt draft inspect' ? 'hunt' : words[0]!;
+    if (words[1] === 'list') {
       const all =
         ['macro', 'template'].includes(kind) ||
         accountPermissions(commandContext.actor).includes('commands');
       return page(
         commandContext,
-        n,
+        commandNode,
         'command_objects',
         '*',
         all ? 'kind=?' : 'kind=? AND actor=?',
@@ -523,11 +560,11 @@ export function query(commandContext: CommandContext, n: CommandNode): unknown {
       const row = namedCommandObject(
         commandContext,
         kind,
-        a[0]!,
-        a[2] ? Number(a[2]) : undefined,
+        commandArguments[0]!,
+        commandArguments[2] ? Number(commandArguments[2]) : undefined,
       );
       if (path === 'template preview') {
-        const id = singleTarget(commandContext, a[2]!);
+        const id = singleTarget(commandContext, commandArguments[2]!);
         return renderCommandTemplate(
           commandContext,
           (parseJson(row.data) as {body: string}).body,
@@ -536,17 +573,21 @@ export function query(commandContext: CommandContext, n: CommandNode): unknown {
       }
       return {...row, data: parseJson(row.data)};
     }
-    const row = commandObject(e, a[0]!, kind);
+    const row = commandObject(engine, commandArguments[0]!, kind);
     requireObjectOwner(commandContext, row);
     if (path === 'case graph') {
       const data = parseJson(row.data) as {
         evidence: Array<{ref: string | null; note: string}>;
       };
-      const audits = e.db.all<{id: string; action: string; target: string}>(
+      const audits = engine.db.all<{
+        id: string;
+        action: string;
+        target: string;
+      }>(
         "SELECT id,action,target FROM audit_logs WHERE json_extract(detail,'$.caseId')=? ORDER BY seq",
         row.id,
       );
-      const objects = e.db.all<{id: string; kind: string; status: string}>(
+      const objects = engine.db.all<{id: string; kind: string; status: string}>(
         "SELECT id,kind,status FROM command_objects WHERE json_extract(data,'$.caseId')=? ORDER BY created_utc,id",
         row.id,
       );
@@ -580,26 +621,26 @@ export function query(commandContext: CommandContext, n: CommandNode): unknown {
     }
     return {...row, data: parseJson(row.data)};
   }
-  const config = queryTables[w[0]!];
+  const config = queryTables[words[0]!];
   if (config) {
     if (config.permission) {
       permission(commandContext.actor, config.permission);
     }
-    if (['list', 'history', 'versions'].includes(w[1]!)) {
+    if (['list', 'history', 'versions'].includes(words[1]!)) {
       let where = '1=1';
       let bindings: SqlStorageValue[] = [];
-      if (w[0] === 'flight' && a[0]) {
+      if (words[0] === 'flight' && commandArguments[0]) {
         where = 'player_id=?';
-        bindings = [singleTarget(commandContext, a[0])];
+        bindings = [singleTarget(commandContext, commandArguments[0])];
       }
-      if (w[0] === 'attack' && a[0]) {
-        const ids = selectTargets(commandContext, a[0]);
+      if (words[0] === 'attack' && commandArguments[0]) {
+        const ids = selectTargets(commandContext, commandArguments[0]);
         where = `actor IN (${ids.map(() => '?').join(',')}) OR target IN (${ids.map(() => '?').join(',')})`;
         bindings = [...ids, ...ids];
       }
       return page(
         commandContext,
-        n,
+        commandNode,
         config.table,
         config.columns,
         where,
@@ -607,20 +648,21 @@ export function query(commandContext: CommandContext, n: CommandNode): unknown {
       );
     }
     const key =
-      w[0] === 'report'
-        ? (a[1] ??
-          e.db.one<{v: number}>('SELECT MAX(version) v FROM result_reports')
-            ?.v ??
+      words[0] === 'report'
+        ? (commandArguments[1] ??
+          engine.db.one<{v: number}>(
+            'SELECT MAX(version) v FROM result_reports',
+          )?.v ??
           0)
-        : a[0]!;
-    const row = e.db.one<Record<string, SqlStorageValue>>(
+        : commandArguments[0]!;
+    const row = engine.db.one<Record<string, SqlStorageValue>>(
       `SELECT ${config.columns ?? '*'} FROM ${config.table} WHERE ${config.id ?? 'id'}=?`,
       key,
     );
-    if (w[0] === 'notice' && row) {
+    if (words[0] === 'notice' && row) {
       return {
         ...row,
-        actions: e.db.all<Record<string, SqlStorageValue>>(
+        actions: engine.db.all<Record<string, SqlStorageValue>>(
           'SELECT * FROM notice_actions WHERE notice_id=? ORDER BY utc_ms,id',
           row.id!,
         ),

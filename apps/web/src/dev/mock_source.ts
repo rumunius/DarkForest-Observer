@@ -73,54 +73,58 @@ export class MockSource implements DataSource {
     if (match.running && !match.paused) {
       match.gameMs += elapsed;
     }
-    const me = this.state.player;
+    const playerState = this.state.player;
     if (
-      me?.flight === 'eliminated' &&
-      me.eliminatedAt &&
-      now >= me.eliminatedAt + RULES.observerWaitMs
+      playerState?.flight === 'eliminated' &&
+      playerState.eliminatedAt &&
+      now >= playerState.eliminatedAt + RULES.observerWaitMs
     ) {
-      me.observerAllowed = true;
+      playerState.observerAllowed = true;
     }
     if (
-      me?.flight === 'active' &&
-      me.attackLockedUntil &&
-      now >= me.attackLockedUntil &&
+      playerState?.flight === 'active' &&
+      playerState.attackLockedUntil &&
+      now >= playerState.attackLockedUntil &&
       !match.paused &&
       ['forest', 'apocalypse', 'hunt'].includes(match.stage)
     ) {
-      me.attackLockedUntil = 0;
-      if (!me.actions.includes('sighting')) {
-        me.actions.unshift('sighting');
+      playerState.attackLockedUntil = 0;
+      if (!playerState.actions.includes('sighting')) {
+        playerState.actions.unshift('sighting');
       }
     }
     if (
-      me?.flight === 'staged' &&
+      playerState?.flight === 'staged' &&
       match.releaseAt &&
       now >= match.releaseAt &&
-      !me.actions.includes('preflight-issue-code')
+      !playerState.actions.includes('preflight-issue-code')
     ) {
       match.stage = 'outfitting';
-      me.actions = ['preflight-issue-code'];
-      match.revision++;
-    }
-    if (me?.flight === 'ready' && match.startAt && now >= match.startAt) {
-      match.stage = 'forest';
-      match.running = true;
-      me.flight = 'active';
-      me.actions = ['sighting', 'broadcast', 'withdraw'];
+      playerState.actions = ['preflight-issue-code'];
       match.revision++;
     }
     if (
-      me &&
-      ['returning', 'preparing', 'issued'].includes(me.flight) &&
-      me.respawnDeadline !== null &&
-      match.gameMs >= me.respawnDeadline
+      playerState?.flight === 'ready' &&
+      match.startAt &&
+      now >= match.startAt
     ) {
-      me.flight = 'eliminated';
-      me.actions = [];
-      me.arms = null;
-      me.eliminatedAt = now;
-      me.eliminationReason = '未在统一截止前完成重生';
+      match.stage = 'forest';
+      match.running = true;
+      playerState.flight = 'active';
+      playerState.actions = ['sighting', 'broadcast', 'withdraw'];
+      match.revision++;
+    }
+    if (
+      playerState &&
+      ['returning', 'preparing', 'issued'].includes(playerState.flight) &&
+      playerState.respawnDeadline !== null &&
+      match.gameMs >= playerState.respawnDeadline
+    ) {
+      playerState.flight = 'eliminated';
+      playerState.actions = [];
+      playerState.arms = null;
+      playerState.eliminatedAt = now;
+      playerState.eliminationReason = '未在统一截止前完成重生';
       match.revision++;
     }
   }
@@ -193,23 +197,23 @@ export class MockSource implements DataSource {
 
   async template(kind: string) {
     await delay();
-    const me = this.state.player!;
-    if (!me) {
+    const playerState = this.state.player!;
+    if (!playerState) {
       throw new ApiError('当前账号不能获取此消息。', 403);
     }
     return kind === 'homeworld'
       ? qqCopy(
           '母星登记',
-          `文明${me.id}（${me.nickname}）请求在${me.homeworld}登记母星（提交版本：${me.homeVersion}），以下是我的母星现场时间水印照片：`,
+          `文明${playerState.id}（${playerState.nickname}）请求在${playerState.homeworld}登记母星（提交版本：${playerState.homeVersion}），以下是我的母星现场时间水印照片：`,
         )
       : kind === 'respawn'
         ? qqCopy(
             '重生',
-            `文明${me.id}（${me.nickname}）已返回母星，请求重生，以下是我的母星现场时间水印照片：`,
+            `文明${playerState.id}（${playerState.nickname}）已返回母星，请求重生，以下是我的母星现场时间水印照片：`,
           )
         : qqCopy(
             '异常申报',
-            `文明${me.id}（${me.nickname}）请求裁判协助。\n比赛时间：${gameTimeCopy(this.state.match!.gameMs)}。\n现场情况：`,
+            `文明${playerState.id}（${playerState.nickname}）请求裁判协助。\n比赛时间：${gameTimeCopy(this.state.match!.gameMs)}。\n现场情况：`,
           );
   }
 
@@ -251,20 +255,22 @@ export class MockSource implements DataSource {
     return this.apply(operation);
   }
 
-  private apply(op: Operation): OperationResult {
+  private apply(operation: Operation): OperationResult {
     this.reconcile();
-    const me = this.state.player;
+    const playerState = this.state.player;
     const match = this.state.match!;
-    const path = op.path;
-    const payload = op.payload;
+    const path = operation.path;
+    const payload = operation.payload;
     let title = '操作已完成';
     let message = '比赛状态已更新。';
     let code: string | undefined;
     const action = path.split('/').pop() as Action;
     if (path.startsWith('/action/') || path === '/player/nickname') {
       if (
-        !me ||
-        !me.actions.includes(action === 'nickname' ? 'nickname' : action)
+        !playerState ||
+        !playerState.actions.includes(
+          action === 'nickname' ? 'nickname' : action,
+        )
       ) {
         throw new ApiError('比赛状态已更新，请查看当前可用行动。', 409);
       }
@@ -280,72 +286,72 @@ export class MockSource implements DataSource {
           if ([...name].length < 2 || [...name].length > 8) {
             throw new ApiError('昵称需要2至8个字符。', 422);
           }
-          me.nickname = name;
-          me.flight = 'unregistered';
-          me.actions = ['homeworld-submit'];
+          playerState.nickname = name;
+          playerState.flight = 'unregistered';
+          playerState.actions = ['homeworld-submit'];
           title = '昵称已确认';
           break;
         }
         case 'homeworld-submit':
-          me.homeworld = String(payload.code);
-          me.homeVersion++;
-          me.flight = 'pending';
+          playerState.homeworld = String(payload.code);
+          playerState.homeVersion++;
+          playerState.flight = 'pending';
           title = '母星口令已保存';
           message = '请复制登记消息，发送给裁判并附上现场照片。';
           break;
         case 'preflight-depart':
-          me.flight = 'departed';
-          me.actions = ['preflight-stage'];
+          playerState.flight = 'departed';
+          playerState.actions = ['preflight-stage'];
           title = '已确认离开母星';
           break;
         case 'preflight-stage':
-          me.flight = 'staged';
-          me.actions = [];
+          playerState.flight = 'staged';
+          playerState.actions = [];
           match.releaseAt = Date.now() + 30000;
           title = '准备完成，等待发码';
           break;
         case 'preflight-issue-code':
-          me.flight = 'outfitting';
-          me.arms = [['BK', 'OR'], ['WH']];
-          me.actions = ['preflight-ready'];
+          playerState.flight = 'outfitting';
+          playerState.arms = [['BK', 'OR'], ['WH']];
+          playerState.actions = ['preflight-ready'];
           title = '手环配置已领取';
           break;
         case 'preflight-ready':
-          me.flight = 'ready';
-          me.actions = [];
+          playerState.flight = 'ready';
+          playerState.actions = [];
           match.startAt = Date.now() + 30000;
           title = '已确认穿戴就绪';
           break;
         case 'return-confirm':
-          me.flight = 'preparing';
-          me.actions = ['issue-code'];
+          playerState.flight = 'preparing';
+          playerState.actions = ['issue-code'];
           title = '照片发送情况已确认';
           break;
         case 'issue-code':
-          me.flight = 'issued';
-          me.arms = [['BK', 'OR', 'SB'], ['GY']];
-          me.actions = ['launch'];
+          playerState.flight = 'issued';
+          playerState.arms = [['BK', 'OR', 'SB'], ['GY']];
+          playerState.actions = ['launch'];
           title = '新手环配置已领取';
           break;
         case 'launch':
-          me.flight = 'active';
-          me.flightNumber++;
-          me.respawnDeadline = null;
-          me.actions = [
+          playerState.flight = 'active';
+          playerState.flightNumber++;
+          playerState.respawnDeadline = null;
+          playerState.actions = [
             'sighting',
-            ...(me.broadcasts > 0 ? ['broadcast' as const] : []),
-            ...(me.photons > 0 ? ['photon' as const] : []),
+            ...(playerState.broadcasts > 0 ? ['broadcast' as const] : []),
+            ...(playerState.photons > 0 ? ['photon' as const] : []),
             'withdraw',
           ];
           title = '出航完成';
           break;
         case 'withdraw':
-          me.flight = 'eliminated';
-          me.homeAlive = false;
-          me.actions = [];
-          me.arms = null;
-          me.eliminatedAt = Date.now();
-          me.eliminationReason = '主动退出比赛';
+          playerState.flight = 'eliminated';
+          playerState.homeAlive = false;
+          playerState.actions = [];
+          playerState.arms = null;
+          playerState.eliminatedAt = Date.now();
+          playerState.eliminationReason = '主动退出比赛';
           title = '已退出比赛';
           break;
         case 'broadcast': {
@@ -357,28 +363,33 @@ export class MockSource implements DataSource {
           ) {
             throw new ApiError('这组六位口令已被广播。', 409);
           }
-          me.broadcasts--;
-          if (!me.broadcasts) {
-            me.actions = me.actions.filter(a => a !== 'broadcast');
+          playerState.broadcasts--;
+          if (!playerState.broadcasts) {
+            playerState.actions = playerState.actions.filter(
+              a => a !== 'broadcast',
+            );
           }
           title = '广播已发布';
-          message = `广播剩余${me.broadcasts}次。`;
+          message = `广播剩余${playerState.broadcasts}次。`;
           this.state.events.unshift({
             id: `EVT-${crypto.randomUUID()}`,
             kind: 'broadcast',
             title: '坐标广播',
-            body: broadcastCopy(`${me.id}（${me.nickname}）`, code),
+            body: broadcastCopy(
+              `${playerState.id}（${playerState.nickname}）`,
+              code,
+            ),
             code,
             audience: 'public',
             gameMs: match.gameMs,
             utcMs: Date.now(),
-            civilizationIds: [me.id],
+            civilizationIds: [playerState.id],
           });
           break;
         }
         case 'photon':
-          me.photons--;
-          me.actions = me.actions.filter(a => a !== 'photon');
+          playerState.photons--;
+          playerState.actions = playerState.actions.filter(a => a !== 'photon');
           title = '光粒已发射';
           code = String(payload.code);
           message = clearingCopy('photon', code);
@@ -397,26 +408,28 @@ export class MockSource implements DataSource {
             title = '本次目击未产生击毁';
             message = '本次目击未产生击毁。';
             if (this.sightingResult === 'wrong') {
-              me.wrongCount++;
-              if (me.wrongCount >= 3) {
-                me.flight = 'eliminated';
-                me.homeAlive = false;
-                me.arms = null;
-                me.actions = [];
-                me.eliminatedAt = Date.now();
-                me.eliminationReason = '第三次提交错误的手环颜色';
+              playerState.wrongCount++;
+              if (playerState.wrongCount >= 3) {
+                playerState.flight = 'eliminated';
+                playerState.homeAlive = false;
+                playerState.arms = null;
+                playerState.actions = [];
+                playerState.eliminatedAt = Date.now();
+                playerState.eliminationReason = '第三次提交错误的手环颜色';
                 title = '直接出局';
                 message = eliminationCopy(
-                  `${me.id}（${me.nickname}）`,
+                  `${playerState.id}（${playerState.nickname}）`,
                   180,
                   true,
                 );
               } else {
-                const minutes = me.wrongCount === 1 ? 5 : 15;
-                me.attackLockedUntil = Date.now() + minutes * 60000;
-                me.actions = me.actions.filter(a => a !== 'sighting');
+                const minutes = playerState.wrongCount === 1 ? 5 : 15;
+                playerState.attackLockedUntil = Date.now() + minutes * 60000;
+                playerState.actions = playerState.actions.filter(
+                  a => a !== 'sighting',
+                );
                 title = '禁止攻击';
-                message = `本次提交的手环颜色有误。\n累计错误：${me.wrongCount}次。禁止目击攻击：${minutes}分钟。\n恢复攻击时间：${new Date(me.attackLockedUntil).toLocaleTimeString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false})}。`;
+                message = `本次提交的手环颜色有误。\n累计错误：${playerState.wrongCount}次。禁止目击攻击：${minutes}分钟。\n恢复攻击时间：${new Date(playerState.attackLockedUntil).toLocaleTimeString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false})}。`;
               }
             }
           }
@@ -492,7 +505,7 @@ export class MockSource implements DataSource {
           }
         }
         return {
-          requestId: op.requestId,
+          requestId: operation.requestId,
           status: 'complete',
           title: '请核对操作影响',
           message: '预览尚未改变比赛。',
@@ -722,13 +735,13 @@ export class MockSource implements DataSource {
     }
     match.revision++;
     const result: OperationResult = {
-      requestId: op.requestId,
+      requestId: operation.requestId,
       status: 'complete',
       title,
       message,
       ...(code ? {code} : {}),
     };
-    this.results.set(op.requestId, result);
+    this.results.set(operation.requestId, result);
     return result;
   }
 }

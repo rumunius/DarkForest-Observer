@@ -82,8 +82,8 @@ function Login() {
       </p>
       <form
         className="login-form form-stack"
-        onSubmit={handleAsync(async e => {
-          e.preventDefault();
+        onSubmit={handleAsync(async event => {
+          event.preventDefault();
           if (!credential.trim() || busy) {
             return;
           }

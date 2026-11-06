@@ -33,7 +33,7 @@ export interface SavedCommandObject {
 
 /** 一次命令模拟或提交的执行上下文，集中保存工作预算、依赖及审计变化。 */
 export interface CommandContext {
-  e: Engine;
+  engine: Engine;
   actor: Actor;
   id: string;
   prepared: PreparedCode[];
@@ -106,13 +106,13 @@ export function saveCommandObject(
   status = 'active',
 ): string {
   const id = `${prefix}-${commandContext.id}-${commandContext.work}`;
-  commandContext.e.db.exec(
+  commandContext.engine.db.exec(
     'INSERT INTO command_objects(id,kind,actor,status,created_utc,data) VALUES(?,?,?,?,?,?)',
     id,
     kind,
     commandContext.actor.id,
     status,
-    commandContext.e.now(),
+    commandContext.engine.now(),
     stableJson(data),
   );
   return id;
@@ -125,7 +125,7 @@ export function updateCommandObject(
   data: unknown,
   status = row.status,
 ): void {
-  commandContext.e.db.exec(
+  commandContext.engine.db.exec(
     'UPDATE command_objects SET data=?,status=?,version=version+1 WHERE id=?',
     stableJson(data),
     status,
@@ -187,7 +187,7 @@ export function selectTargets(
     );
   }
   const set = targets(
-    commandContext.e,
+    commandContext.engine,
     v,
     commandContext.self,
     commandContext.preview,
@@ -201,11 +201,15 @@ export function selectTargets(
     );
   }
   if (v.startsWith('@') && v !== '@s') {
-    recordDependency(commandContext, 'roster', commandContext.e.db.roster());
+    recordDependency(
+      commandContext,
+      'roster',
+      commandContext.engine.db.roster(),
+    );
     recordDependency(
       commandContext,
       'selector-roster',
-      commandContext.e.db
+      commandContext.engine.db
         .roster()
         .map(id => commandContext.initial['player:' + id]),
     );
@@ -252,7 +256,7 @@ export function requireHeadJudge(commandContext: CommandContext): void {
 
 /** 要求比赛处于可管理的运行阶段，已结束比赛保留其他专用读取入口。 */
 export function requireRunningMatch(commandContext: CommandContext): void {
-  const m = commandContext.e.db.match();
+  const m = commandContext.engine.db.match();
   requireThat(
     m.start_settled !== null && m.phase !== 'ended',
     'MATCH_NOT_RUNNING',
@@ -264,8 +268,8 @@ export function requireRunningMatch(commandContext: CommandContext): void {
 export function requireForestPhase(commandContext: CommandContext): void {
   requireRunningMatch(commandContext);
   requireThat(
-    commandContext.e.db.match().phase === 'forest' &&
-      commandContext.e.game() < TIMES.apocalypse,
+    commandContext.engine.db.match().phase === 'forest' &&
+      commandContext.engine.game() < TIMES.apocalypse,
     'FOREST_REQUIRED',
     '该操作仅在65分钟前的第一阶段开放。',
   );
@@ -277,7 +281,7 @@ export function requireLivingTarget(
   id: string,
 ): void {
   requireThat(
-    survivors(commandContext.e).includes(id),
+    survivors(commandContext.engine).includes(id),
     'TARGET_NOT_ALIVE',
     '目标不在正式存活名单中：' + id,
   );
@@ -287,7 +291,11 @@ export function requireLivingTarget(
 export function recordPopulationDependency(
   commandContext: CommandContext,
 ): void {
-  recordDependency(commandContext, 'population', survivors(commandContext.e));
+  recordDependency(
+    commandContext,
+    'population',
+    survivors(commandContext.engine),
+  );
 }
 
 /** 登记当前事件计划的依赖，确认时不能悄然替换既定事件。 */
@@ -306,7 +314,7 @@ export function recordTableDependency(
     commandContext,
     'table:' + table,
     commandContext.initial['table:' + table] ??
-      commandContext.e.db.all<Record<string, SqlStorageValue>>(
+      commandContext.engine.db.all<Record<string, SqlStorageValue>>(
         `SELECT * FROM ${table}`,
       ),
   );
@@ -318,26 +326,26 @@ export function invokeJudgeAction(
   path: string,
   payload: Record<string, unknown>,
 ): OperationResult {
-  const e = commandContext.e;
+  const engine = commandContext.engine;
   const id = `${commandContext.id}-${commandContext.work}`;
   const body = {
     ...payload,
     reason: commandContext.reason,
-    expected_revision: e.db.match().revision,
+    expected_revision: engine.db.match().revision,
   };
-  const p = previewAction(e, commandContext.actor, id, {
+  const managementPreview = previewAction(engine, commandContext.actor, id, {
     ...body,
     path,
     change: path,
   }).preview!;
-  commandContext.changes.push(...p.changes);
-  commandContext.notes.push(...p.consequences);
+  commandContext.changes.push(...managementPreview.changes);
+  commandContext.notes.push(...managementPreview.consequences);
   return judgeAction(
-    e,
+    engine,
     commandContext.actor,
     id,
     path,
-    {...body, preview_token: p.token},
+    {...body, preview_token: managementPreview.token},
     commandContext.prepared,
   );
 }
@@ -386,9 +394,10 @@ export function renderCommandTemplate(
   };
   const allowed: Record<string, string> = {
     id: id ?? '',
-    nickname: id ? (commandContext.e.db.player(id).nickname ?? id) : '',
-    phase: phases[commandContext.e.db.match().phase] ?? '请查看当前比赛状态',
-    game_time: String(commandContext.e.game()),
+    nickname: id ? (commandContext.engine.db.player(id).nickname ?? id) : '',
+    phase:
+      phases[commandContext.engine.db.match().phase] ?? '请查看当前比赛状态',
+    game_time: String(commandContext.engine.game()),
   };
   return body.replace(/\$\{([^}]+)\}/g, (_m, k: string) => {
     requireCommandArgument(k in allowed, '未注册的模板字段：' + k);
@@ -403,42 +412,42 @@ export function emitCommandMessage(
   body: string,
   group = false,
 ): void {
-  const e = commandContext.e;
+  const engine = commandContext.engine;
   const source = `judge:${commandContext.actor.id}:${commandContext.id}:${commandContext.work}`;
   if (
     group &&
-    ids.length === e.db.roster().length &&
-    ids.every(id => e.db.roster().includes(id))
+    ids.length === engine.db.roster().length &&
+    ids.every(id => engine.db.roster().includes(id))
   ) {
     const rendered = renderCommandTemplate(commandContext, body);
     logEvent(
-      e,
+      engine,
       source,
       'notice',
       '赛事通知',
       rendered,
       'public',
       [],
-      e.game(),
-      e.now(),
+      engine.game(),
+      engine.now(),
     );
-    e.notice(source, 'group', '赛事通知', rendered);
+    engine.notice(source, 'group', '赛事通知', rendered);
   } else {
     for (const id of ids) {
       const rendered = renderCommandTemplate(commandContext, body, id);
       logEvent(
-        e,
+        engine,
         `${source}:${id}`,
         'notice',
         '赛事通知',
         rendered,
         'personal',
         [id],
-        e.game(),
-        e.now(),
+        engine.game(),
+        engine.now(),
         id,
       );
-      e.notice(source, id, '赛事通知', rendered);
+      engine.notice(source, id, '赛事通知', rendered);
     }
   }
   recordChange(
@@ -450,11 +459,11 @@ export function emitCommandMessage(
 }
 
 /** 拒绝命令目录没有注册的选项，避免拼写错误被静默忽略。 */
-export function validateCommandOptions(n: CommandNode): void {
-  const spec = commandSpec(n);
+export function validateCommandOptions(commandNode: CommandNode): void {
+  const spec = commandSpec(commandNode);
   requireCommandArgument(
     spec,
-    '无法识别命令路径：' + n.words.slice(0, 3).join(' '),
+    '无法识别命令路径：' + commandNode.words.slice(0, 3).join(' '),
   );
   const list =
     spec.path.endsWith(' list') ||
@@ -492,14 +501,14 @@ export function validateCommandOptions(n: CommandNode): void {
       : []),
     ...(spec.path === 'effect create attack-silence' ? ['end-at'] : []),
   ]);
-  for (const key of Object.keys(n.options)) {
+  for (const key of Object.keys(commandNode.options)) {
     requireCommandArgument(allowed.has(key), '该命令不接受 --' + key);
   }
 }
 
 /** 按共享命令目录检查位置参数与选项组合，执行前仍需业务校验。 */
-export function validateCommandArguments(n: CommandNode): void {
-  const spec = commandSpec(n)!;
+export function validateCommandArguments(commandNode: CommandNode): void {
+  const spec = commandSpec(commandNode)!;
   if (
     [
       'execute',
@@ -514,7 +523,7 @@ export function validateCommandArguments(n: CommandNode): void {
     return;
   }
   const tokens = spec.args.split(/\s+/).filter(Boolean);
-  const a = n.words.slice(spec.path.split(' ').length);
+  const commandArguments = commandNode.words.slice(spec.path.split(' ').length);
   const min = spec.args.includes('[')
     ? spec.args
         .slice(0, spec.args.indexOf('['))
@@ -523,15 +532,15 @@ export function validateCommandArguments(n: CommandNode): void {
         .filter(Boolean).length
     : tokens.length;
   requireCommandArgument(
-    a.length >= min && a.length <= tokens.length,
+    commandArguments.length >= min && commandArguments.length <= tokens.length,
     `用法：/${spec.path} ${spec.args}`,
   );
   tokens.forEach((t, i) => {
-    if (a[i] !== undefined && !/[<>[\]{}]/.test(t)) {
-      requireCommandArgument(a[i] === t, `参数关键字应为 ${t}`);
+    if (commandArguments[i] !== undefined && !/[<>[\]{}]/.test(t)) {
+      requireCommandArgument(commandArguments[i] === t, `参数关键字应为 ${t}`);
     }
   });
-  requireCommandArgument(!n.block, `/${spec.path} 不接受操作块`);
+  requireCommandArgument(!commandNode.block, `/${spec.path} 不接受操作块`);
 }
 
 /** 要求对象创建者或具备命令管理职责的裁判，防止跨作者修改任务。 */
@@ -555,7 +564,7 @@ export function namedCommandObject(
   name: string,
   version?: number,
 ): SavedCommandObject {
-  const rows = commandContext.e.db.all<SavedCommandObject>(
+  const rows = commandContext.engine.db.all<SavedCommandObject>(
     "SELECT * FROM command_objects WHERE kind=? AND json_extract(data,'$.name')=? ORDER BY version DESC",
     kind,
     name,

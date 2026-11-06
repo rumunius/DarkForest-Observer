@@ -96,21 +96,21 @@ export function Dashboard() {
           {(judge.noticeTasks ?? judge.notices)
             .filter(n => n.status !== 'sent')
             .slice(0, 4)
-            .map(n => (
+            .map(notice => (
               <Link
-                key={n.id}
-                to={`/judge/notices?notice=${n.id}`}
+                key={notice.id}
+                to={`/judge/notices?notice=${notice.id}`}
                 className="task-row"
               >
                 <span className="task-index">
                   <Icon name="message" size={20} />
                 </span>
                 <div>
-                  <strong>{n.title}</strong>
-                  <p>{n.target}</p>
+                  <strong>{notice.title}</strong>
+                  <p>{notice.target}</p>
                 </div>
                 <Status tone="attention">
-                  {n.status === 'copied' ? '已复制，未发送' : '待发送'}
+                  {notice.status === 'copied' ? '已复制，未发送' : '待发送'}
                 </Status>
               </Link>
             ))}

@@ -21,36 +21,38 @@ import {
 /** Execute report commands inside the caller's existing preview or commit transaction. */
 export function handleReportAction(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
 ): unknown {
-  const spec = commandSpec(n)!;
+  const spec = commandSpec(commandNode)!;
 
   permission(commandContext.actor, spec.permission);
 
-  validateCommandArguments(n);
+  validateCommandArguments(commandNode);
 
-  const e = commandContext.e;
+  const engine = commandContext.engine;
 
-  const db = e.db;
+  const db = engine.db;
 
-  const m = db.match();
+  const matchState = db.match();
 
   const path = spec.path;
 
-  const a = n.words
+  const commandArguments = commandNode.words
     .slice(path.split(' ').length)
     .map(v => commandValue(v, commandContext));
 
   if (path === 'case evidence' || path === 'case close') {
     requireHeadJudge(commandContext);
-    const row = commandObject(e, a[0]!, 'case');
+    const row = commandObject(engine, commandArguments[0]!, 'case');
     const data = parseJson(row.data) as {evidence: unknown[]};
     if (path.endsWith('evidence')) {
       requireCommandArgument(
-        a.length === 5 && a[1] === 'ref' && a[3] === 'note',
+        commandArguments.length === 5 &&
+          commandArguments[1] === 'ref' &&
+          commandArguments[3] === 'note',
         '用法：case evidence ID ref 业务ID note "说明"',
       );
-      data.evidence.push({ref: a[2], note: a[4]});
+      data.evidence.push({ref: commandArguments[2], note: commandArguments[4]});
     }
     updateCommandObject(
       commandContext,
@@ -69,9 +71,14 @@ export function handleReportAction(
 
   if (path === 'report correct') {
     requireHeadJudge(commandContext);
-    requireCommandArgument(m.phase === 'ended', '只有完赛后可更正战报');
+    requireCommandArgument(
+      matchState.phase === 'ended',
+      '只有完赛后可更正战报',
+    );
     recordTableDependency(commandContext, 'result_reports');
-    const basis = a[1] ? commandObject(e, a[1], 'case').id : null;
+    const basis = commandArguments[1]
+      ? commandObject(engine, commandArguments[1], 'case').id
+      : null;
     const version = db.one<{v: number}>(
       'SELECT MAX(version) v FROM result_reports',
     )!.v;
@@ -97,8 +104,11 @@ export function handleReportAction(
 
   if (path === 'report publish') {
     requireHeadJudge(commandContext);
-    requireCommandArgument(m.phase === 'ended', '只有完赛后可发布战报');
-    const version = Number(a[0]!.replace(/^RPT-/, ''));
+    requireCommandArgument(
+      matchState.phase === 'ended',
+      '只有完赛后可发布战报',
+    );
+    const version = Number(commandArguments[0]!.replace(/^RPT-/, ''));
     requireCommandArgument(
       db.one<Record<string, SqlStorageValue>>(
         'SELECT version FROM result_reports WHERE version=?',

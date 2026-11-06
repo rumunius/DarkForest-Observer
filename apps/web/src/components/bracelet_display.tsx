@@ -10,11 +10,11 @@ export function MiniArms({arms}: {arms: Arms | null}) {
   }
   return (
     <div className="mini-arms" aria-label="两侧手环配置">
-      {arms.map((arm, i) => (
+      {arms.map((arm, index) => (
         <span
           className="mini-arm"
-          key={i}
-          aria-label={i ? '另一侧手臂' : '一侧手臂'}
+          key={index}
+          aria-label={index ? '另一侧手臂' : '一侧手臂'}
         >
           {COLORS.filter(c => arm.includes(c.id)).map(c => (
             <span

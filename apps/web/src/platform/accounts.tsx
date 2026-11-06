@@ -86,8 +86,8 @@ export function Accounts({
           type="file"
           accept=".csv,text/csv"
           aria-label="选择账号CSV"
-          onChange={e => {
-            const file = e.target.files?.[0];
+          onChange={event => {
+            const file = event.target.files?.[0];
             setCsv('');
             setReport(null);
             if (!file) {
@@ -144,17 +144,17 @@ export function Accounts({
       <div className="platform-account-list">
         {data
           ?.filter(a => `${a.name} ${a.tags} ${a.id}`.includes(search))
-          .map(a => (
+          .map(account => (
             <button
-              key={a.id}
+              key={account.id}
               className="platform-account-row"
-              onClick={() => setSelected(a)}
+              onClick={() => setSelected(account)}
             >
               <span>
-                <strong>{a.name}</strong>
+                <strong>{account.name}</strong>
                 <small>
-                  {a.kind === 'staff' ? '工作人员' : '玩家'}，
-                  {accountStates[a.status]}
+                  {account.kind === 'staff' ? '工作人员' : '玩家'}，
+                  {accountStates[account.status]}
                 </small>
               </span>
               <Icon name="arrow" size={18} />
@@ -247,7 +247,7 @@ export function RoleManager({
   const [role, setRole] = useState('admin');
   const [scope, setScope] = useState('');
   const [reason, setReason] = useState('');
-  const a = accounts?.find(a => a.id === id);
+  const account = accounts?.find(a => a.id === id);
   return (
     <>
       <Header title="平台权限与所有权" />
@@ -292,7 +292,7 @@ export function RoleManager({
           <Button
             key={String(enabled)}
             disabled={
-              !a || !reason || (enabled && role === 'archivist' && !scope)
+              !account || !reason || (enabled && role === 'archivist' && !scope)
             }
             onClick={() =>
               void run(() =>
@@ -302,7 +302,7 @@ export function RoleManager({
                     accountId: id,
                     role,
                     enabled,
-                    expected_version: a?.version,
+                    expected_version: account?.version,
                     reason,
                     ...(enabled && role === 'archivist'
                       ? {matchId: scope}

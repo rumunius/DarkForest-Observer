@@ -41,7 +41,7 @@ export function Notices() {
         (b.priority ?? 0) - (a.priority ?? 0) ||
         a.gameMs - b.gameMs,
     );
-  const n = notices.find(n => n.id === id) ?? notices[0];
+  const notice = notices.find(n => n.id === id) ?? notices[0];
   const statusNames = {
     pending: '待发送',
     copied: '已复制',
@@ -77,14 +77,14 @@ export function Notices() {
           ))}
         </select>
       </Field>
-      {!n ? (
+      {!notice ? (
         <p className="empty-inline">当前通知已全部处理。</p>
       ) : (
         <div className="master-detail">
           <div className="master-list">
             {notices.map(item => (
               <button
-                className={item.id === n.id ? 'selected' : ''}
+                className={item.id === notice.id ? 'selected' : ''}
                 key={item.id}
                 onClick={() => {
                   setId(item.id);
@@ -101,48 +101,50 @@ export function Notices() {
           </div>
           <Frame>
             <div className="heading-row">
-              <h2>{n.title}</h2>
-              <Status tone={n.status !== 'sent' ? 'attention' : ''}>
-                {statusNames[n.status]}
+              <h2>{notice.title}</h2>
+              <Status tone={notice.status !== 'sent' ? 'attention' : ''}>
+                {statusNames[notice.status]}
               </Status>
             </div>
-            <p>收件人：{n.target}</p>
+            <p>收件人：{notice.target}</p>
             <p className="secondary">
-              最近处理人：{n.operator || '尚未处理'}，第{n.version}版
+              最近处理人：{notice.operator || '尚未处理'}，第{notice.version}版
             </p>
-            {n.copiedUtcMs && (
+            {notice.copiedUtcMs && (
               <p className="secondary">
-                复制：{n.copiedBy}，
-                {new Date(n.copiedUtcMs).toLocaleString('zh-CN')}
+                复制：{notice.copiedBy}，
+                {new Date(notice.copiedUtcMs).toLocaleString('zh-CN')}
               </p>
             )}
-            {n.sentUtcMs && (
+            {notice.sentUtcMs && (
               <p className="secondary">
-                发送：{n.sentBy}，
-                {new Date(n.sentUtcMs).toLocaleString('zh-CN')}
+                发送：{notice.sentBy}，
+                {new Date(notice.sentUtcMs).toLocaleString('zh-CN')}
               </p>
             )}
-            {n.error && <p className="attention">发送异常：{n.error}</p>}
+            {notice.error && (
+              <p className="attention">发送异常：{notice.error}</p>
+            )}
             <CopyText
-              text={n.body}
+              text={notice.body}
               label="复制消息"
               onCopied={() => {
-                if (n.status !== 'sent') {
-                  void operate(`/judge/notices/${n.id}/copied`, {
-                    expected_version: n.version,
+                if (notice.status !== 'sent') {
+                  void operate(`/judge/notices/${notice.id}/copied`, {
+                    expected_version: notice.version,
                   });
                 }
               }}
             />
-            {n.status !== 'sent' && (
+            {notice.status !== 'sent' && (
               <>
                 <p>在QQ实际发送后，再记录发送状态。</p>
                 <Button
                   className="primary full"
                   disabled={busy}
                   onClick={() =>
-                    void operate(`/judge/notices/${n.id}/sent`, {
-                      expected_version: n.version,
+                    void operate(`/judge/notices/${notice.id}/sent`, {
+                      expected_version: notice.version,
                     })
                   }
                 >
@@ -166,8 +168,8 @@ export function Notices() {
                     <Button
                       disabled={busy || !reason.trim()}
                       onClick={() =>
-                        void operate(`/judge/notices/${n.id}/error`, {
-                          expected_version: n.version,
+                        void operate(`/judge/notices/${notice.id}/error`, {
+                          expected_version: notice.version,
                           reason,
                         })
                       }

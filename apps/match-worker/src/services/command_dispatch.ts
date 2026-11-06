@@ -14,9 +14,9 @@ import {handleWorldAction} from './command_world_actions';
 /** 按已解析路径派发单条写命令，处理器仍执行相应权限及状态检查。 */
 export function dispatchCommandAction(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
 ): unknown {
-  const path = commandSpec(n)!.path;
+  const path = commandSpec(commandNode)!.path;
   if (
     path === 'clock pause' ||
     path === 'clock resume' ||
@@ -40,7 +40,7 @@ export function dispatchCommandAction(
     path === 'homeworld destroy' ||
     path === 'homeworld restore'
   ) {
-    return handlePlayerAction(commandContext, n);
+    return handlePlayerAction(commandContext, commandNode);
   }
   if (
     path === 'homeworld verify' ||
@@ -53,7 +53,7 @@ export function dispatchCommandAction(
     path === 'announce' ||
     path === 'tell'
   ) {
-    return handleWorldAction(commandContext, n);
+    return handleWorldAction(commandContext, commandNode);
   }
   if (
     path === 'reveal' ||
@@ -64,7 +64,7 @@ export function dispatchCommandAction(
     path === 'roster add' ||
     path === 'roster remove'
   ) {
-    return handleMessageAction(commandContext, n);
+    return handleMessageAction(commandContext, commandNode);
   }
   if (
     path === 'roster withdraw' ||
@@ -78,7 +78,7 @@ export function dispatchCommandAction(
     path === 'recovery finalize' ||
     path === 'export create'
   ) {
-    return handleAdminAction(commandContext, n);
+    return handleAdminAction(commandContext, commandNode);
   }
   if (
     path === 'event retry' ||
@@ -91,7 +91,7 @@ export function dispatchCommandAction(
     path === 'hunt finalize' ||
     path === 'case open'
   ) {
-    return handleEventAction(commandContext, n);
+    return handleEventAction(commandContext, commandNode);
   }
   if (
     path === 'case evidence' ||
@@ -99,7 +99,7 @@ export function dispatchCommandAction(
     path === 'report correct' ||
     path === 'report publish'
   ) {
-    return handleReportAction(commandContext, n);
+    return handleReportAction(commandContext, commandNode);
   }
   throw new Fault(400, 'UNKNOWN_COMMAND', '命令没有执行处理器：' + path);
 }

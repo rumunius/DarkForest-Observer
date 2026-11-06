@@ -32,32 +32,38 @@ export function EndgameManagement() {
             请在QQ核对每个人截至98:00的共享与入圈资格。勾选只形成裁决草稿，最后一次提交整批名单。
           </p>
           <div className="endgame-roster">
-            {living.map(c => (
-              <div className="endgame-row" key={c.id}>
+            {living.map(civilization => (
+              <div className="endgame-row" key={civilization.id}>
                 <label className="check-label">
                   <input
                     type="checkbox"
-                    checked={c.id in selections}
+                    checked={civilization.id in selections}
                     onChange={e =>
                       setSelections(previous => {
                         const next = {...previous};
                         if (e.target.checked) {
-                          next[c.id] = 'no_share_at_cutoff';
+                          next[civilization.id] = 'no_share_at_cutoff';
                         } else {
-                          delete next[c.id];
+                          delete next[civilization.id];
                         }
                         return next;
                       })
                     }
                   />
-                  <Identity id={c.id} nickname={c.nickname} />
+                  <Identity
+                    id={civilization.id}
+                    nickname={civilization.nickname}
+                  />
                 </label>
-                {c.id in selections ? (
+                {civilization.id in selections ? (
                   <select
-                    aria-label={`${c.id}淘汰原因`}
-                    value={selections[c.id]}
+                    aria-label={`${civilization.id}淘汰原因`}
+                    value={selections[civilization.id]}
                     onChange={e =>
-                      setSelections({...selections, [c.id]: e.target.value})
+                      setSelections({
+                        ...selections,
+                        [civilization.id]: e.target.value,
+                      })
                     }
                   >
                     <option value="no_share_at_cutoff">

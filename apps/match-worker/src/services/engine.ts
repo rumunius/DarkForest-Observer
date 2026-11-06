@@ -190,14 +190,14 @@ export class Engine {
     const available = keys.codes.filter(c => !used.has(c.mac));
     // Prepare all still-available candidates before the transaction; concurrent issuers recheck SQL.
     return Promise.all(
-      available.map(async c => {
+      available.map(async character => {
         const id = crypto.randomUUID();
         return {
           id,
-          mac: c.mac,
+          mac: character.mac,
           ciphertext: await encrypt(
             keys.encryption,
-            c.key,
+            character.key,
             `${this.matchId}|${id}`,
           ),
         };

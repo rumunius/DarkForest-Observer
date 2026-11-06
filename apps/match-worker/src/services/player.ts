@@ -24,31 +24,31 @@ export function allowedActions(engine: Engine, player: string): Action[] {
     return [];
   }
   const db = engine.db;
-  const m = db.match();
-  const p = db.player(player);
-  const f = db.flight(player);
-  const h = db.home(player);
+  const matchState = db.match();
+  const playerState = db.player(player);
+  const flight = db.flight(player);
+  const homeworld = db.home(player);
   const now = engine.now();
   if (
-    p.entry_status !== 'registered' ||
-    f.status === 'eliminated' ||
-    m.phase === 'ended' ||
-    m.paused_at !== null
+    playerState.entry_status !== 'registered' ||
+    flight.status === 'eliminated' ||
+    matchState.phase === 'ended' ||
+    matchState.paused_at !== null
   ) {
     return [];
   }
   const actions: Action[] = [];
-  if (m.phase !== 'start_countdown') {
+  if (matchState.phase !== 'start_countdown') {
     actions.push('withdraw');
   }
-  if (m.phase === 'setup') {
-    if (!p.nickname) {
+  if (matchState.phase === 'setup') {
+    if (!playerState.nickname) {
       return [...actions, 'nickname'];
     }
-    if (f.status === 'prelaunch') {
-      if (h?.status !== 'verified') {
+    if (flight.status === 'prelaunch') {
+      if (homeworld?.status !== 'verified') {
         actions.push('homeworld-submit');
-      } else if (f.departed === null) {
+      } else if (flight.departed === null) {
         actions.push('preflight-depart');
       } else {
         actions.push('preflight-stage');
@@ -61,17 +61,17 @@ export function allowedActions(engine: Engine, player: string): Action[] {
       player,
     )
   ) {
-    return m.phase === 'setup' ? actions : [];
+    return matchState.phase === 'setup' ? actions : [];
   }
-  if (m.phase === 'outfitting') {
-    if (f.status === 'staged') {
+  if (matchState.phase === 'outfitting') {
+    if (flight.status === 'staged') {
       actions.push('preflight-issue-code');
     }
-    if (f.status === 'outfitting') {
+    if (flight.status === 'outfitting') {
       actions.push('preflight-ready');
     }
   }
-  if (f.status === 'active') {
+  if (flight.status === 'active') {
     const controls = db.one<{locked_until: number}>(
       'SELECT locked_until FROM attack_controls WHERE player_id=?',
       player,
@@ -84,36 +84,36 @@ export function allowedActions(engine: Engine, player: string): Action[] {
       player,
     );
     if (
-      ['forest', 'apocalypse', 'hunt'].includes(m.phase) &&
-      (m.phase !== 'hunt' || m.hunt_finalized !== null) &&
+      ['forest', 'apocalypse', 'hunt'].includes(matchState.phase) &&
+      (matchState.phase !== 'hunt' || matchState.hunt_finalized !== null) &&
       controls.locked_until <= now &&
       !silent
     ) {
       actions.push('sighting');
     }
-    if (m.phase === 'forest') {
-      if (p.broadcasts < 2) {
+    if (matchState.phase === 'forest') {
+      if (playerState.broadcasts < 2) {
         actions.push('broadcast');
       }
-      if (p.tech && p.photons) {
+      if (playerState.tech && playerState.photons) {
         actions.push('photon');
       }
     }
   }
   if (
-    m.phase === 'forest' &&
-    h?.status === 'verified' &&
-    h.destroyed_game === null &&
-    f.deadline !== null &&
-    engine.game() < Math.min(f.deadline, TIMES.apocalypse)
+    matchState.phase === 'forest' &&
+    homeworld?.status === 'verified' &&
+    homeworld.destroyed_game === null &&
+    flight.deadline !== null &&
+    engine.game() < Math.min(flight.deadline, TIMES.apocalypse)
   ) {
-    if (f.status === 'returning') {
+    if (flight.status === 'returning') {
       actions.push('return-confirm');
     }
-    if (f.status === 'preparing') {
+    if (flight.status === 'preparing') {
       actions.push('issue-code');
     }
-    if (f.status === 'issued') {
+    if (flight.status === 'issued') {
       actions.push('launch');
     }
   }
@@ -136,9 +136,9 @@ export function playerAction(
   const db = engine.db;
   const now = engine.now();
   const game = engine.game(now);
-  const m = db.match();
-  const p = db.player(actor.id);
-  const f = db.flight(actor.id);
+  const matchState = db.match();
+  const playerState = db.player(actor.id);
+  const flight = db.flight(actor.id);
   const home = db.home(actor.id);
   // Format validation precedes eligibility, rate accounting, and random penalties.
   if (action === 'sighting') {
@@ -238,12 +238,12 @@ export function playerAction(
       break;
     case 'launch': {
       requireThat(
-        f.code_id &&
+        flight.code_id &&
           db.all<Record<string, SqlStorageValue>>(
             "UPDATE sighting_codes SET status='active',activated_utc=?,activated_game=? WHERE id=? AND status='reserved' RETURNING id",
             now,
             game,
-            f.code_id,
+            flight.code_id,
           ).length === 1,
         'CODE_NOT_RESERVED',
         '请重新核对当前配置。',
@@ -272,7 +272,7 @@ export function playerAction(
       break;
     }
     case 'withdraw': {
-      if (m.start_settled) {
+      if (matchState.start_settled) {
         eliminate(engine, actor.id, 'withdrawn', eventId, game, now);
       } else {
         retire(engine, actor.id, 'withdrawn', game, now);
@@ -318,7 +318,7 @@ export function playerAction(
         lockedUntil: control.locked_until,
         actorHomeDestroyed: home?.destroyed_game ?? null,
         actorHomeSource: home?.source ?? null,
-        actorVoyage: f.voyage,
+        actorVoyage: flight.voyage,
       };
       let classification = !code
         ? 'unknown_code'
@@ -361,7 +361,7 @@ export function playerAction(
           '请稍后重试。',
         );
         const canRespawn =
-          m.phase === 'forest' &&
+          matchState.phase === 'forest' &&
           targetHome?.status === 'verified' &&
           targetHome.destroyed_game === null;
         requireThat(
@@ -639,7 +639,11 @@ export function playerAction(
         game,
       );
       result = completed(id, '广播已发布', `坐标${code}已暴露给全宇宙。`, {
-        outcome: {accepted: true, eventId, remaining: 1 - p.broadcasts},
+        outcome: {
+          accepted: true,
+          eventId,
+          remaining: 1 - playerState.broadcasts,
+        },
       });
       break;
     }

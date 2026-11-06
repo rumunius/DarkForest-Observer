@@ -50,15 +50,15 @@ export function ManagementForm({
         <Button
           disabled={busy || !usable}
           onClick={handleAsync(async () => {
-            const r = await operate('/judge/manage/preview', {
+            const operationResult = await operate('/judge/manage/preview', {
               path,
               ...payload,
               reason,
               change: change ?? title,
               expected_revision: data.match!.revision,
             });
-            if (r?.preview) {
-              setPreview(r.preview);
+            if (operationResult?.preview) {
+              setPreview(operationResult.preview);
               setStamp(fingerprint);
             }
           }, reportError)}

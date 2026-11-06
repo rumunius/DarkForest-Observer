@@ -10,25 +10,25 @@ export function splitFilters(input: string): string[] {
   let depth = 0;
   let quoted = false;
   let start = 0;
-  for (let i = 0; i < input.length; i++) {
-    const c = input[i];
-    if (c === '\\' && quoted) {
-      i++;
+  for (let index = 0; index < input.length; index++) {
+    const character = input[index];
+    if (character === '\\' && quoted) {
+      index++;
       continue;
     }
-    if (c === '"') {
+    if (character === '"') {
       quoted = !quoted;
     }
     if (!quoted) {
-      if (c === '{') {
+      if (character === '{') {
         depth++;
       }
-      if (c === '}') {
+      if (character === '}') {
         depth--;
       }
-      if (c === ',' && depth === 0) {
-        parts.push(input.slice(start, i).trim());
-        start = i + 1;
+      if (character === ',' && depth === 0) {
+        parts.push(input.slice(start, index).trim());
+        start = index + 1;
       }
     }
   }
@@ -54,12 +54,12 @@ export function inRange(n: number, range: string): boolean {
 }
 /** 读取注册的文明数值属性，禁止把任意SQL字段作为命令分数。 */
 export function score(engine: Engine, id: string, key: string): number {
-  const p = engine.db.player(id);
+  const playerState = engine.db.player(id);
   if (key === 'photons') {
-    return p.photons;
+    return playerState.photons;
   }
   if (key === 'broadcasts') {
-    return 2 - p.broadcasts;
+    return 2 - playerState.broadcasts;
   }
   if (key === 'wrong') {
     return engine.db.one<{wrong: number}>(
@@ -126,12 +126,14 @@ export function targets(
     }
     return {candidates: ids, ids, count: ids.length, random: false};
   }
-  const m = /^@(a|alive|dead|random|pool)(?:\[(.*)\])?$/.exec(value);
-  if (!m) {
+  const selectorMatch = /^@(a|alive|dead|random|pool)(?:\[(.*)\])?$/.exec(
+    value,
+  );
+  if (!selectorMatch) {
     throw new CommandSyntaxError('无法识别目标 ' + value);
   }
   const roster = engine.db.roster();
-  const base = m[1]!;
+  const base = selectorMatch[1]!;
   const registered = engine.db
     .all<{id: string}>(
       "SELECT id FROM players WHERE entry_status='registered' ORDER BY id",
@@ -161,10 +163,10 @@ export function targets(
   let random = base === 'random';
   let limit = base === 'random' ? 1 : Number.MAX_SAFE_INTEGER;
   const seen = new Set<string>();
-  for (const item of m[2] ? splitFilters(m[2]) : []) {
-    const eq = item.indexOf('=');
-    const key = eq < 0 ? item : item.slice(0, eq);
-    const raw = eq < 0 ? 'true' : item.slice(eq + 1);
+  for (const item of selectorMatch[2] ? splitFilters(selectorMatch[2]) : []) {
+    const separatorIndex = item.indexOf('=');
+    const key = separatorIndex < 0 ? item : item.slice(0, separatorIndex);
+    const raw = separatorIndex < 0 ? 'true' : item.slice(separatorIndex + 1);
     if (key !== 'tag' && seen.has(key)) {
       throw new CommandSyntaxError('重复筛选项 ' + key);
     }

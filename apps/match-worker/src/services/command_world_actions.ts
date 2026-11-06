@@ -32,28 +32,28 @@ import {judgeAction} from './judge';
 /** Execute world commands inside the caller's existing preview or commit transaction. */
 export function handleWorldAction(
   commandContext: CommandContext,
-  n: CommandNode,
+  commandNode: CommandNode,
 ): unknown {
-  const spec = commandSpec(n)!;
+  const spec = commandSpec(commandNode)!;
 
   permission(commandContext.actor, spec.permission);
 
-  validateCommandArguments(n);
+  validateCommandArguments(commandNode);
 
-  const e = commandContext.e;
+  const engine = commandContext.engine;
 
-  const db = e.db;
+  const db = engine.db;
 
-  const m = db.match();
+  const matchState = db.match();
 
   const path = spec.path;
 
-  const a = n.words
+  const commandArguments = commandNode.words
     .slice(path.split(' ').length)
     .map(v => commandValue(v, commandContext));
 
   const chosen = (index = 0, pool = false) =>
-    selectTargets(commandContext, a[index]!, pool);
+    selectTargets(commandContext, commandArguments[index]!, pool);
 
   const each = (fn: (id: string) => void, pool = false) => {
     const ids = chosen(0, pool);
@@ -84,18 +84,20 @@ export function handleWorldAction(
   };
 
   if (path === 'homeworld verify' || path === 'homeworld reject') {
-    const id = singleTarget(commandContext, a[0]!);
-    const h = db.home(id);
-    requireCommandArgument(h, '尚无登记');
+    const id = singleTarget(commandContext, commandArguments[0]!);
+    const homeworld = db.home(id);
+    requireCommandArgument(homeworld, '尚无登记');
     return judgeAction(
-      e,
+      engine,
       commandContext.actor,
       `${commandContext.id}-${commandContext.work}`,
       `/judge/homeworld/${id}/verify`,
       {
         request_id: `${commandContext.id}-${commandContext.work}`,
-        expected_version: integer(Number(a[2]), 1),
-        expected_code: path.endsWith('verify') ? coordinate(a[4]) : h.code,
+        expected_version: integer(Number(commandArguments[2]), 1),
+        expected_code: path.endsWith('verify')
+          ? coordinate(commandArguments[4])
+          : homeworld.code,
         decision: path.endsWith('verify') ? 'approve' : 'reject',
         reason: commandContext.reason,
       },
@@ -105,13 +107,16 @@ export function handleWorldAction(
 
   if (path === 'homeworld correct-coordinate') {
     requireHeadJudge(commandContext);
-    requireCommandArgument(m.phase === 'setup', 'T0首次锁定后不能修改母星登记');
-    const id = singleTarget(commandContext, a[0]!);
+    requireCommandArgument(
+      matchState.phase === 'setup',
+      'T0首次锁定后不能修改母星登记',
+    );
+    const id = singleTarget(commandContext, commandArguments[0]!);
     const h = db.home(id);
     requireCommandArgument(h, '尚无登记');
     db.exec(
       "UPDATE homeworlds SET code=?,version=version+1,status='pending',verified_by=NULL,rejection='' WHERE player_id=?",
-      coordinate(a[1]),
+      coordinate(commandArguments[1]),
       id,
     );
     recordChange(commandContext, id + '母星', h, db.home(id));
@@ -122,20 +127,28 @@ export function handleWorldAction(
     requireHeadJudge(commandContext);
     recordTableDependency(commandContext, 'sighting_codes');
     return each(id => {
-      const f = db.flight(id);
+      const flight = db.flight(id);
       if (path === 'code replace-same') {
         requireCommandArgument(
-          ['BK', 'WH', 'GY', 'YL', 'OR', 'SB', 'PU'].includes(a[1]!),
+          ['BK', 'WH', 'GY', 'YL', 'OR', 'SB', 'PU'].includes(
+            commandArguments[1]!,
+          ),
           '未知颜色',
         );
-        requireCommandArgument(f.code_id, '当前没有可替换手环');
-        recordChange(commandContext, id + '实物替换', '原同色实物', a[1]);
+        requireCommandArgument(flight.code_id, '当前没有可替换手环');
+        recordChange(
+          commandContext,
+          id + '实物替换',
+          '原同色实物',
+          commandArguments[1],
+        );
         return;
       }
       if (path === 'code activate') {
-        if (a[1]) {
+        if (commandArguments[1]) {
           requireCommandArgument(
-            a[1] === 'issue' && a[2] === f.code_id,
+            commandArguments[1] === 'issue' &&
+              commandArguments[2] === flight.code_id,
             '发行编号与当前待激活配置不符',
           );
         }
@@ -143,7 +156,7 @@ export function handleWorldAction(
           requireCommandArgument(
             db.one<Record<string, SqlStorageValue>>(
               "SELECT id FROM command_objects WHERE kind='equipment-check' AND json_extract(data,'$.issue')=? AND json_extract(data,'$.target')=?",
-              f.code_id,
+              flight.code_id,
               id,
             ),
             '定时器不能代替现场佩戴核对，请现场执行code activate',
@@ -152,7 +165,11 @@ export function handleWorldAction(
           saveCommandObject(
             commandContext,
             'equipment-check',
-            {target: id, issue: f.code_id, checkedBy: commandContext.actor.id},
+            {
+              target: id,
+              issue: flight.code_id,
+              checkedBy: commandContext.actor.id,
+            },
             'WEAR',
           );
         }
@@ -168,7 +185,7 @@ export function handleWorldAction(
     requireHeadJudge(commandContext);
     recordTableDependency(commandContext, 'attacks');
     recordTableDependency(commandContext, 'sighting_codes');
-    const attack = correctionTarget(e, a[0]);
+    const attack = correctionTarget(engine, commandArguments[0]);
     if (path.endsWith('correct-penalty')) {
       requireCommandArgument(
         attack.wrong_index !== null,
@@ -176,7 +193,7 @@ export function handleWorldAction(
       );
     }
     correctAttack(
-      e,
+      engine,
       `${commandContext.id}-${commandContext.work}`,
       commandContext.actor.id,
       attack,
@@ -185,7 +202,7 @@ export function handleWorldAction(
     );
     recordChange(
       commandContext,
-      a[0]!,
+      commandArguments[0]!,
       attack,
       '已审计更正，保留原抽签和传播事实',
     );
@@ -197,32 +214,35 @@ export function handleWorldAction(
     if (path === 'effect create attack-silence') {
       requireRunningMatch(commandContext);
       const ids = chosen();
-      const global = a[0] === '@a';
-      const length = a[2] === 'until-revoked' ? null : durationMs(a[2]!);
-      const end = n.options['end-at']
-        ? instantMs(n.options['end-at'])
+      const global = commandArguments[0] === '@a';
+      const length =
+        commandArguments[2] === 'until-revoked'
+          ? null
+          : durationMs(commandArguments[2]!);
+      const end = commandNode.options['end-at']
+        ? instantMs(commandNode.options['end-at'])
         : length === null
           ? 8640000000000000
-          : e.now() + length;
+          : engine.now() + length;
       requireCommandArgument(
-        a[1] === 'for' && end > e.now(),
+        commandArguments[1] === 'for' && end > engine.now(),
         '静默期限必须晚于当前时间',
       );
       integer(end);
       for (const id of global ? ['@a'] : ids) {
-        const fx = `FX-${commandContext.id}-${commandContext.work++}`;
+        const effectId = `FX-${commandContext.id}-${commandContext.work++}`;
         db.exec(
           'INSERT INTO admin_effects VALUES(?,?,?,?,?,?,1)',
-          fx,
+          effectId,
           id,
-          e.now(),
+          engine.now(),
           end,
           commandContext.reason,
           commandContext.actor.name,
         );
         recordChange(
           commandContext,
-          fx,
+          effectId,
           '未生效',
           `${id} 目击静默至 ${new Date(end).toISOString()}`,
         );
@@ -233,11 +253,11 @@ export function handleWorldAction(
     const effects = db
       .all<{id: string; target: string}>(
         'SELECT id,target FROM admin_effects WHERE active=1 AND ends>?',
-        e.now(),
+        engine.now(),
       )
       .filter(f =>
         path === 'effect revoke'
-          ? f.id === a[0]
+          ? f.id === commandArguments[0]
           : f.target === '@a' || ids.includes(f.target),
       );
     for (const f of effects) {
@@ -257,8 +277,8 @@ export function handleWorldAction(
     emitCommandMessage(
       commandContext,
       ids,
-      text(a[1], COMMAND_LIMITS.bytes),
-      path === 'announce' && a[0] === '@a',
+      text(commandArguments[1], COMMAND_LIMITS.bytes),
+      path === 'announce' && commandArguments[0] === '@a',
     );
     return;
   }

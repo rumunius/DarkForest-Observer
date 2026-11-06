@@ -20,25 +20,25 @@ import {
 export function matchTime(
   commandContext: CommandContext,
   path: string,
-  a: string[],
+  commandArguments: string[],
 ): void {
   requireHeadJudge(commandContext);
-  const e = commandContext.e;
-  const db = e.db;
-  const m = db.match();
+  const engine = commandContext.engine;
+  const db = engine.db;
+  const matchState = db.match();
   const release = path.endsWith('release');
   const key = release ? 'release_at' : 'started_at';
-  const old = m[key];
+  const old = matchState[key];
   const node = release ? 'code_release' : 'match_start';
   recordTableDependency(commandContext, 'scheduled_events');
   recordTableDependency(commandContext, 'roster_members');
-  const time = a.length ? instantMs(a[1]!) : null;
+  const time = commandArguments.length ? instantMs(commandArguments[1]!) : null;
   if (path.includes('postpone') || path.includes('cancel')) {
     requireCommandArgument(
-      m.start_settled === null &&
+      matchState.start_settled === null &&
         old !== null &&
-        e.now() < old &&
-        m.phase === (release ? 'armed' : 'start_countdown'),
+        engine.now() < old &&
+        matchState.phase === (release ? 'armed' : 'start_countdown'),
       '只能修改尚未到达、尚未结算的已锁定节点',
     );
     if (time !== null) {
@@ -77,34 +77,35 @@ export function matchTime(
     }
   } else {
     requireCommandArgument(
-      a[0] === 'at' && time !== null && time > e.now(),
+      commandArguments[0] === 'at' && time !== null && time > engine.now(),
       '请锁定未来的带时区绝对时间',
     );
     requireCommandArgument(
       release
-        ? m.phase === 'setup' || (m.phase === 'armed' && m.release_at === null)
-        : m.phase === 'outfitting' && m.started_at === null,
+        ? matchState.phase === 'setup' ||
+            (matchState.phase === 'armed' && matchState.release_at === null)
+        : matchState.phase === 'outfitting' && matchState.started_at === null,
       '当前不能锁定此节点',
     );
     const roster = db.roster();
     requireCommandArgument(roster.length >= 2, '至少需要两名正式玩家');
     for (const id of roster) {
       selectTargets(commandContext, id);
-      const f = db.flight(id);
-      const h = db.home(id);
+      const flight = db.flight(id);
+      const homeworld = db.home(id);
       requireCommandArgument(
         release
-          ? f.status === 'staged' &&
-              f.departed !== null &&
-              f.staged !== null &&
-              !f.code_id &&
-              h?.status === 'verified'
-          : f.status === 'ready' &&
-              f.ready !== null &&
-              !!f.code_id &&
+          ? flight.status === 'staged' &&
+              flight.departed !== null &&
+              flight.staged !== null &&
+              !flight.code_id &&
+              homeworld?.status === 'verified'
+          : flight.status === 'ready' &&
+              flight.ready !== null &&
+              !!flight.code_id &&
               !!db.one<Record<string, SqlStorageValue>>(
                 "SELECT id FROM sighting_codes WHERE id=? AND player_id=? AND status='reserved'",
-                f.code_id,
+                flight.code_id,
                 id,
               ),
         '正式玩家尚未完成准备：' + id,
@@ -146,7 +147,7 @@ export function matchTime(
         node,
       );
     } else {
-      e.schedule(node, node, 'utc', time, 0);
+      engine.schedule(node, node, 'utc', time, 0);
     }
     if (!release) {
       const oldPlan = db.one<SavedCommandObject>(
@@ -206,7 +207,7 @@ export function matchTime(
             kind,
           )
         ) {
-          e.schedule(kind, kind, 'game', due, 0);
+          engine.schedule(kind, kind, 'game', due, 0);
         }
       }
       if (!existing || stableJson(existing.roster) !== stableJson(roster)) {
@@ -216,7 +217,7 @@ export function matchTime(
           )
         ) {
           for (const [index, due] of times.entries()) {
-            e.schedule(
+            engine.schedule(
               `plan-tech:${planId}:${index}`,
               'tech_burst',
               'game',
@@ -242,7 +243,7 @@ export function matchTime(
       row.id,
     );
   }
-  e.notice(
+  engine.notice(
     `judge:${commandContext.id}:${commandContext.work}`,
     'group',
     title,

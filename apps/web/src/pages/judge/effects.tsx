@@ -14,25 +14,25 @@ export function Effects() {
       <p>
         临时禁止目击攻击不冻结比赛时间，也不解除其他阶段限制或个人错误提交处罚。
       </p>
-      {data.judge!.effects.map(e => (
-        <Frame key={e.id}>
+      {data.judge!.effects.map(effect => (
+        <Frame key={effect.id}>
           <div className="heading-row">
-            <h2>{e.target}</h2>
-            <Status>{e.active ? '正在生效' : '已结束'}</Status>
+            <h2>{effect.target}</h2>
+            <Status>{effect.active ? '正在生效' : '已结束'}</Status>
           </div>
-          <p>{e.reason}</p>
-          <p className="secondary">操作者：{e.operator}</p>
-          {e.active && (
+          <p>{effect.reason}</p>
+          <p className="secondary">操作者：{effect.operator}</p>
+          {effect.active && (
             <>
               <Timer
                 label="效果剩余真实时间"
-                deadline={e.untilUtcMs}
+                deadline={effect.untilUtcMs}
                 clock="utc"
               />
               <ManagementForm
                 title="撤销本条效果"
                 path="/judge/effects"
-                payload={{revoke: e.id}}
+                payload={{revoke: effect.id}}
                 change="仅撤销这条效果，其他限制仍按各自规则生效"
               />
             </>

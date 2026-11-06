@@ -293,11 +293,11 @@ export function AppProvider({
         setPending(null);
         persistPending(null);
       }
-    } catch (e) {
+    } catch (error) {
       if (request !== sequence.current) {
         return;
       }
-      if (e instanceof ApiError && [401, 403].includes(e.status)) {
+      if (error instanceof ApiError && [401, 403].includes(error.status)) {
         timelineKey.current = '';
         snapshotRef.current = {...empty, site: snapshotRef.current.site};
         setData({...empty, site: snapshotRef.current.site});
@@ -307,7 +307,9 @@ export function AppProvider({
         persistPending(null);
       }
       readError.current = true;
-      setError(e instanceof Error ? e.message : '连接已中断，正在重新连接。');
+      setError(
+        error instanceof Error ? error.message : '连接已中断，正在重新连接。',
+      );
     } finally {
       if (request === sequence.current) {
         setLoading(false);
@@ -376,17 +378,17 @@ export function AppProvider({
         const next = {...latest, judge};
         snapshotRef.current = next;
         setData(next);
-      } catch (e) {
+      } catch (error) {
         if (key !== timelineKey.current) {
           return;
         }
-        if (e instanceof ApiError && [401, 403].includes(e.status)) {
+        if (error instanceof ApiError && [401, 403].includes(error.status)) {
           timelineKey.current = '';
           const next = {...empty, site: snapshotRef.current.site};
           snapshotRef.current = next;
           setData(next);
         }
-        setError(e instanceof Error ? e.message : '暂时无法读取记录。');
+        setError(error instanceof Error ? error.message : '暂时无法读取记录。');
       } finally {
         historyLoading.current = false;
       }
@@ -417,12 +419,14 @@ export function AppProvider({
         timelineKey.current = '';
         await refresh();
       }
-    } catch (e) {
+    } catch (error) {
       if (mine !== generation.current) {
         return;
       }
       setError(
-        e instanceof Error ? e.message : '暂时无法取得操作结果，请稍后查询。',
+        error instanceof Error
+          ? error.message
+          : '暂时无法取得操作结果，请稍后查询。',
       );
     } finally {
       if (mine === generation.current) {
@@ -471,19 +475,19 @@ export function AppProvider({
           await refresh();
         }
         return response;
-      } catch (e) {
+      } catch (error) {
         if (mine !== generation.current) {
           return;
         }
-        const definitive = e instanceof ApiError && e.definitive;
+        const definitive = error instanceof ApiError && error.definitive;
         if (definitive) {
           persistPending(null);
           setPending(null);
           await refresh();
         }
         setError(
-          e instanceof Error
-            ? e.message
+          error instanceof Error
+            ? error.message
             : '操作结果尚未取得，正在确认上一次操作结果。',
         );
       } finally {

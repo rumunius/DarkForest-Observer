@@ -75,10 +75,13 @@ export function firstSongDue(
   return null;
 }
 /** 生成技术爆炸计划；调用方负责在开赛锁定事务中保存既定抽签。 */
-export function techSchedule(n: number, random = uniformInt): number[] {
+export function techSchedule(
+  playerCount: number,
+  random = uniformInt,
+): number[] {
   const count = Math.min(
-    Math.max(1, Math.round(n / 3)),
-    Math.floor((n - 1) / 2),
+    Math.max(1, Math.round(playerCount / 3)),
+    Math.floor((playerCount - 1) / 2),
   );
   // Stratified windows guarantee spread, with a four-minute gap whenever capacity permits.
   const start = 8 * 60_000;

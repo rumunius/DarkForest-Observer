@@ -180,13 +180,13 @@ export function commandAction(
       return {...data.result, requestId: id};
     }
     requireCommandArgument(row.status === 'pending', '该计划已关闭或失效');
-    const c = createCommandContext(engine, actor, id, prepared);
-    c.reason = data.reason;
+    const commandContext = createCommandContext(engine, actor, id, prepared);
+    commandContext.reason = data.reason;
     for (const [key, before] of Object.entries(data.dependencies)) {
       const current =
         key === 'match' || key === 'permissions'
-          ? c.dependencies[key]
-          : currentDependency(engine, key, c.initial);
+          ? commandContext.dependencies[key]
+          : currentDependency(engine, key, commandContext.initial);
       requireThat(
         stableJson(before) === stableJson(current),
         'PLAN_DEPENDENCY_CHANGED',
@@ -200,7 +200,7 @@ export function commandAction(
     engine.commandBatch = true;
     let result: unknown;
     try {
-      result = run(c, data.node);
+      result = run(commandContext, data.node);
     } finally {
       engine.commandBatch = previous;
     }
@@ -209,7 +209,11 @@ export function commandAction(
     const response = completed(
       id,
       '指令已执行',
-      JSON.stringify({result, changes: c.changes, notes: c.notes}),
+      JSON.stringify({
+        result,
+        changes: commandContext.changes,
+        notes: commandContext.notes,
+      }),
       {revision: engine.db.match().revision},
     );
     data.result = response;
@@ -223,14 +227,14 @@ export function commandAction(
       actor,
       id,
       commandSpec(data.node)!.path,
-      c.changes.length ? 'executed' : 'no_op',
+      commandContext.changes.length ? 'executed' : 'no_op',
       {
         plan: row.id,
         reason: data.reason,
         source: data.node.options.source ?? 'judge_intervention',
         caseId: data.node.options.case ?? null,
-        targets: actualTargets(c.changes),
-        changes: c.changes,
+        targets: actualTargets(commandContext.changes),
+        changes: commandContext.changes,
         preview: data.preview,
         parameters: {
           argumentCount: data.node.words.length,
@@ -255,11 +259,11 @@ export function commandAction(
     (typeof raw.reason === 'string' && raw.reason.trim()
       ? raw.reason
       : '裁判主动干预');
-  const c = createCommandContext(engine, actor, id, prepared);
-  c.reason = reason;
+  const executionContext = createCommandContext(engine, actor, id, prepared);
+  executionContext.reason = reason;
   if (spec.query) {
     validateCommandOptions(node);
-    const result = query(c, node);
+    const result = query(executionContext, node);
     recordCommand(
       engine,
       actor,
@@ -283,7 +287,7 @@ export function commandAction(
             key === 'search' ? '检索词保存在加密原文' : value,
           ]),
         ),
-        targets: Object.keys(c.dependencies)
+        targets: Object.keys(executionContext.dependencies)
           .filter(key => key.startsWith('player:'))
           .map(key => key.slice(7)),
       },
@@ -293,11 +297,11 @@ export function commandAction(
   }
   // Fixed macro versions are stored in the plan, never resolved again after confirmation.
   if (spec.path !== 'macro define') {
-    pin(c, node);
+    pin(executionContext, node);
   }
   if (spec.direct && !explicit && !path.endsWith('/preview')) {
     const stateBefore = commandState(engine);
-    const result = run(c, node);
+    const result = run(executionContext, node);
     engine.db.bump();
     recordCommand(
       engine,
@@ -307,9 +311,9 @@ export function commandAction(
       'saved',
       {
         reason,
-        source: c.source,
-        targets: actualTargets(c.changes),
-        changes: c.changes,
+        source: executionContext.source,
+        targets: actualTargets(executionContext.changes),
+        changes: executionContext.changes,
         before: stateBefore,
         after: commandState(engine),
         result,
@@ -319,7 +323,7 @@ export function commandAction(
     return completed(
       id,
       '已保存',
-      JSON.stringify({result, changes: c.changes}),
+      JSON.stringify({result, changes: executionContext.changes}),
     );
   }
   explicit = explicit || path.endsWith('/preview');
@@ -362,7 +366,7 @@ export function commandAction(
     {
       plan: token,
       reason,
-      source: node.options.source ?? c.source,
+      source: node.options.source ?? executionContext.source,
       preview,
       targets: actualTargets(previewContext.changes),
       parameters: {
@@ -504,14 +508,14 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
     }
     return;
   }
-  const c = createCommandContext(
+  const commandContext = createCommandContext(
     engine,
     actor,
     `${row.id}-${payload.index ?? 0}`,
     engine.commandPrepared,
   );
-  c.reason = '裁判定时授权';
-  c.deferred = true;
+  commandContext.reason = '裁判定时授权';
+  commandContext.deferred = true;
   if (payload.job) {
     const data = parseJson(row.data) as JobData;
     requireCommandArgument(data.next === payload.index, '作业进度不一致');
@@ -519,7 +523,7 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
       engine.db.match().phase === 'ended' &&
       !isMessage(engine, data.steps[data.next]!)
     ) {
-      updateCommandObject(c, row, data, 'cancelled');
+      updateCommandObject(commandContext, row, data, 'cancelled');
       recordCommand(
         engine,
         actor,
@@ -536,14 +540,14 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
       );
       return;
     }
-    c.reason = data.reason;
+    commandContext.reason = data.reason;
     const stateBefore = commandState(engine);
     try {
       const result = engine.db.tx(() => {
         const prior = engine.commandBatch;
         engine.commandBatch = true;
         try {
-          return run(c, data.steps[data.next]!);
+          return run(commandContext, data.steps[data.next]!);
         } finally {
           engine.commandBatch = prior;
         }
@@ -552,7 +556,7 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
       data.results.push(result ?? null);
       data.next++;
       updateCommandObject(
-        c,
+        commandContext,
         row,
         data,
         data.next === data.steps.length ? 'complete' : 'pending',
@@ -580,10 +584,10 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
           parent: row.id,
           index: payload.index,
           eventId: event.id,
-          reason: c.reason,
-          source: c.source,
-          targets: actualTargets(c.changes),
-          changes: c.changes,
+          reason: commandContext.reason,
+          source: commandContext.source,
+          targets: actualTargets(commandContext.changes),
+          changes: commandContext.changes,
           before: stateBefore,
           after: commandState(engine),
           result,
@@ -592,7 +596,7 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
       );
     } catch (error) {
       data.error = error instanceof Error ? error.message : '步骤失败';
-      updateCommandObject(c, row, data, 'failed');
+      updateCommandObject(commandContext, row, data, 'failed');
       recordCommand(
         engine,
         actor,
@@ -602,7 +606,7 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
         {
           parent: row.id,
           eventId: event.id,
-          reason: c.reason,
+          reason: commandContext.reason,
           before: stateBefore,
           after: commandState(engine),
           index: data.next,
@@ -615,7 +619,7 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
   }
   const data = parseJson(row.data) as TaskData;
   if (engine.db.match().phase === 'ended' && data.afterEnd === 'cancel') {
-    updateCommandObject(c, row, data, 'cancelled');
+    updateCommandObject(commandContext, row, data, 'cancelled');
     recordCommand(
       engine,
       actor,
@@ -641,7 +645,7 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
     (data.maxLateness !== null && lateness > data.maxLateness)
   ) {
     updateCommandObject(
-      c,
+      commandContext,
       row,
       data,
       data.late === 'skip' ? 'skipped' : 'review',
@@ -662,9 +666,9 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
     );
     return;
   }
-  c.reason = data.reason;
-  c.source = data.source;
-  c.caseId = data.caseId;
+  commandContext.reason = data.reason;
+  commandContext.source = data.source;
+  commandContext.caseId = data.caseId;
   engine.commandSnapshot = data.snapshot;
   const stateBefore = commandState(engine);
   try {
@@ -672,14 +676,14 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
       const prior = engine.commandBatch;
       engine.commandBatch = true;
       try {
-        return run(c, data.node);
+        return run(commandContext, data.node);
       } finally {
         engine.commandBatch = prior;
       }
     });
     autoFinish(engine, engine.game(), engine.now(), row.id);
     data.results = result;
-    updateCommandObject(c, row, data, 'complete');
+    updateCommandObject(commandContext, row, data, 'complete');
     recordCommand(
       engine,
       actor,
@@ -691,11 +695,11 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
         eventId: event.id,
         originalDue: data.due,
         lateness,
-        reason: c.reason,
-        source: c.source,
-        caseId: c.caseId ?? null,
-        targets: actualTargets(c.changes),
-        changes: c.changes,
+        reason: commandContext.reason,
+        source: commandContext.source,
+        caseId: commandContext.caseId ?? null,
+        targets: actualTargets(commandContext.changes),
+        changes: commandContext.changes,
         before: stateBefore,
         after: commandState(engine),
         result,
@@ -704,7 +708,7 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
     );
   } catch (error) {
     data.error = error instanceof Error ? error.message : '定时操作失败';
-    updateCommandObject(c, row, data, 'failed');
+    updateCommandObject(commandContext, row, data, 'failed');
     recordCommand(
       engine,
       actor,
@@ -715,7 +719,7 @@ export function executeCommandEvent(engine: Engine, event: Scheduled): void {
         parent: row.id,
         eventId: event.id,
         error: data.error,
-        reason: c.reason,
+        reason: commandContext.reason,
         before: stateBefore,
         after: commandState(engine),
       },
