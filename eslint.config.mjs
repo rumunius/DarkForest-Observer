@@ -90,6 +90,10 @@ export default tseslint.config(
       '@typescript-eslint/array-type': ['error', {default: 'array-simple'}],
       '@typescript-eslint/consistent-type-definitions': ['error', 'interface'],
       '@typescript-eslint/consistent-type-imports': 'error',
+      '@typescript-eslint/consistent-type-assertions': [
+        'error',
+        {assertionStyle: 'as', objectLiteralTypeAssertions: 'never'},
+      ],
       '@typescript-eslint/no-inferrable-types': 'error',
       '@typescript-eslint/prefer-for-of': 'error',
       '@typescript-eslint/prefer-readonly': 'error',

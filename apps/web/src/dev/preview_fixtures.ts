@@ -109,6 +109,18 @@ const PERMISSIONS: Record<string, string[]> = {
   ],
 };
 
+const preflightFlights: Record<string, Civilization['flight']> = {
+  nickname: 'nickname',
+  registration: 'unregistered',
+  pending: 'pending',
+  rejected: 'rejected',
+  verified: 'verified',
+  staged: 'staged',
+  release: 'staged',
+  outfitting: 'outfitting',
+  ready: 'ready',
+};
+
 /** 为开发场景生成可重复的合法颜色分组，不参与正式发码。 */
 export function buildArms(i: number): Arms {
   const a = i % 7;
@@ -380,19 +392,10 @@ export function createPreviewSnapshot(
 
   const match = state.match!;
 
-  if (
-    [
-      'nickname',
-      'registration',
-      'pending',
-      'rejected',
-      'verified',
-      'staged',
-      'release',
-      'outfitting',
-      'ready',
-    ].includes(scenario)
-  ) {
+  const preflightFlight = Object.hasOwn(preflightFlights, scenario)
+    ? preflightFlights[scenario]
+    : undefined;
+  if (preflightFlight !== undefined) {
     match.stage =
       scenario === 'ready'
         ? 'countdown'
@@ -401,13 +404,7 @@ export function createPreviewSnapshot(
           : 'setup';
     match.gameMs = 0;
     match.running = false;
-    me.flight =
-      (
-        {registration: 'unregistered', release: 'staged'} as Record<
-          string,
-          typeof me.flight
-        >
-      )[scenario] ?? (scenario as typeof me.flight);
+    me.flight = preflightFlight;
     me.actions = [];
     me.arms = null;
     me.kills = 0;
@@ -460,8 +457,12 @@ export function createPreviewSnapshot(
     me.actions = ['broadcast', 'photon', 'withdraw'];
   }
 
-  if (['returning', 'preparing', 'issued'].includes(scenario)) {
-    me.flight = scenario as typeof me.flight;
+  if (
+    scenario === 'returning' ||
+    scenario === 'preparing' ||
+    scenario === 'issued'
+  ) {
+    me.flight = scenario;
     me.respawnDeadline = match.gameMs + 9 * 60000 + 24000;
     me.arms = scenario === 'issued' ? [['BK', 'OR', 'SB'], ['GY']] : null;
     me.actions = [

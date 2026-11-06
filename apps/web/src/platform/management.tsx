@@ -17,6 +17,13 @@ import {
   useRows,
 } from './shared';
 
+const membershipStates: Record<MatchMember['state'], string> = {
+  invited: '待接受',
+  accepted: '已接受',
+  bound: '已确认本场身份',
+  revoked: '任职已结束',
+};
+
 /** 管理本场成员、裁判岗位和发布条件，变更前取得真实预览。 */
 export function ManageMatch({
   client,
@@ -260,16 +267,7 @@ export function ManageMatch({
           <div key={m.account_id} className="platform-member-row">
             <p>
               <strong>{m.name}</strong>，{m.local_id ?? '尚未确认本场身份'}，
-              {
-                (
-                  {
-                    invited: '待接受',
-                    accepted: '已接受',
-                    bound: '已确认本场身份',
-                    revoked: '任职已结束',
-                  } as Record<string, string>
-                )[m.state]
-              }
+              {membershipStates[m.state]}
             </p>
             {d.state === 'draft' && (
               <button

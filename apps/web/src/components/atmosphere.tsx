@@ -7,6 +7,13 @@ import {
 } from 'react';
 import {useApp, useClock} from '../state';
 
+interface DustStyle extends CSSProperties {
+  '--x': string;
+  '--y': string;
+  '--delay': string;
+  '--drift': string;
+}
+
 // A true 4D wireframe: sixteen vertices, joined only along one coordinate.
 const vertices = Array.from({length: 16}, (_, i) =>
   Array.from({length: 4}, (_, axis) => (i & (1 << axis) ? 1 : -1)),
@@ -228,19 +235,15 @@ export function Atmosphere() {
         </svg>
       )}
       <div className="atmosphere-dust">
-        {Array.from({length: 10}, (_, i) => (
-          <i
-            key={i}
-            style={
-              {
-                '--x': `${(i * 37 + 7) % 100}%`,
-                '--y': `${(i * 23 + 11) % 100}%`,
-                '--delay': `${-i * 2.7}s`,
-                '--drift': `${(i % 2 ? 1 : -1) * (12 + i * 2)}px`,
-              } as CSSProperties
-            }
-          />
-        ))}
+        {Array.from({length: 10}, (_, index) => {
+          const style: DustStyle = {
+            '--x': `${(index * 37 + 7) % 100}%`,
+            '--y': `${(index * 23 + 11) % 100}%`,
+            '--delay': `${-index * 2.7}s`,
+            '--drift': `${(index % 2 ? 1 : -1) * (12 + index * 2)}px`,
+          };
+          return <i key={index} style={style} />;
+        })}
       </div>
       {(state === 'wreck' || state === 'eliminated' || state === 'hunt') && (
         <SignalFracture

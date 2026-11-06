@@ -164,3 +164,27 @@ test('compiler suppression is forbidden in product code and narrowly allowed in 
     0,
   );
 });
+
+test('object literals are checked at declaration rather than asserted into contracts', async () => {
+  const [asserted] = await eslint.lintText(
+    'interface Probe {code: string;}\nconst value = {code: 123} as Probe;\nvoid value;\n',
+    {filePath: 'apps/web/src/data/http.ts'},
+  );
+  assert.ok(
+    asserted.messages.some(
+      message =>
+        message.ruleId === '@typescript-eslint/consistent-type-assertions',
+    ),
+  );
+  const [annotated] = await eslint.lintText(
+    'interface Probe {code: string;}\nconst value: Probe = {code: "ok"};\nconst literal = {code: "ok"} as const;\nvoid value;\nvoid literal;\n',
+    {filePath: 'apps/web/src/data/http.ts'},
+  );
+  assert.equal(
+    annotated.messages.filter(
+      message =>
+        message.ruleId === '@typescript-eslint/consistent-type-assertions',
+    ).length,
+    0,
+  );
+});

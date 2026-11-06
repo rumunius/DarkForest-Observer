@@ -8,6 +8,12 @@ import {
 } from '../../../../packages/contracts/src/message_copy';
 import type {CodeRow} from '../storage/store';
 
+const completionReasons: Record<string, string> = {
+  regulation: '比赛时间结束',
+  last_survivor: '本场仅余一个存活文明，提前完赛',
+  all_eliminated: '全部文明已永久淘汰',
+};
+
 /** 以固定来源、受众和双时间基准记录赛事事实；不把提交时间当作生效时间。 */
 export function logEvent(
   engine: Engine,
@@ -337,14 +343,7 @@ export function results(
   }
   return {
     version: row.version,
-    reason:
-      (
-        {
-          regulation: '比赛时间结束',
-          last_survivor: '本场仅余一个存活文明，提前完赛',
-          all_eliminated: '全部文明已永久淘汰',
-        } as Record<string, string>
-      )[row.reason] ?? row.reason,
+    reason: completionReasons[row.reason] ?? row.reason,
     champions: report.champions,
     correctionReason: row.correction_reason,
     standings,

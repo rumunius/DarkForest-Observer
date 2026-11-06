@@ -20,6 +20,15 @@ import {erasureFloor} from './retention';
 import {controlSignature} from './security';
 import type {Directory, Login, Operation} from './types';
 
+const memberControlActions: Record<string, string> = {
+  '/members/invite': 'invite',
+  '/members/remove': 'remove-member',
+  '/members/accept': 'accept',
+  '/members/bind': 'bind',
+  '/staff/assign': 'assign',
+  '/publish': 'publish',
+};
+
 /** 处理成员邀请、绑定、岗位交接及发布请求，跨对象变更以持久操作驱动。 */
 export async function matchRequest(
   host: DarkForestPlatform,
@@ -215,16 +224,7 @@ export async function matchRequest(
       );
       payload = {accountId: a.id, kind: a.kind, name: a.name};
     }
-    const action = (
-      {
-        '/members/invite': 'invite',
-        '/members/remove': 'remove-member',
-        '/members/accept': 'accept',
-        '/members/bind': 'bind',
-        '/staff/assign': 'assign',
-        '/publish': 'publish',
-      } as Record<string, string>
-    )[path]!;
+    const action = memberControlActions[path]!;
     host.db.tx(() => {
       host.insertOperation(
         id,

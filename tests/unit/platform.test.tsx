@@ -8,6 +8,23 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {HumanData} from '../../apps/web/src/platform_copy';
 import type {PlatformSession, Snapshot} from '@darkforest/contracts';
 import {MockSource} from '../../apps/web/src/dev/mock_source';
+
+function sessionFor(accountId: string): PlatformSession {
+  return {
+    account: {
+      id: accountId,
+      kind: 'staff',
+      name: accountId,
+      status: 'active',
+      version: 1,
+      auth_epoch: 1,
+      tags: '',
+    },
+    roles: [],
+    csrfToken: 'csrf',
+    secondFactor: false,
+  };
+}
 afterEach(() => {
   vi.unstubAllGlobals();
   sessionStorage.clear();
@@ -61,10 +78,7 @@ describe('跨比赛前端请求与中文信息', () => {
   });
   it('管理写入断连后保存原编号，查询并取消未接收请求后才允许新操作', async () => {
     const client = new PlatformClient('staff');
-    client.session = {
-      account: {id: 'long-account'},
-      csrfToken: 'csrf',
-    } as PlatformSession;
+    client.session = sessionFor('long-account');
     vi.stubGlobal(
       'fetch',
       vi.fn().mockRejectedValue(new Error('test disconnect')),
@@ -94,10 +108,7 @@ describe('跨比赛前端请求与中文信息', () => {
   });
   it('高影响操作的预览不会自动提交，确认前不登记写请求', async () => {
     const client = new PlatformClient('staff');
-    client.session = {
-      account: {id: 'manager'},
-      csrfToken: 'csrf',
-    } as PlatformSession;
+    client.session = sessionFor('manager');
     const fetcher = vi.fn(
       promiseStub((path: string) => {
         if (path === '/api/platform/preview') {
