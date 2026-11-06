@@ -1,4 +1,4 @@
-import {parseJson} from '../../../packages/contracts/src/backend';
+import {object, parseJson} from '../../../packages/contracts/src/backend';
 import {DurableObject} from 'cloudflare:workers';
 import {Engine} from './services/engine';
 import {Store} from './storage/store';
@@ -186,9 +186,9 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
       const reply = await this.engine.bootstrap(secret, body);
       return {...reply, body: JSON.stringify(reply.body)};
     } catch (error) {
-      if (error instanceof Error && 'status' in error && 'code' in error) {
+      if (error instanceof Fault) {
         return {
-          status: error.status as number,
+          status: error.status,
           body: JSON.stringify({code: error.code, message: error.message}),
         };
       }
@@ -258,7 +258,7 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
           403,
         );
       }
-      const body = raw as {operation: string; payload?: unknown};
+      const body = object(raw);
       if (body.operation === 'launch') {
         requireThat(
           !this.engine.db.one<Record<string, SqlStorageValue>>(
@@ -270,6 +270,7 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
         );
         await recoveryRpc(this.engine, secret, {operation: 'status'});
         await configureRestore(this.engine, body.payload);
+        // DurableObjectState.abort requires a string reason for an object restart.
         this.ctx.abort('Requested point-in-time restoration');
       }
       return {
@@ -277,11 +278,11 @@ export class DarkForestMatch extends DurableObject<BackendEnv> {
         body: JSON.stringify(await recoveryRpc(this.engine, secret, raw)),
       };
     } catch (error) {
-      if (error instanceof Error && 'status' in error) {
+      if (error instanceof Fault) {
         return {
-          status: error.status as number,
+          status: error.status,
           body: JSON.stringify({
-            code: 'code' in error ? error.code : 'RECOVERY_FAILED',
+            code: error.code,
             message: error.message,
           }),
         };

@@ -119,6 +119,40 @@ beforeEach(async () => {
   sequence = 0;
   testUtc = undefined;
 });
+
+it('rejects malformed recovery requests without changing state and retains authorized status reads', async () => {
+  await seed();
+  const readRecoveryState = () =>
+    runInDurableObject(stub(), (_instance, state) => {
+      const match = new Store(state.storage).match();
+      return {state: match.recovery_state, revision: match.revision};
+    });
+  const before = await readRecoveryState();
+  for (const raw of [null, undefined, [], {}, {operation: 7}]) {
+    const reply = await stub().recovery(
+      'integration-only-bootstrap-secret',
+      raw,
+    );
+    expect(reply.status).toBe(409);
+    expect(jsonObject(parseJson(reply.body))).toEqual({
+      code: 'RECOVERY_FAILED',
+      message: '恢复操作未完成，请核对恢复材料与状态。',
+    });
+    expect(await readRecoveryState()).toEqual(before);
+  }
+  const denied = await stub().recovery('incorrect-secret', {
+    operation: 'status',
+  });
+  expect(denied.status).toBe(403);
+  expect(jsonObject(parseJson(denied.body)).code).toBe('FORBIDDEN');
+  const status = await stub().recovery('integration-only-bootstrap-secret', {
+    operation: 'status',
+  });
+  expect(status.status).toBe(200);
+  expect(jsonObject(parseJson(status.body))).toEqual(before);
+  expect(await readRecoveryState()).toEqual(before);
+});
+
 async function start(n = 3, accountCount = n, candidateHomes = false) {
   await seed(accountCount);
   testUtc = Date.now();
