@@ -1,4 +1,4 @@
-import {parseJson} from '../../../../packages/contracts/src/backend';
+import {integer, parseJson} from '../../../../packages/contracts/src/backend';
 import {
   commandSpec,
   type CommandNode,
@@ -108,7 +108,10 @@ export function handleReportAction(
       matchState.phase === 'ended',
       '只有完赛后可发布战报',
     );
-    const version = Number(commandArguments[0]!.replace(/^RPT-/, ''));
+    const version = integer(
+      Number(commandArguments[0]!.replace(/^RPT-/, '')),
+      1,
+    );
     requireCommandArgument(
       db.one<Record<string, SqlStorageValue>>(
         'SELECT version FROM result_reports WHERE version=?',

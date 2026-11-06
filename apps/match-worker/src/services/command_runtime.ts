@@ -457,11 +457,14 @@ function macroBody(
   if (commandSpec(commandNode)?.path !== 'macro run') {
     return;
   }
-  const v = commandNode.words.indexOf('version');
+  const versionIndex = commandNode.words.indexOf('version');
+  if (versionIndex < 0) {
+    return;
+  }
   const row = engine.db.one<{data: string}>(
     "SELECT data FROM command_objects WHERE kind='macro' AND json_extract(data,'$.name')=? AND version=?",
     unquoteArgument(commandNode.words[2]),
-    Number(commandNode.words[v + 1]),
+    integer(Number(commandNode.words[versionIndex + 1]), 1),
   );
   return row ? (parseJson(row.data) as MacroData).block : undefined;
 }

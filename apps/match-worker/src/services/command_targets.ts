@@ -38,19 +38,32 @@ export function splitFilters(input: string): string[] {
   parts.push(input.slice(start).trim());
   return parts;
 }
+function parseRangeBound(value: string): number {
+  const bound = Number(value);
+  if (!Number.isSafeInteger(bound) || bound < 0) {
+    throw new CommandSyntaxError('范围端点须为安全非负整数');
+  }
+  return bound;
+}
+
 /** 按命令区间语法判断数值，可处理开放端点且拒绝非法范围。 */
-export function inRange(n: number, range: string): boolean {
+export function inRange(value: number, range: string): boolean {
   if (!/^(?:\d+(?:\.\.\d*)?|\.\.\d+)$/.test(range)) {
     throw new CommandSyntaxError('数值范围格式不正确');
   }
   if (!range.includes('..')) {
-    return n === Number(range);
+    return value === parseRangeBound(range);
   }
-  const [a, b] = range.split('..');
-  if (a && b && Number(a) > Number(b)) {
+  const [lowerText, upperText] = range.split('..');
+  const lower = lowerText ? parseRangeBound(lowerText) : undefined;
+  const upper = upperText ? parseRangeBound(upperText) : undefined;
+  if (lower !== undefined && upper !== undefined && lower > upper) {
     throw new CommandSyntaxError('范围下界大于上界');
   }
-  return (!a || n >= Number(a)) && (!b || n <= Number(b));
+  return (
+    (lower === undefined || value >= lower) &&
+    (upper === undefined || value <= upper)
+  );
 }
 /** 读取注册的文明数值属性，禁止把任意SQL字段作为命令分数。 */
 export function score(engine: Engine, id: string, key: string): number {

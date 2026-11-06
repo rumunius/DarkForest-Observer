@@ -925,3 +925,67 @@ it('pins the previewed macro version when a later definition is published', asyn
     {id: 'C01'},
   ]);
 });
+
+it('numeric macro versions reject invalid values instead of selecting the active version', async () => {
+  await forest();
+  await command('/macro define "数值边界" run { tell C01 "第一版" }');
+  await command('/macro define "数值边界" run { tell C01 "第二版" }');
+  expect(
+    jsonObject(resultData(await command('/macro inspect "数值边界"'))).version,
+  ).toBe(2);
+  expect(
+    jsonObject(resultData(await command('/macro inspect "数值边界" version 1')))
+      .version,
+  ).toBe(1);
+  for (const version of [
+    '0',
+    'NaN',
+    'Infinity',
+    '1.5',
+    '9007199254740992',
+    '""',
+  ]) {
+    for (const action of ['inspect', 'run']) {
+      const reply = await command(
+        `/macro ${action} "数值边界" version ${version}`,
+      );
+      expect(
+        reply.status,
+        `${action} version ${version}: ${JSON.stringify(reply.body)}`,
+      ).toBe(400);
+    }
+  }
+  expect(
+    await sql("SELECT COUNT(*) AS count FROM event_log WHERE title='赛事通知'"),
+  ).toEqual([{count: 0}]);
+});
+
+it('numeric selector bounds stay within safe integer limits', async () => {
+  await forest();
+  const safe = jsonObject(
+    resultData(await command('/selector inspect @alive[scores={wrong=0..0}]')),
+  );
+  expect(safe.candidates).toEqual(['C01', 'C02', 'C03', 'C04']);
+  for (const bound of ['9007199254740992', '9'.repeat(400)]) {
+    const range = await command(
+      `/selector inspect @alive[scores={wrong=0..${bound}}]`,
+    );
+    expect(range.status, JSON.stringify(range.body)).toBe(400);
+  }
+});
+
+it('numeric SQL cursors reject unsafe or overflowing integers before querying', async () => {
+  await forest();
+  for (const bound of ['9007199254740992', '9'.repeat(400)]) {
+    const cursor = await command(`/macro list --before ${bound}`);
+    expect(cursor.status, JSON.stringify(cursor.body)).toBe(400);
+  }
+});
+
+it('numeric validation keeps template preview target IDs separate from macro versions', async () => {
+  await forest();
+  const preview = await plan('/template publish "边界模板" "固定模板正文"');
+  expect((await confirm(preview.token)).status).toBe(200);
+  const reply = await command('/template preview "边界模板" for C01');
+  expect(resultData(reply)).toBe('固定模板正文');
+});

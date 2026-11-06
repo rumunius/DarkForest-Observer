@@ -95,7 +95,7 @@ export function page(
       '游标须为上一页nextCursor',
     );
     conditions += ' AND rowid<?';
-    args.push(Number(opts.before));
+    args.push(integer(Number(opts.before)));
   }
   const fields = commandContext.engine.db
     .all<{name: string}>(`PRAGMA table_info(${table})`)
@@ -561,7 +561,9 @@ export function query(
         commandContext,
         kind,
         commandArguments[0]!,
-        commandArguments[2] ? Number(commandArguments[2]) : undefined,
+        kind === 'macro' && commandArguments[2] !== undefined
+          ? Number(commandArguments[2])
+          : undefined,
       );
       if (path === 'template preview') {
         const id = singleTarget(commandContext, commandArguments[2]!);

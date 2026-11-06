@@ -1,5 +1,6 @@
 import type {ManagementPreview, OperationResult} from '@darkforest/contracts';
 import {
+  integer,
   parseJson,
   stableJson,
 } from '../../../../packages/contracts/src/backend';
@@ -564,13 +565,16 @@ export function namedCommandObject(
   name: string,
   version?: number,
 ): SavedCommandObject {
+  if (version !== undefined) {
+    integer(version, 1);
+  }
   const rows = commandContext.engine.db.all<SavedCommandObject>(
     "SELECT * FROM command_objects WHERE kind=? AND json_extract(data,'$.name')=? ORDER BY version DESC",
     kind,
     name,
   );
   const row = rows.find(r =>
-    version ? r.version === version : r.status === 'active',
+    version === undefined ? r.status === 'active' : r.version === version,
   );
   requireThat(row, 'VERSION_NOT_FOUND', '没有对应的有效版本。', 404);
   return row;
