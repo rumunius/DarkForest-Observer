@@ -62,7 +62,10 @@ function queryParameters(context: CommandQueryContext): unknown {
 function inspectParameter(context: CommandQueryContext): unknown {
   const {engine, commandArguments} = context;
 
-  requireCommandArgument(commandArguments[0]! in parameterKeys, '未知参数');
+  requireCommandArgument(
+    Object.hasOwn(parameterKeys, commandArguments[0]!),
+    '未知参数',
+  );
   return {
     key: commandArguments[0],
     value:

@@ -201,7 +201,7 @@ export function currentDependency(
   key: string,
   initial: Record<string, unknown>,
 ): unknown {
-  if (key in initial) {
+  if (Object.hasOwn(initial, key)) {
     return initial[key];
   }
   if (key === 'roster') {

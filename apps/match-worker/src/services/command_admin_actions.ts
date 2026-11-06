@@ -102,7 +102,10 @@ export function handleAdminAction(
   if (path === 'parameter set') {
     requireHeadJudge(commandContext);
     recordTableDependency(commandContext, 'settings');
-    requireCommandArgument(commandArguments[0]! in parameterKeys, '未知参数键');
+    requireCommandArgument(
+      Object.hasOwn(parameterKeys, commandArguments[0]!),
+      '未知参数键',
+    );
     const key = parameterKeys[commandArguments[0]!]!;
     const parameters = {...db.parameters()};
     const parameterValue = /^[+-]?\d+$/.test(commandArguments[1]!)
@@ -123,11 +126,11 @@ export function handleAdminAction(
     permission(commandContext.actor, 'settings');
     const site = parseJson(matchState.site_json) as SiteConfig;
     const before = structuredClone(site);
-    recordDependency(commandContext, 'site', site);
+    recordDependency(commandContext, 'site', before);
     if (path === 'setting set') {
       requireCommandArgument(matchState.phase === 'setup', 'T0后活动设置冻结');
       requireCommandArgument(
-        commandArguments[0]! in settingKeys,
+        Object.hasOwn(settingKeys, commandArguments[0]!),
         '未知活动设置',
       );
       site[settingKeys[commandArguments[0]!]!] = text(
@@ -137,7 +140,7 @@ export function handleAdminAction(
       );
     } else {
       requireCommandArgument(
-        commandArguments[0]! in site.colors &&
+        Object.hasOwn(site.colors, commandArguments[0]!) &&
           /^#[\da-f]{6}$/i.test(commandArguments[1]!),
         '颜色ID或色值不正确',
       );

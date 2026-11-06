@@ -103,7 +103,7 @@ export function targets(
   preview = false,
   bindings: Record<string, string[]> = {},
 ): TargetSet {
-  if (value in bindings) {
+  if (Object.hasOwn(bindings, value)) {
     return {
       candidates: bindings[value]!,
       ids: bindings[value]!,

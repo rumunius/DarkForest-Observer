@@ -68,7 +68,7 @@ export function commandValue(
   argument: string | undefined,
   commandContext: CommandContext,
 ) {
-  return argument && argument in commandContext.scalars
+  return argument && Object.hasOwn(commandContext.scalars, argument)
     ? commandContext.scalars[argument]!
     : unquoteArgument(argument);
 }
@@ -172,7 +172,7 @@ export function recordDependency(
   key: string,
   data: unknown,
 ): void {
-  if (!(key in commandContext.dependencies)) {
+  if (!Object.hasOwn(commandContext.dependencies, key)) {
     commandContext.dependencies[key] = data;
   }
 }
@@ -403,7 +403,7 @@ export function renderCommandTemplate(
     game_time: String(commandContext.engine.game()),
   };
   return body.replace(/\$\{([^}]+)\}/g, (_m, k: string) => {
-    requireCommandArgument(k in allowed, '未注册的模板字段：' + k);
+    requireCommandArgument(Object.hasOwn(allowed, k), '未注册的模板字段：' + k);
     return allowed[k]!;
   });
 }

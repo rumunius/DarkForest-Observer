@@ -4,6 +4,7 @@ import {
   jsonArray,
   jsonObjects,
   jsonString,
+  jsonNumber,
 } from '../helpers/json';
 import {beforeEach, expect, it} from 'vitest';
 import {env} from 'cloudflare:workers';
@@ -182,6 +183,81 @@ it('preserves the original secret schedule and reserved codes when relocking the
   expect(await sql('SELECT status,ready FROM flights')).toEqual(
     Array.from({length: 4}, () => ({status: 'ready', ready: now - 1000})),
   );
+});
+
+it('rejects inherited names as command bindings, settings, palette entries and template fields', async () => {
+  const site = await sql('SELECT site_json FROM matches');
+  for (const name of [
+    'toString',
+    'constructor',
+    '__proto__',
+    'hasOwnProperty',
+  ]) {
+    for (const text of [
+      `/selector inspect ${name}`,
+      `/parameter set ${name} 1`,
+      `/parameter inspect ${name}`,
+      `/setting set ${name} "test"`,
+      `/palette set ${name} "#112233"`,
+      `/template publish "invalid-${name}" "\${${name}}"`,
+    ]) {
+      const reply = await command(text);
+      expect(reply.status, text).toBe(400);
+    }
+  }
+  expect(await sql('SELECT site_json FROM matches')).toEqual(site);
+  expect(
+    await sql(
+      "SELECT id FROM command_objects WHERE kind IN ('plan','template')",
+    ),
+  ).toEqual([]);
+  const valid = await plan('/template publish "合法模板" "文明${id}"');
+  const confirmation = await confirm(valid.token);
+  expect(confirmation.status, JSON.stringify(confirmation.body)).toBe(200);
+});
+
+it('keeps configuration preview dependencies at their original value and rejects real later changes', async () => {
+  for (const text of [
+    '/setting set activity-name "配置预览回归"',
+    '/palette set BK "#112233"',
+  ]) {
+    const original = jsonObject(
+      parseJson(
+        jsonString((await sql('SELECT site_json FROM matches'))[0]!.site_json),
+      ),
+    );
+    const preview = await plan(text);
+    const saved = jsonObject(
+      parseJson(
+        jsonString(
+          (
+            await sql(
+              'SELECT data FROM command_objects WHERE id=?',
+              preview.token,
+            )
+          )[0]!.data,
+        ),
+      ),
+    );
+    expect(jsonObject(saved.dependencies).site).toEqual(original);
+    const confirmation = await confirm(preview.token);
+    expect(confirmation.status, JSON.stringify(confirmation.body)).toBe(200);
+    expect(
+      jsonObject(
+        parseJson(
+          jsonString(
+            (await sql('SELECT site_json FROM matches'))[0]!.site_json,
+          ),
+        ),
+      ).version,
+    ).toBe(jsonNumber(original.version) + 1);
+  }
+  const older = await plan('/setting set activity-name "旧预览"');
+  const newer = await plan('/setting set activity-name "新预览"');
+  expect((await confirm(newer.token)).status).toBe(200);
+  const stale = await confirm(older.token);
+  expect(stale.status).toBe(409);
+  expect(stale.body).toMatchObject({code: 'PLAN_DEPENDENCY_CHANGED'});
 });
 
 it('rejects players and checks expanded permissions; communications can query and send', async () => {
