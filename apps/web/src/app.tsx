@@ -1,3 +1,4 @@
+import {handleAsync} from './data/async_event';
 import {useEffect, useRef, useState, type ReactNode} from 'react';
 import type {DataSource} from '@darkforest/contracts';
 import {AppProvider, useApp} from './state';
@@ -65,7 +66,7 @@ function Landing() {
   );
 }
 function Login() {
-  const {source, refresh, go, route} = useApp();
+  const {reportError, source, refresh, go, route} = useApp();
   const [credential, setCredential] = useState('');
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -81,7 +82,7 @@ function Login() {
       </p>
       <form
         className="login-form form-stack"
-        onSubmit={async e => {
+        onSubmit={handleAsync(async e => {
           e.preventDefault();
           if (!credential.trim() || busy) {
             return;
@@ -104,7 +105,7 @@ function Login() {
           } finally {
             setBusy(false);
           }
-        }}
+        }, reportError)}
       >
         <Field label={judge ? '裁判口令' : '参赛口令'}>
           <input

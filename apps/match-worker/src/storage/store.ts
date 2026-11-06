@@ -1,3 +1,8 @@
+import {parseJson} from '../../../../packages/contracts/src/backend';
+import {
+  numericRecord,
+  stringArray,
+} from '../../../../packages/contracts/src/backend';
 import type {DomainPhase} from '../../../../packages/contracts/src/backend';
 import type {SiteConfig} from '@darkforest/contracts';
 export interface Match {
@@ -196,10 +201,12 @@ export class Store {
   parameters(): Parameters {
     return {
       ...DEFAULT_PARAMETERS,
-      ...JSON.parse(
-        this.one<{value: string}>(
-          "SELECT value FROM settings WHERE key='parameters'",
-        )!.value,
+      ...numericRecord(
+        parseJson(
+          this.one<{value: string}>(
+            "SELECT value FROM settings WHERE key='parameters'",
+          )!.value,
+        ),
       ),
     };
   }
@@ -228,9 +235,16 @@ export function requireThat(
     throw new Fault(status, code, message);
   }
 }
+/** Decode the list written by account duty assignment before checking privileges. */
+export function accountPermissions(
+  actor: Pick<Actor, 'permissions'>,
+): string[] {
+  return stringArray(parseJson(actor.permissions));
+}
+
 export function permission(actor: Actor, name: string): void {
   requireThat(
-    actor.role === 'judge' && JSON.parse(actor.permissions).includes(name),
+    actor.role === 'judge' && accountPermissions(actor).includes(name),
     'FORBIDDEN',
     '当前账号没有执行权限。',
     403,

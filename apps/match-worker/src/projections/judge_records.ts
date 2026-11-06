@@ -1,3 +1,7 @@
+import {
+  parseJson,
+  scalarText,
+} from '../../../../packages/contracts/src/backend';
 import type {AuditEntry, JudgeState, Notice} from '@darkforest/contracts';
 import type {Engine} from '../services/engine';
 import {integer} from '../../../../packages/contracts/src/backend';
@@ -52,7 +56,7 @@ export function judgeRecords(
       ? rows.map(noticeProjection)
       : kind === 'audits'
         ? rows.map(r => {
-            const detail = JSON.parse(r.detail as string) as {
+            const detail = parseJson(r.detail as string) as {
               before?: unknown;
               after?: unknown;
               status?: string;
@@ -90,6 +94,7 @@ export function judgeRecords(
           }));
   return {
     items,
-    nextCursor: rows.length === limit ? String(rows.at(-1)!.position) : null,
+    nextCursor:
+      rows.length === limit ? scalarText(rows.at(-1)!.position) : null,
   };
 }

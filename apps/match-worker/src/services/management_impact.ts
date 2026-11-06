@@ -1,3 +1,8 @@
+import {accountPermissions} from '../storage/store';
+import {
+  scalarText,
+  parseJson,
+} from '../../../../packages/contracts/src/backend';
 import type {ManagementPreview} from '@darkforest/contracts';
 import {nickname, stableJson} from '../../../../packages/contracts/src/backend';
 import type {Engine} from './engine';
@@ -17,7 +22,7 @@ export function managementImpact(
 ): Impact {
   const db = e.db;
   const m = db.match();
-  const target = String(body.target ?? m.id);
+  const target = scalarText(body.target ?? m.id);
   const changes: Impact['changes'] = [];
   const consequences: string[] = [];
   const add = (label: string, before: unknown, after: unknown) =>
@@ -120,7 +125,7 @@ export function managementImpact(
     }
   } else if (path === '/judge/attack-correction') {
     const a = correctionTarget(e, body.attack_id);
-    const before = JSON.parse(a.before_json!) as {
+    const before = parseJson(a.before_json!) as {
       wrong: number;
       lockedUntil: number;
       actorHomeDestroyed: number | null;
@@ -186,7 +191,7 @@ export function managementImpact(
     } else if (body.operation === 'duty') {
       add(
         `${target}职责权限`,
-        JSON.parse(a.permissions),
+        accountPermissions(a),
         DUTIES[body.duty as keyof typeof DUTIES],
       );
     } else {
@@ -227,7 +232,7 @@ export function managementImpact(
     if (event.kind === 'song_visit') {
       const payload = (() => {
         try {
-          return JSON.parse(event.payload) as {code?: string};
+          return parseJson(event.payload) as {code?: string};
         } catch {
           return {};
         }
@@ -265,9 +270,9 @@ export function managementImpact(
     if (body.revoke) {
       const effect = db.one(
         'SELECT target,starts,ends,active FROM admin_effects WHERE id=?',
-        String(body.revoke),
+        scalarText(body.revoke),
       )!;
-      add(String(body.revoke), effect, {...effect, active: 0});
+      add(scalarText(body.revoke), effect, {...effect, active: 0});
     } else {
       add('临时禁止目击', '无该项效果', {
         target,

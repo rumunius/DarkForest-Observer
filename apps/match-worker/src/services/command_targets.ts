@@ -1,3 +1,4 @@
+import {parseJson} from '../../../../packages/contracts/src/backend';
 import {CommandSyntaxError} from '../../../../packages/contracts/src/commands';
 import {uniformInt} from '../domain/rules';
 import {requireThat} from '../storage/store';
@@ -207,7 +208,7 @@ export function targets(
       }
       filter(id => e.db.player(id).tech === Number(val));
     } else if (key === 'tag') {
-      const tag = val.startsWith('"') ? (JSON.parse(val) as string) : val;
+      const tag = val.startsWith('"') ? (parseJson(val) as string) : val;
       filter(
         id =>
           !!e.db.one(

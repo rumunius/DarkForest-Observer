@@ -1,3 +1,4 @@
+import {parseJson} from '../../../../packages/contracts/src/backend';
 import type {PlatformSession} from '@darkforest/contracts';
 import {ApiError} from './http';
 export type PlatformReview = {
@@ -18,7 +19,7 @@ export class PlatformClient {
   }
   pending(): {id: string; account: string} | null {
     try {
-      return JSON.parse(sessionStorage.getItem(this.pendingKey) ?? 'null') as {
+      return parseJson(sessionStorage.getItem(this.pendingKey) ?? 'null') as {
         id: string;
         account: string;
       } | null;

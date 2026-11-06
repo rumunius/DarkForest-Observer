@@ -1,3 +1,4 @@
+import {promiseStub} from '../helpers/promise_stub';
 // @vitest-environment happy-dom
 import {afterEach, expect, it, vi} from 'vitest';
 import {act, createElement} from 'react';
@@ -17,7 +18,7 @@ vi.mock('../../apps/web/src/state', () => ({
 let root: Root;
 afterEach(async () => {
   if (root) {
-    await act(async () => root.unmount());
+    await act(promiseStub(() => root.unmount()));
   }
   document.body.replaceChildren();
   vi.unstubAllGlobals();
@@ -31,27 +32,31 @@ async function mount() {
   const host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  await act(async () => root.render(createElement(CommandConsole)));
+  await act(promiseStub(() => root.render(createElement(CommandConsole))));
   return document.querySelector('textarea')!;
 }
 async function type(input: HTMLTextAreaElement, value: string) {
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      'value',
-    )!.set!.call(input, value);
-    input.setSelectionRange(value.length, value.length);
-    input.dispatchEvent(new Event('input', {bubbles: true}));
-  });
+  await act(
+    promiseStub(() => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value',
+      )!.set!.call(input, value);
+      input.setSelectionRange(value.length, value.length);
+      input.dispatchEvent(new Event('input', {bubbles: true}));
+    }),
+  );
 }
 async function key(input: HTMLTextAreaElement, value: string) {
-  await act(async () =>
-    input.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: value,
-        bubbles: true,
-        cancelable: true,
-      }),
+  await act(
+    promiseStub(() =>
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: value,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
     ),
   );
 }
@@ -65,7 +70,7 @@ it('completes prefixes with Tab, clicks a child and restores focus and caret', a
   const option = [
     ...document.querySelectorAll<HTMLButtonElement>('[role=option]'),
   ].find(x => x.textContent?.startsWith('eliminate'))!;
-  await act(async () => option.click());
+  await act(promiseStub(() => option.click()));
   expect(input.value).toBe('/player eliminate ');
   expect(document.activeElement).toBe(input);
   expect(input.selectionStart).toBe(input.value.length);
@@ -76,16 +81,20 @@ it('completes prefixes with Tab, clicks a child and restores focus and caret', a
 it('does not consume Tab during IME composition, and Escape dismisses the panel', async () => {
   const input = await mount();
   await type(input, '/pl');
-  await act(async () => {
-    input.dispatchEvent(
-      new CompositionEvent('compositionstart', {bubbles: true}),
-    );
-  });
+  await act(
+    promiseStub(() => {
+      input.dispatchEvent(
+        new CompositionEvent('compositionstart', {bubbles: true}),
+      );
+    }),
+  );
   await key(input, 'Tab');
   expect(input.value).toBe('/pl');
-  await act(async () =>
-    input.dispatchEvent(
-      new CompositionEvent('compositionend', {bubbles: true}),
+  await act(
+    promiseStub(() =>
+      input.dispatchEvent(
+        new CompositionEvent('compositionend', {bubbles: true}),
+      ),
     ),
   );
   await key(input, 'Escape');

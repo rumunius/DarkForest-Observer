@@ -1,3 +1,4 @@
+import {parseJson} from '../../../../packages/contracts/src/backend';
 import type {GameEvent, ResultsState} from '@darkforest/contracts';
 import type {Engine} from './engine';
 import {civilization} from '../projections/snapshot';
@@ -300,12 +301,12 @@ export function results(
   if (!row) {
     return null;
   }
-  const report = JSON.parse(row.report) as {
+  const report = parseJson(row.report) as {
     champions: string[];
     standings: Array<{id: string; rank: number; tied: boolean; kills: number}>;
   };
   const standings = row.snapshot_json
-    ? (JSON.parse(row.snapshot_json) as ResultsState['standings'])
+    ? (parseJson(row.snapshot_json) as ResultsState['standings'])
     : report.standings.map(p => ({
         ...civilization(e, p.id, keys, true),
         rank: p.rank,

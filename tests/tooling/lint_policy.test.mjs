@@ -2,7 +2,6 @@ import {strict as assert} from 'node:assert';
 import {test} from 'node:test';
 import {resolve} from 'node:path';
 import {ESLint} from 'eslint';
-import {auditEntries, compareAudit} from '../../scripts/lint_audit.mjs';
 import {validSourceName} from '../../scripts/check_source_names.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -30,14 +29,14 @@ test('filenames allow documented entry points and reject new kebab/camel names',
 test('the normal gate enforces style and frontend import boundaries', async () => {
   const [result] = await eslint.lintText(
     "import {secret} from '../../match-worker/src/security/crypto';\nexport const value = secret;\nif (value) console.log(value);\n",
-    {filePath: 'apps/web/src/lint_probe.ts'},
+    {filePath: 'apps/web/src/app.tsx'},
   );
   const rules = result.messages.map(message => message.ruleId);
   assert.ok(rules.includes('curly'));
   assert.ok(rules.includes('no-restricted-imports'));
 });
 
-test('graduated scopes reject a floating promise, unsafe JSON and hook misuse', async () => {
+test('all project TypeScript rejects floating promises, unsafe JSON and hook misuse', async () => {
   const [typed] = await eslint.lintText(
     "export function probe() {\nPromise.resolve(1);\nconst value = JSON.parse('{}');\nreturn value.secret;\n}\n",
     {filePath: 'apps/web/src/data/http.ts'},
@@ -63,33 +62,4 @@ test('graduated scopes reject a floating promise, unsafe JSON and hook misuse', 
       message => message.ruleId === 'react-hooks/exhaustive-deps',
     ),
   );
-});
-
-function diagnostic(source, line = 1) {
-  return {
-    filePath: resolve(root, 'apps/web/src/pending.ts'),
-    source,
-    messages: [
-      {
-        ruleId: 'unsafe',
-        message: 'Unsafe value',
-        line,
-        column: 1,
-        endLine: line,
-        endColumn: 6,
-      },
-    ],
-  };
-}
-
-test('audit fingerprints survive line moves but detect changed expressions and duplicates', () => {
-  const original = auditEntries([diagnostic('value')]);
-  const moved = auditEntries([diagnostic('\nvalue', 2)]);
-  assert.deepEqual(compareAudit(moved, original), {added: [], removed: []});
-  const changed = compareAudit(auditEntries([diagnostic('other')]), original);
-  assert.equal(changed.added.length, 1);
-  assert.equal(changed.removed.length, 1);
-  const duplicate = auditEntries([diagnostic('value'), diagnostic('value')]);
-  assert.equal(compareAudit(duplicate, original).added.length, 1);
-  assert.equal(compareAudit([], original).removed.length, 1);
 });

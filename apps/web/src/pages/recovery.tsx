@@ -1,9 +1,10 @@
+import {handleAsync} from '../data/async_event';
 import {useState} from 'react';
 import {useApp} from '../state';
 import {Button} from '../ui';
 import {ManagementForm} from './judge';
 export function RecoveryTools() {
-  const {data, source} = useApp();
+  const {reportError, data, source} = useApp();
   const [error, setError] = useState('');
   if (!data.session?.permissions.includes('system')) {
     return null;
@@ -12,7 +13,7 @@ export function RecoveryTools() {
     <section>
       <h2>比赛恢复</h2>
       <Button
-        onClick={async () => {
+        onClick={handleAsync(async () => {
           try {
             const file = await source.exportData?.('checkpoint');
             if (!file) {
@@ -30,7 +31,7 @@ export function RecoveryTools() {
           } catch (e) {
             setError(e instanceof Error ? e.message : '恢复文件导出失败。');
           }
-        }}
+        }, reportError)}
       >
         保存恢复检查点
       </Button>

@@ -1,3 +1,4 @@
+import {parseJson} from '../../../../packages/contracts/src/backend';
 import {text} from '../../../../packages/contracts/src/backend';
 import {requireThat, type CodeRow} from '../storage/store';
 import type {Engine, PreparedCode} from './engine';
@@ -52,7 +53,7 @@ export function correctionTarget(e: Engine, raw: unknown): AttackRow {
         : null;
   if (restored) {
     const flight = e.db.flight(restored);
-    const before = JSON.parse(attack.before_json) as {actorVoyage: number};
+    const before = parseJson(attack.before_json) as {actorVoyage: number};
     const voyage = attack.target
       ? e.db.one<CodeRow>(
           'SELECT * FROM sighting_codes WHERE id=?',
@@ -86,7 +87,7 @@ export function correctAttack(
   prepared: PreparedCode[],
 ): void {
   const db = e.db;
-  const before = JSON.parse(attack.before_json!) as {
+  const before = parseJson(attack.before_json!) as {
     wrong: number;
     lockedUntil: number;
     actorHomeDestroyed: number | null;

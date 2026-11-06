@@ -1,3 +1,10 @@
+import {
+  parseJson,
+  jsonObject,
+  jsonArray,
+  jsonObjects,
+  jsonString,
+} from '../helpers/json';
 import {beforeEach, expect, it} from 'vitest';
 import {env} from 'cloudflare:workers';
 import {reset, runInDurableObject, evictDurableObject} from 'cloudflare:test';
@@ -141,9 +148,11 @@ it('人工技术爆炸只在执行时产生本人通知，重试不重复且其�
   const own = await call('/snapshot?route=/player', undefined, player);
   const events = (own.body as {events: Array<{title: string; body: string}>})
     .events;
+  const bodyMatcher: unknown =
+    expect.stringContaining('你的文明刚刚发生了技术爆炸');
   expect(events.filter(event => event.title === '技术爆炸')).toEqual([
     expect.objectContaining({
-      body: expect.stringContaining('你的文明刚刚发生了技术爆炸'),
+      body: bodyMatcher,
     }),
   ]);
   expect(
@@ -163,7 +172,7 @@ it('人工技术爆炸只在执行时产生本人通知，重试不重复且其�
 
 function resultData(reply: Awaited<ReturnType<typeof command>>) {
   expect(reply.status, JSON.stringify(reply.body)).toBe(200);
-  return JSON.parse((reply.body as OperationResult).message);
+  return parseJson((reply.body as OperationResult).message);
 }
 it('F09 records real command before/after state, encrypted input, preview, reason and linked audit', async () => {
   await forest();
@@ -173,23 +182,30 @@ it('F09 records real command before/after state, encrypted input, preview, reaso
   const [row] = await sql(
     "SELECT * FROM judge_command_log WHERE request_id='audit-confirm'",
   );
-  const detail = JSON.parse(String(row!.detail));
+  const detail = jsonObject(parseJson(jsonString(row!.detail)));
   expect(detail.reason).toBe('复核处罚');
-  expect(detail.preview.token).toBe(p.token);
+  expect(jsonObject(detail.preview).token).toBe(p.token);
   expect(detail.targets).toEqual(['C01']);
   expect(
-    detail.before.controls.find(
-      (p: {player_id: string}) => p.player_id === 'C01',
+    jsonObject(
+      jsonObjects(jsonObject(detail.before).controls).find(
+        p => p.player_id === 'C01',
+      ),
     ).wrong,
   ).toBe(0);
   expect(
-    detail.after.controls.find(
-      (p: {player_id: string}) => p.player_id === 'C01',
+    jsonObject(
+      jsonObjects(jsonObject(detail.after).controls).find(
+        p => p.player_id === 'C01',
+      ),
     ).wrong,
   ).toBe(2);
-  expect(detail.result.status).toBe('complete');
+  expect(jsonObject(detail.result).status).toBe('complete');
   expect(
-    await sql('SELECT id FROM audit_logs WHERE id=?', detail.auditId),
+    await sql(
+      'SELECT id FROM audit_logs WHERE id=?',
+      jsonString(detail.auditId),
+    ),
   ).toHaveLength(1);
   await runInDurableObject(stub(), async (_instance, state) => {
     const e = new Engine(new Store(state.storage), bindings);
@@ -197,19 +213,23 @@ it('F09 records real command before/after state, encrypted input, preview, reaso
     expect(
       await decrypt(
         keys.encryption,
-        String(row!.ciphertext),
+        jsonString(row!.ciphertext),
         'command|integration|J01|audit-confirm',
       ),
     ).toBe(`/confirm ${p.token}`);
   });
-  const history = resultData(
-    await command(
-      '/command history --target C01 --kind "penalty wrong-set" --status executed --search "复核处罚"',
+  const history = jsonObject(
+    resultData(
+      await command(
+        '/command history --target C01 --kind "penalty wrong-set" --status executed --search "复核处罚"',
+      ),
     ),
   );
   expect(history.items).toHaveLength(1);
-  expect(history.items[0].request_id).toBe('audit-confirm');
-  expect(history.items[0]).not.toHaveProperty('ciphertext');
+  expect(jsonObject(jsonArray(history.items)[0]).request_id).toBe(
+    'audit-confirm',
+  );
+  expect(jsonArray(history.items)[0]).not.toHaveProperty('ciphertext');
   const http = await call(
     '/judge/command/history?target=C01&status=executed&search=' +
       encodeURIComponent('复核处罚'),
@@ -267,19 +287,26 @@ it('F09 retains deferred command outcome, parent, affected targets and before/af
   const [row] = await sql(
     "SELECT detail,ciphertext FROM judge_command_log WHERE path='schedule due' AND status='executed'",
   );
-  const detail = JSON.parse(String(row!.detail));
+  const detail = jsonObject(parseJson(jsonString(row!.detail)));
   expect(detail.parent).toMatch(/^SCH-/);
   expect(detail.eventId).toBe(detail.parent);
   expect(detail.targets).toEqual(['C01']);
   expect(
-    detail.before.players.find((p: {id: string}) => p.id === 'C01').photons,
+    jsonObject(
+      jsonObjects(jsonObject(detail.before).players).find(p => p.id === 'C01'),
+    ).photons,
   ).toBe(0);
   expect(
-    detail.after.players.find((p: {id: string}) => p.id === 'C01').photons,
+    jsonObject(
+      jsonObjects(jsonObject(detail.after).players).find(p => p.id === 'C01'),
+    ).photons,
   ).toBe(1);
   expect(row!.ciphertext).toBeNull();
   expect(
-    await sql('SELECT id FROM audit_logs WHERE id=?', detail.auditId),
+    await sql(
+      'SELECT id FROM audit_logs WHERE id=?',
+      jsonString(detail.auditId),
+    ),
   ).toHaveLength(1);
 });
 it('F09 binds encrypted original text to each concurrent request on the same engine', async () => {
@@ -323,7 +350,9 @@ it('F10 reads actual plans and failed diagnostics, distinguishes event facts and
   await sql(
     "INSERT INTO scheduled_events(id,kind,clock,due,priority,payload,last_error,attempt_count) VALUES('future-tech','tech_burst','game',700000,2,'{}','注入故障',3)",
   );
-  const list = resultData(await command('/event list --status failed'));
+  const list = jsonObject(
+    resultData(await command('/event list --status failed')),
+  );
   expect(list.items).toEqual([
     expect.objectContaining({
       id: 'future-tech',
@@ -331,10 +360,12 @@ it('F10 reads actual plans and failed diagnostics, distinguishes event facts and
       attempt_count: 3,
     }),
   ]);
-  expect(resultData(await command('/event inspect future-tech')).status).toBe(
-    'pending',
-  );
-  expect(resultData(await command('/event-log list')).items).toEqual([]);
+  expect(
+    jsonObject(resultData(await command('/event inspect future-tech'))).status,
+  ).toBe('pending');
+  expect(
+    jsonObject(resultData(await command('/event-log list'))).items,
+  ).toEqual([]);
   expect((await command('/event retry future-tech')).status).toBe(400);
   await confirm((await plan('/clock pause')).token);
   await confirm((await plan('/event cancel future-tech')).token);
@@ -353,9 +384,12 @@ it('F10 retries a settled event as a no-op with original facts and does not dupl
   const facts = await sql("SELECT * FROM event_log WHERE id='due-tech'");
   expect(facts).toHaveLength(1);
   const p = await plan('/event retry due-tech');
-  const r = resultData(await confirm(p.token));
-  expect(r.result.event).toMatchObject({id: 'due-tech', status: 'settled'});
-  expect(r.result.outcome.id).toBe('due-tech');
+  const r = jsonObject(resultData(await confirm(p.token)));
+  expect(jsonObject(r.result).event).toMatchObject({
+    id: 'due-tech',
+    status: 'settled',
+  });
+  expect(jsonObject(jsonObject(r.result).outcome).id).toBe('due-tech');
   expect(await sql("SELECT * FROM event_log WHERE id='due-tech'")).toEqual(
     facts,
   );
@@ -400,14 +434,16 @@ it('F11 resolves living, dead, filtered and random candidates without including 
   await sql("UPDATE flights SET status='returning' WHERE player_id='C02'");
   await sql("UPDATE flights SET status='eliminated' WHERE player_id='C03'");
   expect(
-    resultData(await command('/selector inspect @alive')).candidates,
+    jsonObject(resultData(await command('/selector inspect @alive')))
+      .candidates,
   ).toEqual(['C01', 'C02']);
   expect(
-    resultData(await command('/selector inspect @dead')).candidates,
+    jsonObject(resultData(await command('/selector inspect @dead'))).candidates,
   ).toEqual(['C03']);
   expect(
-    resultData(await command('/selector inspect @a[status=returning]'))
-      .candidates,
+    jsonObject(
+      resultData(await command('/selector inspect @a[status=returning]')),
+    ).candidates,
   ).toEqual(['C02']);
   expect(
     resultData(await command('/selector inspect @random[alive,sort=id]')),
@@ -438,8 +474,10 @@ it('F11 history combines persistent attacks, notifications, penalties, correctio
   await confirm((await plan('/penalty lock C01 for 1m')).token);
   await confirm((await plan('/photon grant {C01,C02}')).token);
   await confirm((await plan('/tell C01 "请核对"')).token);
-  const all = resultData(await command('/history C01 --limit 1000'));
-  expect(all.items.map((r: {source: string}) => r.source)).toEqual(
+  const all = jsonObject(
+    resultData(await command('/history C01 --limit 1000')),
+  );
+  expect(jsonObjects(all.items).map(r => r.source)).toEqual(
     expect.arrayContaining([
       'attacks',
       'attack_corrections',
@@ -448,49 +486,53 @@ it('F11 history combines persistent attacks, notifications, penalties, correctio
       'judge_command_log',
     ]),
   );
-  expect(all.items.some((r: {id: string}) => r.id === 'historic-attack')).toBe(
+  expect(jsonObjects(all.items).some(r => r.id === 'historic-attack')).toBe(
     true,
   );
-  expect(resultData(await command('/history C01 kind attack')).items).toEqual(
+  expect(
+    jsonObject(resultData(await command('/history C01 kind attack'))).items,
+  ).toEqual(
     expect.arrayContaining([expect.objectContaining({id: 'historic-attack'})]),
   );
-  expect(resultData(await command('/history C01 kind penalty')).items).toEqual(
+  expect(
+    jsonObject(resultData(await command('/history C01 kind penalty'))).items,
+  ).toEqual(
     expect.arrayContaining([
       expect.objectContaining({source: 'attacks'}),
       expect.objectContaining({source: 'audit_logs'}),
     ]),
   );
   expect(
-    resultData(await command('/history C01 kind correction')).items,
+    jsonObject(resultData(await command('/history C01 kind correction'))).items,
   ).toEqual(
     expect.arrayContaining([
       expect.objectContaining({id: 'historic-correction'}),
     ]),
   );
-  const commands = resultData(
-    await command('/history C01 kind command --status executed'),
+  const commands = jsonObject(
+    resultData(await command('/history C01 kind command --status executed')),
   );
   expect(
-    commands.items.every(
-      (r: {source: string}) => r.source === 'judge_command_log',
-    ),
+    jsonObjects(commands.items).every(r => r.source === 'judge_command_log'),
   ).toBe(true);
   expect(
-    commands.items.some(
-      (r: {record: {path: string}}) => r.record.path === 'photon grant',
+    jsonObjects(commands.items).some(
+      r => jsonObject(r.record).path === 'photon grant',
     ),
   ).toBe(true);
   expect(resultData(await command('/inspect C01'))).toHaveProperty('flight');
-  const restricted = resultData(await command('/history C01', communications));
+  const restricted = jsonObject(
+    resultData(await command('/history C01', communications)),
+  );
   expect(
-    restricted.items.every(
-      (r: {source: string}) =>
+    jsonObjects(restricted.items).every(
+      r =>
         ![
           'attacks',
           'audit_logs',
           'judge_command_log',
           'attack_corrections',
-        ].includes(r.source),
+        ].includes(jsonString(r.source)),
     ),
   ).toBe(true);
   expect(
@@ -509,8 +551,8 @@ it('F11 applies history filters before pagination and keeps source waterlines ac
       now,
     );
   }
-  const first = resultData(
-    await command('/history C01 --limit 10 --search "分页证据"'),
+  const first = jsonObject(
+    resultData(await command('/history C01 --limit 10 --search "分页证据"')),
   );
   expect(first.items).toHaveLength(10);
   expect(first.nextCursor).toBeTruthy();
@@ -519,25 +561,29 @@ it('F11 applies history filters before pagination and keeps source waterlines ac
     now,
     now,
   );
-  const second = resultData(
-    await command(
-      `/history C01 --limit 10 --search "分页证据" --before ${first.nextCursor}`,
+  const second = jsonObject(
+    resultData(
+      await command(
+        `/history C01 --limit 10 --search "分页证据" --before ${jsonString(first.nextCursor)}`,
+      ),
     ),
   );
   expect(second.items).toHaveLength(10);
   expect(second.watermark).toBe(first.watermark);
   expect(
-    second.items.some(
-      (r: {id: string}) =>
-        first.items.some((p: {id: string}) => p.id === r.id) ||
-        r.id === 'later',
+    jsonObjects(second.items).some(
+      r =>
+        jsonObjects(first.items).some(p => p.id === r.id) || r.id === 'later',
     ),
   ).toBe(false);
   expect(
-    (await command(`/history C02 --before ${first.nextCursor}`)).status,
+    (await command(`/history C02 --before ${jsonString(first.nextCursor)}`))
+      .status,
   ).toBe(400);
-  const old = resultData(await command('/history C01 --search "old-0"'));
-  expect(old.items.some((r: {id: string}) => r.id === 'old-0')).toBe(true);
+  const old = jsonObject(
+    resultData(await command('/history C01 --search "old-0"')),
+  );
+  expect(jsonObjects(old.items).some(r => r.id === 'old-0')).toBe(true);
 });
 it('previews without committing; explicit target plans survive unrelated activity and time', async () => {
   await forest();
@@ -621,9 +667,9 @@ it('parses selectors, tags, score ranges and true boolean precedence', async () 
   const q = await command(
     '/selector inspect @alive[tag="奖励",scores={wrong=1..2,photons=0}]',
   );
-  expect(JSON.parse((q.body as OperationResult).message).candidates).toEqual([
-    'C02',
-  ]);
+  expect(
+    jsonObject(parseJson((q.body as OperationResult).message)).candidates,
+  ).toEqual(['C02']);
   const p = await plan(
     '/execute as @alive if (tag @s "奖励" and not score @s wrong matches 0) run { photon grant @s }',
   );
@@ -710,12 +756,16 @@ it('preserves freeze and original secrets when cancelling and relocking future s
 it('projects civilization secrets by duty and hides other authors templates', async () => {
   const result = await command('/inspect C01', communications);
   expect(result.status).toBe(200);
-  const detail = JSON.parse((result.body as OperationResult).message);
+  const detail = jsonObject(
+    parseJson((result.body as OperationResult).message),
+  );
   expect(detail.arms).toBeNull();
   expect(detail.voyages).toEqual([]);
   const events = await login('J03');
-  const limited = JSON.parse(
-    ((await command('/inspect C01', events)).body as OperationResult).message,
+  const limited = jsonObject(
+    parseJson(
+      ((await command('/inspect C01', events)).body as OperationResult).message,
+    ),
   );
   expect(limited.homeworld).toBeNull();
   expect((await command('/codebook list', communications)).status).toBe(403);

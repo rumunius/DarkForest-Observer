@@ -1,3 +1,8 @@
+import {accountPermissions} from '../storage/store';
+import {
+  parseJson,
+  scalarText,
+} from '../../../../packages/contracts/src/backend';
 import {
   COMMAND_LIMITS,
   instantMs,
@@ -53,7 +58,7 @@ export function civilizationHistory(
     '未知历史类别。',
     400,
   );
-  const permits = JSON.parse(actor.permissions) as string[];
+  const permits = accountPermissions(actor);
   if (['attack', 'command', 'penalty', 'correction'].includes(kind)) {
     permission(actor, 'audit');
   }
@@ -81,7 +86,7 @@ export function civilizationHistory(
   let cursor: Cursor | undefined;
   if (opts.before) {
     try {
-      cursor = JSON.parse(
+      cursor = parseJson(
         new TextDecoder().decode(
           Uint8Array.from(atob(opts.before), ch => ch.charCodeAt(0)),
         ),
@@ -132,7 +137,7 @@ export function civilizationHistory(
         continue;
       }
       items.push({
-        id: String(row.id ?? `${table}:${row.position}`),
+        id: scalarText(row.id ?? `${table}:${scalarText(row.position)}`),
         kind: category,
         source: table,
         position: row.position as number,
@@ -141,11 +146,11 @@ export function civilizationHistory(
         actor:
           row[actorField] === undefined || row[actorField] === null
             ? null
-            : String(row[actorField]),
+            : scalarText(row[actorField]),
         target: id,
         status:
           row.status !== undefined
-            ? String(row.status)
+            ? scalarText(row.status)
             : row.valid !== undefined
               ? row.valid
                 ? 'valid'
@@ -165,8 +170,8 @@ export function civilizationHistory(
     r =>
       r.kind === 'tech' || r.title === '资源调整'
         ? 'resource'
-        : ['singer', 'photon', 'broadcast'].includes(String(r.kind)) ||
-            String(r.title).includes('母星')
+        : ['singer', 'photon', 'broadcast'].includes(scalarText(r.kind)) ||
+            scalarText(r.title).includes('母星')
           ? 'homeworld'
           : 'event',
     'utc_ms',
@@ -237,13 +242,13 @@ export function civilizationHistory(
       related,
       [id, id, id],
       r =>
-        /penalty|effects/.test(String(r.action))
+        /penalty|effects/.test(scalarText(r.action))
           ? 'penalty'
-          : /correction|invalidate|correct-penalty/.test(String(r.action))
+          : /correction|invalidate|correct-penalty/.test(scalarText(r.action))
             ? 'correction'
-            : /homeworld/.test(String(r.action))
+            : /homeworld/.test(scalarText(r.action))
               ? 'homeworld'
-              : /resource|photon|tech/.test(String(r.action))
+              : /resource|photon|tech/.test(scalarText(r.action))
                 ? 'resource'
                 : 'audit',
       'utc_ms',

@@ -1,3 +1,7 @@
+import {
+  parseJson,
+  scalarText,
+} from '../../../../packages/contracts/src/backend';
 import type {DarkForestMatch} from '../../../match-worker/src/index';
 import type {RpcInput} from '../../../match-worker/src/rpc/types';
 import type {DarkForestPlatform} from '../../../match-worker/src/platform/platform';
@@ -94,12 +98,16 @@ export async function gateway(
           if (part.done) {
             break;
           }
-          size += part.value.length;
+          const chunk: unknown = part.value;
+          if (!(chunk instanceof Uint8Array)) {
+            return fail(400, 'BAD_JSON', '提交内容格式不正确。');
+          }
+          size += chunk.length;
           if (size > bodyLimit) {
             await reader.cancel();
             return fail(413, 'BODY_TOO_LARGE', '提交内容过长。');
           }
-          chunks.push(part.value);
+          chunks.push(chunk);
         }
       }
       const bytes = new Uint8Array(size);
@@ -108,7 +116,7 @@ export async function gateway(
         bytes.set(chunk, offset);
         offset += chunk.length;
       }
-      body = JSON.parse(
+      body = parseJson(
         new TextDecoder('utf-8', {fatal: true, ignoreBOM: false}).decode(bytes),
       );
     } catch {
@@ -127,7 +135,7 @@ export async function gateway(
     try {
       const platform = env.PLATFORM_DO.getByName('platform:primary');
       return json(
-        JSON.parse(
+        parseJson(
           url.pathname === '/api/install'
             ? await platform.bootstrap(secret, body)
             : await platform.maintenance(secret, body),
@@ -155,7 +163,7 @@ export async function gateway(
       const reply = recovery
         ? await target.recovery(secret, body)
         : await target.bootstrap(secret, body);
-      return json(JSON.parse(reply.body), reply.status);
+      return json(parseJson(reply.body), reply.status);
     } catch {
       return fail(503, 'BOOTSTRAP_UNAVAILABLE', '初始化服务暂时不可用。');
     }
@@ -220,7 +228,7 @@ export async function gateway(
         method: 'GET',
         path: '/auth/session',
       });
-      if (check.status !== 200 || !JSON.parse(check.body)) {
+      if (check.status !== 200 || !parseJson(check.body)) {
         return fail(401, 'UNAUTHENTICATED', '请重新登录后选择比赛。');
       }
     }
@@ -233,11 +241,11 @@ export async function gateway(
       : reply.clearCookie
         ? `${cookieName}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`
         : undefined;
-    return json(JSON.parse(reply.body), reply.status, {
+    return json(parseJson(reply.body), reply.status, {
       ...(cookie ? {'Set-Cookie': cookie} : {}),
       'X-Darkforest-Worker-Version':
         'workerVersion' in reply
-          ? String(reply.workerVersion ?? 'unreported')
+          ? scalarText(reply.workerVersion ?? 'unreported')
           : 'platform',
     });
   } catch {

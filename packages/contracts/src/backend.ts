@@ -22,6 +22,47 @@ export class ContractError extends Error {
     super(message);
   }
 }
+
+/** Decode JSON as unknown; callers must validate input or cite a persisted schema. */
+export function parseJson(value: string): unknown {
+  return JSON.parse(value);
+}
+
+/** Convert scalar identifiers and legacy values without accepting object coercion. */
+export function scalarText(value: unknown): string {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint' ||
+    typeof value === 'symbol'
+  ) {
+    return String(value);
+  }
+  throw new ContractError('此字段必须是文本或标量值。');
+}
+
+/** Read persisted permission lists, rejecting malformed entries before authorization. */
+export function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new ContractError('列表格式不正确。');
+  }
+  const entries: unknown[] = value;
+  return entries.map(entry => text(entry, Number.MAX_SAFE_INTEGER, 0));
+}
+
+/** Read numeric settings while retaining the caller's known parameter keys and defaults. */
+export function numericRecord(value: unknown): Record<string, number> {
+  const entries = Object.entries(object(value)).map(([key, entry]) => {
+    if (typeof entry !== 'number' || !Number.isFinite(entry)) {
+      throw new ContractError('数值设置格式不正确。');
+    }
+    return [key, entry] as const;
+  });
+  return Object.fromEntries(entries);
+}
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new ContractError();

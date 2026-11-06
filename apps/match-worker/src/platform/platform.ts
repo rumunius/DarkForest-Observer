@@ -1,3 +1,7 @@
+import {
+  parseJson,
+  scalarText,
+} from '../../../../packages/contracts/src/backend';
 import {DurableObject} from 'cloudflare:workers';
 import type {BackendEnv, MatchGrant, RpcInput, RpcReply} from '../rpc/types';
 import {Fault, requireThat, type Store} from '../storage/store';
@@ -190,7 +194,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
     );
     return d;
   }
-  async taskAllowed(accountId: string, matchId: string): Promise<boolean> {
+  taskAllowed(accountId: string, matchId: string): boolean {
     const a = this.db.one<Account>(
       "SELECT * FROM platform_accounts WHERE id=? AND status='active'",
       accountId,
@@ -221,7 +225,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       payload,
       expires: this.now() + 30000,
     };
-    const result = JSON.parse(
+    const result = parseJson(
       await this.env.MATCH_DO.getByName(d.object_name).control(
         request,
         await controlSignature(this.env, stableJson(request)),
@@ -372,7 +376,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         `rescue:${id}`,
       );
       if (old) {
-        const stored = JSON.parse(old.value) as {
+        const stored = parseJson(old.value) as {
           hash: string;
           invitationId: string;
           accountId: string;
@@ -447,7 +451,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         invitation: await decrypt(
           await platformKey(this.env),
           row.ciphertext,
-          `invitation|${p.invitationId}`,
+          `invitation|${text(p.invitationId, 100)}`,
         ),
       });
     }
@@ -459,7 +463,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         '旧比赛编号格式不正确。',
         400,
       );
-      const inventory = JSON.parse(
+      const inventory = parseJson(
         await this.env.MATCH_DO.getByName(`match:${matchId}`).legacyInventory(
           matchId,
           await controlSignature(
@@ -487,7 +491,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
           'OPERATION_CONFLICT',
           '迁移编号对应不同内容。',
         );
-        return JSON.stringify({matchId, receipt: JSON.parse(existing.result)});
+        return JSON.stringify({matchId, receipt: parseJson(existing.result)});
       }
       const row = this.db.one<{value: string}>(
         'SELECT value FROM platform_meta WHERE key=?',
@@ -498,7 +502,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         'INSPECTION_REQUIRED',
         '请先检查旧比赛并保存加密检查点。',
       );
-      const inventory = JSON.parse(row.value) as {
+      const inventory = parseJson(row.value) as {
         id: string;
         revision: number;
         accounts: Array<{
@@ -583,7 +587,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         'OPERATION_CONFLICT',
         '迁移编号对应不同内容。',
       );
-      const saved = JSON.parse(op.payload) as {
+      const saved = parseJson(op.payload) as {
         mappings: Array<{id: string; accountId: string}>;
         expectedRevision: number;
       };
@@ -664,7 +668,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         );
         requireThat(
           receipt &&
-            JSON.parse(receipt.value).digest ===
+            object(parseJson(receipt.value)).digest ===
               (await digest(stableJson(payload.payload))),
           'CARRY_RECEIPT_REQUIRED',
           '必须保存并回读校验carry材料，再登记收据后执行恢复。',
@@ -695,7 +699,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
       requireThat(
         reply.status < 400,
         'RECOVERY_FAILED',
-        (JSON.parse(reply.body) as {message?: string}).message ??
+        (parseJson(reply.body) as {message?: string}).message ??
           '比赛恢复未完成。',
       );
       if (action === 'complete') {
@@ -1056,7 +1060,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         `totp:${hash}`,
       );
       requireThat(row, 'SETUP_REQUIRED', '请先设置第二因素。');
-      const pending = JSON.parse(row.value) as {
+      const pending = parseJson(row.value) as {
         cipher: string;
         expires: number;
       };
@@ -1237,7 +1241,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         this.admin(s, ['owner', 'archivist']);
         if (payload.matchId) {
           requireThat(
-            this.dataScope(s.account_id, String(payload.matchId)),
+            this.dataScope(s.account_id, scalarText(payload.matchId)),
             'ARCHIVE_SCOPE_REQUIRED',
             '当前账号未获本场数据管理权限。',
             403,
@@ -1359,7 +1363,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
           '复制已核对的活动设置白名单',
           {},
         );
-        description = String(template.description ?? description);
+        description = scalarText(template.description ?? description);
       }
       this.db.tx(() => {
         this.db.exec(
@@ -2021,7 +2025,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         'BATCH_CONFLICT',
         '该批次对应不同文件。',
       );
-      return {status: 200, body: JSON.parse(old.result)};
+      return {status: 200, body: parseJson(old.result)};
     }
     const result = rows.map(r => ({
       ...r,
@@ -2513,7 +2517,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
         '完整复盘已到期，请从本场历史页面查看保留的战报。',
       );
     }
-    return {...reply, body: JSON.parse(reply.body)};
+    return {...reply, body: parseJson(reply.body)};
   }
   private async matchHistory(
     s: Login,
@@ -2734,7 +2738,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
             '任务发起人已失去管理权限。',
           );
         }
-        const p = JSON.parse(op.payload) as Record<string, unknown>;
+        const p = parseJson(op.payload) as Record<string, unknown>;
         let result: unknown = {};
         if (op.action === 'create') {
           const d = this.directory(op.target);
@@ -2777,7 +2781,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
           }
           if (p.accountId && action !== 'remove-member') {
             requireThat(
-              this.account(String(p.accountId)).status !== 'disabled',
+              this.account(scalarText(p.accountId)).status !== 'disabled',
               'ACCOUNT_DISABLED',
               '目标账号已停用。',
             );
@@ -2786,7 +2790,7 @@ export class DarkForestPlatform extends DurableObject<BackendEnv> {
             d,
             op.id,
             action,
-            String(p.controlActor ?? op.actor),
+            scalarText(p.controlActor ?? op.actor),
             '网站本场管理',
             p,
           );

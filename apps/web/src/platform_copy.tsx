@@ -1,3 +1,4 @@
+import {object, parseJson} from '../../../packages/contracts/src/backend';
 import type {ReactNode} from 'react';
 export const PHASE_NAMES: Record<string, string> = {
   setup: '赛前准备',
@@ -169,7 +170,7 @@ export function HumanData({
       (value.startsWith('{') || value.startsWith('['))
     ) {
       try {
-        return <HumanData value={JSON.parse(value)} field={field} />;
+        return <HumanData value={parseJson(value)} field={field} />;
       } catch {
         return <span>暂时无法读取处理结果。</span>;
       }
@@ -180,9 +181,10 @@ export function HumanData({
     return <span>{VALUES[value] ?? value}</span>;
   }
   if (Array.isArray(value)) {
+    const items: unknown[] = value;
     return (
       <ul className="platform-readable-list">
-        {value.map((v, i) => (
+        {items.map((v, i) => (
           <li key={i}>
             <HumanData value={v} field={field} />
           </li>
@@ -193,7 +195,7 @@ export function HumanData({
   if (typeof value === 'object') {
     return (
       <dl className="platform-readable-details">
-        {Object.entries(value)
+        {Object.entries(object(value))
           .filter(([key]) => LABELS[key])
           .map(([key, v]) => (
             <div key={key}>

@@ -1,3 +1,4 @@
+import {object, parseJson} from '../../../packages/contracts/src/backend';
 import {useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {App} from './app';
@@ -14,7 +15,13 @@ const preferences = (() => {
   const params = new URLSearchParams(location.search);
   let saved: {role?: string; scenario?: string} = {};
   try {
-    saved = JSON.parse(sessionStorage.getItem('darkforest.preview') ?? '{}');
+    const value = object(
+      parseJson(sessionStorage.getItem('darkforest.preview') ?? '{}'),
+    );
+    saved = {
+      ...(typeof value.role === 'string' ? {role: value.role} : {}),
+      ...(typeof value.scenario === 'string' ? {scenario: value.scenario} : {}),
+    };
   } catch {
     /* Defaults remain usable. */
   }

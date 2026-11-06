@@ -1,3 +1,4 @@
+import {parseJson} from '../../../packages/contracts/src/backend';
 import {
   createContext,
   useCallback,
@@ -41,6 +42,7 @@ interface AppContext {
   loading: boolean;
   busy: boolean;
   error: string;
+  reportError: (error: unknown) => void;
   result: OperationResult | null;
   clearFeedback: () => void;
   operate: (
@@ -91,7 +93,7 @@ interface PendingRecord {
 }
 function readPending(key = pendingKey): PendingRecord | null {
   try {
-    return JSON.parse(
+    return parseJson(
       sessionStorage.getItem(key) ?? 'null',
     ) as PendingRecord | null;
   } catch {
@@ -127,6 +129,11 @@ export function AppProvider({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const reportError = useCallback((error: unknown) => {
+    setError(
+      error instanceof Error ? error.message : '本次操作未完成，请稍后重试。',
+    );
+  }, []);
   const [result, setResult] = useState<OperationResult | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [names, setNames] = useState(false);
@@ -162,7 +169,7 @@ export function AppProvider({
   useEffect(() => {
     try {
       setReadIds(
-        JSON.parse(
+        parseJson(
           localStorage.getItem(accountKey) ??
             sessionStorage.getItem(accountKey) ??
             '[]',
@@ -585,6 +592,7 @@ export function AppProvider({
         loading,
         busy,
         error,
+        reportError,
         result,
         clearFeedback: () => {
           setError('');

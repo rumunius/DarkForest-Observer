@@ -1,3 +1,4 @@
+import {scalarText} from '../../../../packages/contracts/src/backend';
 import {
   RULES,
   validArms,
@@ -815,13 +816,13 @@ export class MockSource implements DataSource {
       }
       if (
         ['homeworld-submit', 'broadcast', 'photon'].includes(action) &&
-        !validCode(String(payload.code ?? ''))
+        !validCode(scalarText(payload.code ?? ''))
       ) {
         throw new ApiError('请输入6位数字', 422);
       }
       switch (action) {
         case 'nickname': {
-          const name = String(payload.nickname ?? '').trim();
+          const name = scalarText(payload.nickname ?? '').trim();
           if ([...name].length < 2 || [...name].length > 8) {
             throw new ApiError('昵称需要2至8个字符。', 422);
           }
@@ -987,7 +988,7 @@ export class MockSource implements DataSource {
         const token = crypto.randomUUID();
         this.previews.set(token, {
           revision: match.revision,
-          path: String(payload.path ?? '/judge/command/execute'),
+          path: scalarText(payload.path ?? '/judge/command/execute'),
           payload,
         });
         const preview = {
@@ -996,9 +997,11 @@ export class MockSource implements DataSource {
           title: '操作影响预览',
           changes: [
             {
-              target: String(payload.target ?? payload.command ?? '本场比赛'),
+              target: scalarText(
+                payload.target ?? payload.command ?? '本场比赛',
+              ),
               before: '当前已保存状态',
-              after: String(
+              after: scalarText(
                 payload.change ?? payload.command ?? '按本次表单变更',
               ),
             },
@@ -1039,12 +1042,12 @@ export class MockSource implements DataSource {
         };
       }
       if (payload.preview_token) {
-        const preview = this.previews.get(String(payload.preview_token));
+        const preview = this.previews.get(scalarText(payload.preview_token));
         if (!preview || preview.revision !== match.revision) {
           throw new ApiError('记录已更新，请重新预览并核对。', 409);
         }
         Object.assign(payload, preview.payload);
-        this.previews.delete(String(payload.preview_token));
+        this.previews.delete(scalarText(payload.preview_token));
       }
       if (path.includes('/homeworld/')) {
         const target = this.state.civilizations.find(
@@ -1060,7 +1063,7 @@ export class MockSource implements DataSource {
         }
         target.flight =
           payload.decision === 'approve' ? 'verified' : 'rejected';
-        target.rejection = String(payload.reason ?? '');
+        target.rejection = scalarText(payload.reason ?? '');
         title = payload.decision === 'approve' ? '母星审核通过' : '已退回修改';
       } else if (path.includes('/notices/')) {
         const notice = this.state.judge!.notices.find(
@@ -1087,7 +1090,7 @@ export class MockSource implements DataSource {
           throw new ApiError('请先完成终局资格核验。', 409);
         }
         match.paused = path.endsWith('/pause');
-        match.pauseReason = String(payload.reason ?? '');
+        match.pauseReason = scalarText(payload.reason ?? '');
         title = match.paused ? '比赛已暂停' : '比赛已恢复';
       } else if (path === '/judge/hunt-finalize') {
         const eliminations = payload.eliminations as Array<{
@@ -1149,7 +1152,7 @@ export class MockSource implements DataSource {
           throw new ApiError('请选择需要处理的文明。', 422);
         }
         const field = String(payload.field);
-        const value = String(payload.value ?? '');
+        const value = scalarText(payload.value ?? '');
         if (field === 'nickname') {
           if ([...value.trim()].length < 2 || [...value.trim()].length > 8) {
             throw new ApiError('昵称需要2至8个字符。', 422);
@@ -1234,7 +1237,7 @@ export class MockSource implements DataSource {
         title = '临时效果已建立';
       } else if (path.includes('/command/execute')) {
         title = '指令已执行';
-        message = String(payload.command ?? '查询完成');
+        message = scalarText(payload.command ?? '查询完成');
       } else if (path.includes('/scheduler') || path.includes('/settle-due')) {
         this.state.judge!.scheduler.backlog = 0;
         this.state.judge!.scheduler.lastSuccessUtcMs = Date.now();
@@ -1253,7 +1256,7 @@ export class MockSource implements DataSource {
         id: `AUD-${crypto.randomUUID()}`,
         title,
         operator: this.state.session.name,
-        reason: String(payload.reason ?? '按流程确认'),
+        reason: scalarText(payload.reason ?? '按流程确认'),
         before: '操作前状态',
         after: message,
         gameMs: match.gameMs,

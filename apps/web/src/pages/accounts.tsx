@@ -1,9 +1,10 @@
+import {handleAsync} from '../data/async_event';
 import {useState} from 'react';
 import {useApp} from '../state';
 import {Button, CopyText, Field} from '../ui';
 import {ManagementForm} from './judge';
 export function AccountsManagement() {
-  const {data, source, result, base} = useApp();
+  const {reportError, data, source, result, base} = useApp();
   const platform = base.startsWith('/m/');
   const [selected, setSelected] = useState('');
   const [operation, setOperation] = useState('disable');
@@ -80,7 +81,7 @@ export function AccountsManagement() {
       />
       {result?.credentialDeliveryId && (
         <Button
-          onClick={async () => {
+          onClick={handleAsync(async () => {
             try {
               setDelivery(
                 await source.credential!(result.credentialDeliveryId!),
@@ -89,7 +90,7 @@ export function AccountsManagement() {
             } catch (e) {
               setError(e instanceof Error ? e.message : '暂时无法读取新口令。');
             }
-          }}
+          }, reportError)}
         >
           读取新登录口令
         </Button>

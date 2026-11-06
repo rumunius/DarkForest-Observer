@@ -1,3 +1,4 @@
+import {promiseStub} from '../helpers/promise_stub';
 // @vitest-environment happy-dom
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {HttpSource} from '../../apps/web/src/data/http';
@@ -17,23 +18,25 @@ describe('跨比赛前端请求与中文信息', () => {
     const base = await new MockSource().read('/player');
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (path: string, init?: RequestInit) => {
-        calls.push({
-          path,
-          headers: new Headers(init?.headers),
-          body: init?.body,
-        });
-        if (path.includes('/snapshot')) {
-          return Response.json({
-            ...base,
-            session: {...base.session, csrfToken: 'test-csrf'},
+      vi.fn(
+        promiseStub((path: string, init?: RequestInit) => {
+          calls.push({
+            path,
+            headers: new Headers(init?.headers),
+            body: init?.body,
           });
-        }
-        if (path.includes('/operations/')) {
-          return Response.json({status: 'complete'});
-        }
-        return Response.json({fileName: 'test.json', text: '{}'});
-      }),
+          if (path.includes('/snapshot')) {
+            return Response.json({
+              ...base,
+              session: {...base.session, csrfToken: 'test-csrf'},
+            });
+          }
+          if (path.includes('/operations/')) {
+            return Response.json({status: 'complete'});
+          }
+          return Response.json({fileName: 'test.json', text: '{}'});
+        }),
+      ),
     );
     const a = new HttpSource('match-A', 'staff');
     const b = new HttpSource('match-B', 'player');
@@ -74,10 +77,12 @@ describe('跨比赛前端请求与中文信息', () => {
     await expect(
       client.mutate('/platform/matches/create', {name: 'B', reason: '创建'}),
     ).rejects.toThrow('请先查询');
-    const fetcher = vi.fn(async (path: string) =>
-      Response.json({
-        status: path.endsWith('/resolve') ? 'cancelled' : 'unknown',
-      }),
+    const fetcher = vi.fn(
+      promiseStub((path: string) =>
+        Response.json({
+          status: path.endsWith('/resolve') ? 'cancelled' : 'unknown',
+        }),
+      ),
     );
     vi.stubGlobal('fetch', fetcher);
     await client.resolvePending();
@@ -93,15 +98,17 @@ describe('跨比赛前端请求与中文信息', () => {
       account: {id: 'manager'},
       csrfToken: 'csrf',
     } as PlatformSession;
-    const fetcher = vi.fn(async (path: string) => {
-      if (path === '/api/platform/preview') {
-        return Response.json({
-          previewToken: 'preview',
-          warning: '会影响全部比赛',
-        });
-      }
-      throw new Error('预览不应提交停用');
-    });
+    const fetcher = vi.fn(
+      promiseStub((path: string) => {
+        if (path === '/api/platform/preview') {
+          return Response.json({
+            previewToken: 'preview',
+            warning: '会影响全部比赛',
+          });
+        }
+        throw new Error('预览不应提交停用');
+      }),
+    );
     vi.stubGlobal('fetch', fetcher);
     const preview = await client.mutate(
       '/platform/accounts/status',

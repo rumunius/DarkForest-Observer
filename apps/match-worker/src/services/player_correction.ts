@@ -1,3 +1,4 @@
+import {parseJson} from '../../../../packages/contracts/src/backend';
 import type {Engine, PreparedCode} from './engine';
 import {requireThat, type FlightRow} from '../storage/store';
 import {TIMES} from '../domain/rules';
@@ -38,7 +39,7 @@ export function restoration(
     target,
   );
   if (manual) {
-    const prior = JSON.parse(manual.before_json) as FlightRow;
+    const prior = parseJson(manual.before_json) as FlightRow;
     if (prior.status === 'active') {
       return {status: 'issued', deadline: null};
     }

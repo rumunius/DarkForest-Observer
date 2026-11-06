@@ -1,3 +1,8 @@
+import {accountPermissions} from '../storage/store';
+import {
+  parseJson,
+  scalarText,
+} from '../../../../packages/contracts/src/backend';
 import type {
   OperationResult,
   ManagementPreview,
@@ -79,7 +84,7 @@ interface Context {
   resetAccounts: Set<string>;
 }
 const unquote = (v: string | undefined) =>
-  v?.startsWith('"') ? (JSON.parse(v) as string) : (v ?? '');
+  v?.startsWith('"') ? (parseJson(v) as string) : (v ?? '');
 const value = (v: string | undefined, c: Context) =>
   v && v in c.scalars ? c.scalars[v]! : unquote(v);
 function need(condition: unknown, message: string): asserts condition {
@@ -430,7 +435,7 @@ function argsCheck(n: CommandNode): void {
 function owner(c: Context, row: Saved): void {
   requireThat(
     row.actor === c.actor.id ||
-      JSON.parse(c.actor.permissions).includes('commands'),
+      accountPermissions(c.actor).includes('commands'),
     'FORBIDDEN',
     '只能管理本人创建的任务。',
     403,
@@ -591,7 +596,7 @@ function page(
   }
   return {
     items,
-    nextCursor: rows.length > count ? String(items.at(-1)?._cursor) : null,
+    nextCursor: rows.length > count ? scalarText(items.at(-1)?._cursor) : null,
     watermark: c.e.db.match().revision,
   };
 }
@@ -689,7 +694,7 @@ function query(c: Context, n: CommandNode): unknown {
   const path = spec.path;
   if (path === 'help') {
     return COMMAND_SPECS.filter(s => !a[0] || s.path.startsWith(a[0]))
-      .filter(s => JSON.parse(c.actor.permissions).includes(s.permission))
+      .filter(s => accountPermissions(c.actor).includes(s.permission))
       .map(s => ({
         command: `/${s.path} ${s.args}`.trim(),
         description: s.description,
@@ -707,7 +712,7 @@ function query(c: Context, n: CommandNode): unknown {
     return {
       actor: c.actor.id,
       match: e.db.match().id,
-      permissions: JSON.parse(c.actor.permissions),
+      permissions: accountPermissions(c.actor),
     };
   }
   if (path === 'selector inspect') {
@@ -744,7 +749,7 @@ function query(c: Context, n: CommandNode): unknown {
     );
   }
   if (path === 'inspect') {
-    const permits = JSON.parse(c.actor.permissions) as string[];
+    const permits = accountPermissions(c.actor);
     const result = civilization(
       e,
       one(c, a[0]!),
@@ -868,7 +873,7 @@ function query(c: Context, n: CommandNode): unknown {
     };
   }
   if (path === 'setting list' || path === 'palette list') {
-    const site = JSON.parse(e.db.match().site_json) as SiteConfig;
+    const site = parseJson(e.db.match().site_json) as SiteConfig;
     return path === 'palette list' ? site.colors : site;
   }
   if (path === 'account list' || path === 'account inspect') {
@@ -908,7 +913,7 @@ function query(c: Context, n: CommandNode): unknown {
     if (w[1] === 'list') {
       const all =
         ['macro', 'template'].includes(kind) ||
-        (JSON.parse(c.actor.permissions) as string[]).includes('commands');
+        accountPermissions(c.actor).includes('commands');
       return page(
         c,
         n,
@@ -922,14 +927,14 @@ function query(c: Context, n: CommandNode): unknown {
       const row = named(c, kind, a[0]!, a[2] ? Number(a[2]) : undefined);
       if (path === 'template preview') {
         const id = one(c, a[2]!);
-        return template(c, (JSON.parse(row.data) as {body: string}).body, id);
+        return template(c, (parseJson(row.data) as {body: string}).body, id);
       }
-      return {...row, data: JSON.parse(row.data)};
+      return {...row, data: parseJson(row.data)};
     }
     const row = obj(e, a[0]!, kind);
     owner(c, row);
     if (path === 'case graph') {
-      const data = JSON.parse(row.data) as {
+      const data = parseJson(row.data) as {
         evidence: Array<{ref: string | null; note: string}>;
       };
       const audits = e.db.all<{id: string; action: string; target: string}>(
@@ -968,7 +973,7 @@ function query(c: Context, n: CommandNode): unknown {
         ],
       };
     }
-    return {...row, data: JSON.parse(row.data)};
+    return {...row, data: parseJson(row.data)};
   }
   const config = queryTables[w[0]!];
   if (config) {
@@ -1598,7 +1603,7 @@ function leaf(c: Context, n: CommandNode): unknown {
   }
   if (path === 'setting set' || path === 'palette set') {
     permission(c.actor, 'settings');
-    const site = JSON.parse(m.site_json) as SiteConfig;
+    const site = parseJson(m.site_json) as SiteConfig;
     const before = structuredClone(site);
     depend(c, 'site', site);
     if (path === 'setting set') {
@@ -1676,7 +1681,7 @@ function leaf(c: Context, n: CommandNode): unknown {
     const account = db.one<Actor>('SELECT * FROM accounts WHERE id=?', a[0]!);
     need(account, '账号不存在');
     need(
-      !JSON.parse(account.permissions).includes('system'),
+      !accountPermissions(account).includes('system'),
       '总裁判账号由部署管理员管理',
     );
     db.exec('UPDATE sessions SET revoked=1 WHERE account_id=?', account.id);
@@ -1843,7 +1848,7 @@ function leaf(c: Context, n: CommandNode): unknown {
       return id;
     }
     const row = obj(e, a[0]!, 'hunt');
-    const data = JSON.parse(row.data) as {
+    const data = parseJson(row.data) as {
       eliminations: Array<{id: string; reason: string}>;
     };
     const ids = select(c, a[1]!);
@@ -1872,9 +1877,9 @@ function leaf(c: Context, n: CommandNode): unknown {
     invoke(
       c,
       '/judge/hunt-finalize',
-      JSON.parse(row.data) as Record<string, unknown>,
+      parseJson(row.data) as Record<string, unknown>,
     );
-    update(c, row, JSON.parse(row.data), 'complete');
+    update(c, row, parseJson(row.data), 'complete');
     return;
   }
   if (path === 'case open') {
@@ -1899,7 +1904,7 @@ function leaf(c: Context, n: CommandNode): unknown {
   if (path === 'case evidence' || path === 'case close') {
     head(c);
     const row = obj(e, a[0]!, 'case');
-    const data = JSON.parse(row.data) as {evidence: unknown[]};
+    const data = parseJson(row.data) as {evidence: unknown[]};
     if (path.endsWith('evidence')) {
       need(
         a.length === 5 && a[1] === 'ref' && a[3] === 'note',
@@ -2081,7 +2086,7 @@ function matchTime(c: Context, path: string, a: string[]): void {
         "SELECT * FROM command_objects WHERE kind='start-plan' AND status='active' ORDER BY created_utc DESC LIMIT 1",
       );
       const existing = oldPlan
-        ? (JSON.parse(oldPlan.data) as {roster: string[]; times: number[]})
+        ? (parseJson(oldPlan.data) as {roster: string[]; times: number[]})
         : null;
       let times: number[];
       if (existing && stableJson(existing.roster) === stableJson(roster)) {
@@ -2334,7 +2339,7 @@ function pin(c: Context, n: CommandNode, stack: string[] = []): void {
       versionIndex >= 0 ? Number(n.words[versionIndex + 1]) : undefined,
     );
     need(!stack.includes(name), '宏不能直接或间接递归');
-    const data = JSON.parse(row.data) as MacroData;
+    const data = parseJson(row.data) as MacroData;
     if (versionIndex < 0) {
       n.words.push('version', String(row.version));
     }
@@ -2515,7 +2520,7 @@ function run(c: Context, n: CommandNode): unknown {
         name,
         v >= 0 ? Number(n.words[v + 1]) : undefined,
       );
-      const data = JSON.parse(row.data) as MacroData;
+      const data = parseJson(row.data) as MacroData;
       depend(c, 'object:' + row.id, row);
       need(!c.macroStack.includes(row.id), '宏不能递归');
       const rest = n.words.slice(3, v >= 0 ? v : undefined);
@@ -2572,7 +2577,7 @@ function run(c: Context, n: CommandNode): unknown {
         value(n.words[2], c),
         integer(Number(n.words[4]), 1),
       );
-      update(c, row, JSON.parse(row.data), 'retired');
+      update(c, row, parseJson(row.data), 'retired');
       change(c, row.id, 'active', 'retired');
       return;
     }
@@ -2588,9 +2593,9 @@ function run(c: Context, n: CommandNode): unknown {
       );
       owner(c, row);
       if (['complete', 'cancelled'].includes(row.status)) {
-        return JSON.parse(row.data);
+        return parseJson(row.data);
       }
-      update(c, row, JSON.parse(row.data), 'cancelled');
+      update(c, row, parseJson(row.data), 'cancelled');
       c.e.db.exec(
         "UPDATE scheduled_events SET status='cancelled' WHERE (id=? OR json_extract(payload,'$.job')=?) AND status='pending'",
         row.id,
@@ -2665,7 +2670,7 @@ function macroBody(e: Engine, n: CommandNode): CommandNode[] | undefined {
     unquote(n.words[2]),
     Number(n.words[v + 1]),
   );
-  return row ? (JSON.parse(row.data) as MacroData).block : undefined;
+  return row ? (parseJson(row.data) as MacroData).block : undefined;
 }
 function isMessage(e: Engine, n: CommandNode): boolean {
   if (
@@ -2898,7 +2903,7 @@ function currentDependency(
     return survivors(e);
   }
   if (key === 'site') {
-    return JSON.parse(e.db.match().site_json);
+    return parseJson(e.db.match().site_json);
   }
   if (key.startsWith('object:')) {
     return e.db.one('SELECT * FROM command_objects WHERE id=?', key.slice(7));
@@ -3014,7 +3019,7 @@ export function commandAction(
   ) {
     const row = obj(e, node.words[2]!, 'plan');
     owner(context(e, actor, id, prepared), row);
-    const data = JSON.parse(row.data) as PlanData;
+    const data = parseJson(row.data) as PlanData;
     permission(actor, commandSpec(data.node)!.permission);
     if (node.words[1] === 'cancel') {
       need(row.status === 'pending', '只能关闭未执行计划');
@@ -3054,7 +3059,7 @@ export function commandAction(
         : text(raw.preview_token, 100);
     const row = obj(e, token, 'plan');
     need(row.actor === actor.id, '计划必须由创建裁判确认');
-    const data = JSON.parse(row.data) as PlanData;
+    const data = parseJson(row.data) as PlanData;
     if (raw.preview_token) {
       need(
         stableJson(node) === stableJson(data.node),
@@ -3344,7 +3349,7 @@ export async function prepareCommandCredentials(
   e.commandCredentials = Object.fromEntries(entries);
 }
 export function executeCommandEvent(e: Engine, event: Scheduled): void {
-  const payload = JSON.parse(event.payload) as {
+  const payload = parseJson(event.payload) as {
     id?: string;
     job?: string;
     index?: number;
@@ -3397,7 +3402,7 @@ export function executeCommandEvent(e: Engine, event: Scheduled): void {
   c.reason = '裁判定时授权';
   c.deferred = true;
   if (payload.job) {
-    const data = JSON.parse(row.data) as JobData;
+    const data = parseJson(row.data) as JobData;
     need(data.next === payload.index, '作业进度不一致');
     if (
       e.db.match().phase === 'ended' &&
@@ -3497,7 +3502,7 @@ export function executeCommandEvent(e: Engine, event: Scheduled): void {
     }
     return;
   }
-  const data = JSON.parse(row.data) as TaskData;
+  const data = parseJson(row.data) as TaskData;
   if (e.db.match().phase === 'ended' && data.afterEnd === 'cancel') {
     update(c, row, data, 'cancelled');
     recordCommand(

@@ -1,3 +1,4 @@
+import {parseJson} from '../../../packages/contracts/src/backend';
 import {DurableObject} from 'cloudflare:workers';
 import {Engine} from './services/engine';
 import {Store} from './storage/store';
@@ -288,7 +289,7 @@ export default {
       `match:${env.MATCH_ID}`,
     ).bootstrap(
       request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '',
-      JSON.parse(input),
+      parseJson(input),
     );
     return new Response(reply.body, {
       status: reply.status,

@@ -1,3 +1,5 @@
+import {promiseStub} from '../helpers/promise_stub';
+import {jsonObject, jsonString, parseJson} from '../helpers/json';
 // @vitest-environment happy-dom
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {act, createElement} from 'react';
@@ -22,17 +24,19 @@ async function mount(source: DataSource, page = false) {
   const host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      createElement(AppProvider, {
-        source,
-        children: [
-          createElement(Probe, {key: 'probe'}),
-          ...(page ? [createElement(VisiblePlayer, {key: 'page'})] : []),
-        ],
-      }),
-    );
-  });
+  await act(
+    promiseStub(() => {
+      root!.render(
+        createElement(AppProvider, {
+          source,
+          children: [
+            createElement(Probe, {key: 'probe'}),
+            ...(page ? [createElement(VisiblePlayer, {key: 'page'})] : []),
+          ],
+        }),
+      );
+    }),
+  );
 }
 beforeEach(() => {
   Object.assign(globalThis, {IS_REACT_ACT_ENVIRONMENT: true});
@@ -43,7 +47,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (root) {
-    await act(async () => root!.unmount());
+    await act(promiseStub(() => root!.unmount()));
   }
   root = undefined;
   document.body.replaceChildren();
@@ -63,20 +67,20 @@ describe('actual React state and forms', () => {
       {...original, id: 'mine', recipient: fixture.player!.id},
       {...original, id: 'someone-else', recipient: 'C99'},
     ];
-    vi.spyOn(source, 'read').mockImplementation(async () =>
-      structuredClone(fixture),
+    vi.spyOn(source, 'read').mockImplementation(
+      promiseStub(() => structuredClone(fixture)),
     );
     history.replaceState({}, '', '/player');
     await mount(source, true);
     expect(latest.unread).toBe(1);
-    await act(async () => latest.go('/player/messages'));
+    await act(promiseStub(() => latest.go('/player/messages')));
     expect(latest.unread).toBe(0);
     expect(document.body.textContent).not.toContain('someone-else');
-    await act(async () => root!.unmount());
+    await act(promiseStub(() => root!.unmount()));
     root = undefined;
     await mount(source, true);
     expect(latest.unread).toBe(0);
-    await act(async () => latest.go('/player/me'));
+    await act(promiseStub(() => latest.go('/player/me')));
     await act(async () => latest.refresh());
     expect(latest.unread).toBe(0);
   });
@@ -92,56 +96,57 @@ describe('actual React state and forms', () => {
     const submitted: Array<Record<string, unknown>> = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string, init?: RequestInit) => {
-        if (url.startsWith('/api/snapshot')) {
-          return Response.json(structuredClone(initial));
-        }
-        if (url === '/api/action/homeworld-submit') {
-          const body = JSON.parse(String(init?.body)) as Record<
-            string,
-            unknown
-          >;
-          const parsed = homeworldSubmission(body);
-          submitted.push(body);
-          expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe(
-            initial.session!.csrfToken,
-          );
-          initial.player = {
-            ...initial.player!,
-            flight: 'pending',
-            homeworld: parsed.code,
-            homeVersion: 1,
-          };
-          return Response.json({
-            requestId: parsed.request_id,
-            status: 'complete',
-            title: '母星登记已提交',
-            message: '已保存',
-          });
-        }
-        if (url.startsWith('/api/player/templates/')) {
-          return Response.json({text: '已保存版本的登记消息'});
-        }
-        throw new Error(`Unexpected HTTP request: ${url}`);
-      }),
+      vi.fn(
+        promiseStub((url: string, init?: RequestInit) => {
+          if (url.startsWith('/api/snapshot')) {
+            return Response.json(structuredClone(initial));
+          }
+          if (url === '/api/action/homeworld-submit') {
+            const body = jsonObject(parseJson(jsonString(init?.body)));
+            const parsed = homeworldSubmission(body);
+            submitted.push(body);
+            expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe(
+              initial.session!.csrfToken,
+            );
+            initial.player = {
+              ...initial.player!,
+              flight: 'pending',
+              homeworld: parsed.code,
+              homeVersion: 1,
+            };
+            return Response.json({
+              requestId: parsed.request_id,
+              status: 'complete',
+              title: '母星登记已提交',
+              message: '已保存',
+            });
+          }
+          if (url.startsWith('/api/player/templates/')) {
+            return Response.json({text: '已保存版本的登记消息'});
+          }
+          throw new Error(`Unexpected HTTP request: ${url}`);
+        }),
+      ),
     );
     await mount(new HttpSource(), true);
     const input = document.querySelector<HTMLInputElement>(
       'input[inputmode="numeric"]',
     )!;
     expect(input).not.toBeNull();
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        'value',
-      )!.set!.call(input, '001234');
-      input.dispatchEvent(new Event('input', {bubbles: true}));
-    });
+    await act(
+      promiseStub(() => {
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value',
+        )!.set!.call(input, '001234');
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+      }),
+    );
     const save = [...document.querySelectorAll('button')].find(button =>
       button.textContent?.includes('保存母星口令'),
     )!;
     expect(save).toBeDefined();
-    await act(async () => save.click());
+    await act(promiseStub(() => save.click()));
     expect(submitted).toHaveLength(1);
     expect(Object.keys(submitted[0]!).sort()).toEqual(['code', 'request_id']);
     expect(submitted[0]!.code).toBe('001234');
@@ -189,15 +194,17 @@ describe('actual React state and forms', () => {
       () => new Promise(resolve => pending.push(resolve)),
     );
     await mount(source);
-    await act(async () => latest.go('/player/messages'));
+    await act(promiseStub(() => latest.go('/player/messages')));
     const newest = structuredClone(fixture);
     newest.match!.revision = 20;
-    await act(async () => pending.at(-1)!(newest));
-    await act(async () => {
-      for (const resolve of pending.slice(0, -1)) {
-        resolve(fixture);
-      }
-    });
+    await act(promiseStub(() => pending.at(-1)!(newest)));
+    await act(
+      promiseStub(() => {
+        for (const resolve of pending.slice(0, -1)) {
+          resolve(fixture);
+        }
+      }),
+    );
     expect(latest.route).toBe('/player/messages');
     expect(latest.data.match!.revision).toBe(20);
   });

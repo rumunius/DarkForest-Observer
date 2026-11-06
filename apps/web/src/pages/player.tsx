@@ -1,3 +1,4 @@
+import {handleAsync} from '../data/async_event';
 import {useEffect, useState, type ReactNode} from 'react';
 import {
   COLORS,
@@ -258,7 +259,7 @@ function Current() {
   );
 }
 function IdentityPage() {
-  const {data, operate, busy, go} = useApp();
+  const {reportError, data, operate, busy, go} = useApp();
   const me = data.player!;
   const [value, setValue] = useState('');
   const trimmed = value.trim();
@@ -292,14 +293,14 @@ function IdentityPage() {
               <Button
                 className="primary full"
                 disabled={busy}
-                onClick={async () => {
+                onClick={handleAsync(async () => {
                   const r = await operate('/player/nickname', {
                     nickname: trimmed,
                   });
                   if (r?.status === 'complete') {
                     go('/player/homeworld');
                   }
-                }}
+                }, reportError)}
               >
                 确认昵称
                 <Icon name="arrow" size={18} />
@@ -312,7 +313,7 @@ function IdentityPage() {
   );
 }
 function Homeworld() {
-  const {data, operate, busy} = useApp();
+  const {reportError, data, operate, busy} = useApp();
   const me = data.player!;
   const [value, setValue] = useState(me.homeworld ?? '');
   const [editing, setEditing] = useState(false);
@@ -337,14 +338,14 @@ function Homeworld() {
             <Button
               className="primary full"
               disabled={busy}
-              onClick={async () => {
+              onClick={handleAsync(async () => {
                 const r = await operate('/action/homeworld-submit', {
                   code: value,
                 } satisfies HomeworldSubmission);
                 if (r?.status === 'complete') {
                   setEditing(false);
                 }
-              }}
+              }, reportError)}
             >
               保存母星口令
               <Icon name="arrow" size={18} />
@@ -532,7 +533,7 @@ function Preflight() {
   );
 }
 function Respawn() {
-  const {data, operate, busy, go} = useApp();
+  const {reportError, data, operate, busy, go} = useApp();
   const me = data.player!;
   const [checked, setChecked] = useState(false);
   if (
@@ -620,12 +621,12 @@ function Respawn() {
               <Button
                 className="primary full"
                 disabled={busy}
-                onClick={async () => {
+                onClick={handleAsync(async () => {
                   const r = await operate('/action/launch');
                   if (r?.status === 'complete') {
                     go('/player');
                   }
-                }}
+                }, reportError)}
               >
                 完成出航
                 <Icon name="arrow" size={18} />
@@ -710,7 +711,7 @@ function ResourceAction({action}: {action: 'broadcast' | 'photon'}) {
   );
 }
 function CoordinateAction({action}: {action: 'broadcast' | 'photon'}) {
-  const {data, operate, busy, pending} = useApp();
+  const {reportError, data, operate, busy, pending} = useApp();
   const [value, setValue] = useState(
     new URLSearchParams(location.search).get('code') ?? '',
   );
@@ -761,12 +762,12 @@ function CoordinateAction({action}: {action: 'broadcast' | 'photon'}) {
                 <Button
                   className="primary full"
                   disabled={busy || !!pending}
-                  onClick={async () => {
+                  onClick={handleAsync(async () => {
                     const r = await operate(`/action/${action}`, {code: value});
                     if (r?.status === 'complete') {
                       setDone(true);
                     }
-                  }}
+                  }, reportError)}
                 >
                   {action === 'broadcast' ? '确认广播' : '发射光粒'}
                   <Icon name="arrow" size={18} />
@@ -1156,6 +1157,7 @@ function Help({exception = false}: {exception?: boolean}) {
 }
 function Account() {
   const {
+    reportError,
     data,
     logout,
     names,
@@ -1204,12 +1206,12 @@ function Account() {
               <Button
                 className="danger full"
                 disabled={busy}
-                onClick={async () => {
+                onClick={handleAsync(async () => {
                   const r = await operate('/action/withdraw');
                   if (r?.status === 'complete') {
                     go('/player/eliminated');
                   }
-                }}
+                }, reportError)}
               >
                 确认退出比赛
               </Button>

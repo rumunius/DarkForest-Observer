@@ -1,3 +1,4 @@
+import {handleAsync} from '../data/async_event';
 import {CommandConsole} from './command_console';
 import {useState, type ReactNode} from 'react';
 import {
@@ -97,7 +98,7 @@ export function ManagementForm({
   reasonRequired?: boolean;
   current?: string;
 }) {
-  const {operate, busy, data} = useApp();
+  const {reportError, operate, busy, data} = useApp();
   const [reason, setReason] = useState('');
   const [preview, setPreview] = useState<ManagementPreview | null>(null);
   const [stamp, setStamp] = useState('');
@@ -122,7 +123,7 @@ export function ManagementForm({
       {!currentPreview && (
         <Button
           disabled={busy || !usable}
-          onClick={async () => {
+          onClick={handleAsync(async () => {
             const r = await operate('/judge/manage/preview', {
               path,
               ...payload,
@@ -134,7 +135,7 @@ export function ManagementForm({
               setPreview(r.preview);
               setStamp(fingerprint);
             }
-          }}
+          }, reportError)}
         >
           预览操作影响
           <Icon name="arrow" size={18} />
@@ -159,7 +160,7 @@ export function ManagementForm({
           <Button
             className="primary full"
             disabled={busy}
-            onClick={async () => {
+            onClick={handleAsync(async () => {
               const r = await operate(path, {
                 ...payload,
                 reason,
@@ -169,7 +170,7 @@ export function ManagementForm({
               if (r?.status === 'complete') {
                 setPreview(null);
               }
-            }}
+            }, reportError)}
           >
             确认执行：{title}
           </Button>
@@ -1230,7 +1231,7 @@ function SystemStatus() {
   );
 }
 function Settings() {
-  const {data, operate, busy} = useApp();
+  const {reportError, data, operate, busy} = useApp();
   const [site, setSite] = useState<SiteConfig>(structuredClone(data.site));
   const [preview, setPreview] = useState(false);
   const [reason, setReason] = useState('');
@@ -1358,7 +1359,7 @@ function Settings() {
           <Button
             className="primary full"
             disabled={busy}
-            onClick={async () => {
+            onClick={handleAsync(async () => {
               const r = await operate('/judge/site-config', {
                 site,
                 expected_version: data.site.version,
@@ -1367,7 +1368,7 @@ function Settings() {
               if (r?.status === 'complete') {
                 setPreview(false);
               }
-            }}
+            }, reportError)}
           >
             确认保存活动设置
           </Button>
@@ -1377,7 +1378,7 @@ function Settings() {
   );
 }
 function ResultsManagement() {
-  const {data, source} = useApp();
+  const {reportError, data, source} = useApp();
   const [kind, setKind] = useState('report');
   const [exportError, setExportError] = useState('');
   const exportData = async () => {
@@ -1455,7 +1456,7 @@ function ResultsManagement() {
             {exportError}
           </p>
           <Button
-            onClick={async () => {
+            onClick={handleAsync(async () => {
               try {
                 const file = await source.exportData?.('backup');
                 if (!file) {
@@ -1477,7 +1478,7 @@ function ResultsManagement() {
                     : '导出失败，请稍后重试。',
                 );
               }
-            }}
+            }, reportError)}
           >
             导出加密备份
           </Button>

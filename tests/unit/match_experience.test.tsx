@@ -1,3 +1,5 @@
+import {promiseStub} from '../helpers/promise_stub';
+import {jsonString, parseJson} from '../helpers/json';
 // @vitest-environment happy-dom
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {act, type ReactNode} from 'react';
@@ -50,7 +52,7 @@ async function mount(node: ReactNode) {
   const host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  await act(async () => root!.render(node));
+  await act(promiseStub(() => root!.render(node)));
 }
 beforeEach(() => {
   Object.assign(globalThis, {IS_REACT_ACT_ENVIRONMENT: true});
@@ -61,7 +63,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (root) {
-    await act(async () => root!.unmount());
+    await act(promiseStub(() => root!.unmount()));
   }
   root = undefined;
   document.body.replaceChildren();
@@ -100,37 +102,39 @@ describe('登录、邀请与场内体验', () => {
       let removed = false;
       const fetcher = vi.fn<
         (...args: [string, RequestInit?]) => Promise<Response>
-      >(async url => {
-        if (url === '/api/auth/session') {
-          return Response.json({...session, roles: ['owner']});
-        }
-        if (url === '/api/me/matches') {
-          return Response.json([{...entry, state}]);
-        }
-        if (url === '/api/platform/accounts') {
-          return Response.json([]);
-        }
-        if (url.endsWith('/manage')) {
-          return Response.json({
-            match: {...entry, state},
-            current: {
-              members: removed ? members.slice(0, 2) : members,
-              assignments: [],
-              players: 0,
-              phase: 'setup',
-              revision: 7,
-            },
-          });
-        }
-        if (url.endsWith('/members/remove')) {
-          removed = true;
-          return Response.json({operationId: 'remove-op', status: 'pending'});
-        }
-        if (url === '/api/me/operations/remove-op') {
-          return Response.json({id: 'remove-op', status: 'succeeded'});
-        }
-        throw new Error(`Unexpected request ${url}`);
-      });
+      >(
+        promiseStub(url => {
+          if (url === '/api/auth/session') {
+            return Response.json({...session, roles: ['owner']});
+          }
+          if (url === '/api/me/matches') {
+            return Response.json([{...entry, state}]);
+          }
+          if (url === '/api/platform/accounts') {
+            return Response.json([]);
+          }
+          if (url.endsWith('/manage')) {
+            return Response.json({
+              match: {...entry, state},
+              current: {
+                members: removed ? members.slice(0, 2) : members,
+                assignments: [],
+                players: 0,
+                phase: 'setup',
+                revision: 7,
+              },
+            });
+          }
+          if (url.endsWith('/members/remove')) {
+            removed = true;
+            return Response.json({operationId: 'remove-op', status: 'pending'});
+          }
+          if (url === '/api/me/operations/remove-op') {
+            return Response.json({id: 'remove-op', status: 'succeeded'});
+          }
+          throw new Error(`Unexpected request ${url}`);
+        }),
+      );
       vi.stubGlobal('fetch', fetcher);
       const confirm = vi.fn();
       vi.stubGlobal('confirm', confirm);
@@ -145,36 +149,40 @@ describe('登录、邀请与场内体验', () => {
         return;
       }
       buttons[2]!.focus();
-      await act(async () => buttons[2]!.click());
+      await act(promiseStub(() => buttons[2]!.click()));
       expect(document.querySelector('dialog')?.textContent).toContain('C02');
       expect(
         fetcher.mock.calls.some(([url]) => url.endsWith('/members/remove')),
       ).toBe(false);
       const cancel =
         document.querySelector<HTMLButtonElement>('dialog button')!;
-      await act(async () => cancel.click());
+      await act(promiseStub(() => cancel.click()));
       expect(document.querySelector('dialog')).toBeNull();
       expect(document.activeElement).toBe(buttons[2]);
-      await act(async () => buttons[2]!.click());
-      await act(async () => {
-        const event = new Event('cancel', {cancelable: true});
-        document.querySelector('dialog')!.dispatchEvent(event);
-      });
+      await act(promiseStub(() => buttons[2]!.click()));
+      await act(
+        promiseStub(() => {
+          const event = new Event('cancel', {cancelable: true});
+          document.querySelector('dialog')!.dispatchEvent(event);
+        }),
+      );
       expect(document.querySelector('dialog')).toBeNull();
-      await act(async () => buttons[2]!.click());
+      await act(promiseStub(() => buttons[2]!.click()));
       const submit = document.querySelector<HTMLButtonElement>(
         'dialog button.danger',
       )!;
-      await act(async () => {
-        submit.click();
-        submit.click();
-      });
+      await act(
+        promiseStub(() => {
+          submit.click();
+          submit.click();
+        }),
+      );
       const requests = fetcher.mock.calls.filter(([url]) =>
         url.endsWith('/members/remove'),
       );
       expect(requests).toHaveLength(1);
       expect(confirm).not.toHaveBeenCalled();
-      expect(JSON.parse(String(requests[0]![1]?.body))).toMatchObject({
+      expect(parseJson(jsonString(requests[0]![1]?.body))).toMatchObject({
         accountId: 'bound',
         expectedRevision: 7,
       });
@@ -189,19 +197,21 @@ describe('登录、邀请与场内体验', () => {
       history.replaceState({}, '', '/account');
       vi.stubGlobal(
         'fetch',
-        vi.fn(async (url: string) => {
-          if (url === '/api/auth/session') {
-            return Response.json({
-              ...session,
-              secondFactorEnabled: verified,
-              secondFactor: verified,
-            });
-          }
-          if (url === '/api/me/sessions') {
-            return Response.json([]);
-          }
-          throw new Error(`Unexpected request ${url}`);
-        }),
+        vi.fn(
+          promiseStub((url: string) => {
+            if (url === '/api/auth/session') {
+              return Response.json({
+                ...session,
+                secondFactorEnabled: verified,
+                secondFactor: verified,
+              });
+            }
+            if (url === '/api/me/sessions') {
+              return Response.json([]);
+            }
+            throw new Error(`Unexpected request ${url}`);
+          }),
+        ),
       );
       await mount(<PlatformApp />);
       expect(document.body.textContent).not.toContain('重新认证');
@@ -219,19 +229,21 @@ describe('登录、邀请与场内体验', () => {
     history.replaceState({}, '', '/account');
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string) => {
-        if (url === '/api/auth/session') {
-          return Response.json({
-            ...session,
-            secondFactorEnabled: true,
-            secondFactor: false,
-          });
-        }
-        if (url === '/api/me/sessions') {
-          return Response.json([]);
-        }
-        throw new Error(`Unexpected request ${url}`);
-      }),
+      vi.fn(
+        promiseStub((url: string) => {
+          if (url === '/api/auth/session') {
+            return Response.json({
+              ...session,
+              secondFactorEnabled: true,
+              secondFactor: false,
+            });
+          }
+          if (url === '/api/me/sessions') {
+            return Response.json([]);
+          }
+          throw new Error(`Unexpected request ${url}`);
+        }),
+      ),
     );
     await mount(<PlatformApp />);
     expect(document.body.textContent).toContain('验证第二因素');
@@ -245,47 +257,51 @@ describe('登录、邀请与场内体验', () => {
   it('启用第二因素时可在设置区域输入验证码并确认', async () => {
     history.replaceState({}, '', '/account');
     let enabled = false;
-    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url === '/api/auth/session') {
-        return Response.json({
-          ...session,
-          secondFactorEnabled: enabled,
-          secondFactor: enabled,
-        });
-      }
-      if (url === '/api/me/sessions') {
-        return Response.json([]);
-      }
-      if (url === '/api/me/security/setup') {
-        return Response.json({secret: 'test-secret'});
-      }
-      if (url === '/api/me/security/confirm') {
-        expect(JSON.parse(String(init?.body))).toEqual({code: '123456'});
-        enabled = true;
-        return Response.json({recoveryCodes: ['test-recovery']});
-      }
-      throw new Error(`Unexpected request ${url}`);
-    });
+    const fetcher = vi.fn(
+      promiseStub((url: string, init?: RequestInit) => {
+        if (url === '/api/auth/session') {
+          return Response.json({
+            ...session,
+            secondFactorEnabled: enabled,
+            secondFactor: enabled,
+          });
+        }
+        if (url === '/api/me/sessions') {
+          return Response.json([]);
+        }
+        if (url === '/api/me/security/setup') {
+          return Response.json({secret: 'test-secret'});
+        }
+        if (url === '/api/me/security/confirm') {
+          expect(parseJson(jsonString(init?.body))).toEqual({code: '123456'});
+          enabled = true;
+          return Response.json({recoveryCodes: ['test-recovery']});
+        }
+        throw new Error(`Unexpected request ${url}`);
+      }),
+    );
     vi.stubGlobal('fetch', fetcher);
     await mount(<PlatformApp />);
     const button = (label: string) =>
       [...document.querySelectorAll('button')].find(
         value => value.textContent === label,
       )!;
-    await act(async () => button('生成认证器密钥').click());
+    await act(promiseStub(() => button('生成认证器密钥').click()));
     const input = document.querySelector<HTMLInputElement>(
       'input[autocomplete="one-time-code"]',
     )!;
     expect(input).not.toBeNull();
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        'value',
-      )!.set!.call(input, '123456');
-      input.dispatchEvent(new Event('input', {bubbles: true}));
-    });
+    await act(
+      promiseStub(() => {
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value',
+        )!.set!.call(input, '123456');
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+      }),
+    );
     expect(button('确认验证码').disabled).toBe(false);
-    await act(async () => button('确认验证码').click());
+    await act(promiseStub(() => button('确认验证码').click()));
     expect(document.body.textContent).toContain('test-recovery');
     expect(document.body.textContent).toContain('第二因素验证已启用');
     expect(button('关闭第二因素验证').disabled).toBe(false);
@@ -293,21 +309,20 @@ describe('登录、邀请与场内体验', () => {
   it('显式选择玩家账号优先于先前保存的工作人员类别', async () => {
     sessionStorage.setItem('df.portal.audience', 'staff');
     history.replaceState({}, '', '/matches?audience=player');
-    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get('X-Darkforest-Audience')).toBe(
-        'player',
-      );
-      return Response.json(null);
-    });
+    const fetcher = vi.fn(
+      promiseStub((_url: string, init?: RequestInit) => {
+        expect(new Headers(init?.headers).get('X-Darkforest-Audience')).toBe(
+          'player',
+        );
+        return Response.json(null);
+      }),
+    );
     vi.stubGlobal('fetch', fetcher);
     await mount(<PlatformApp />);
     expect(document.querySelector('select')?.value).toBe('player');
   });
   it('访客不显示我的比赛与账号安全导航', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => Response.json(null)),
-    );
+    vi.stubGlobal('fetch', vi.fn(promiseStub(() => Response.json(null))));
     await mount(<PlatformApp />);
     const nav = document.querySelector('[aria-label="赛事中心导航"]')!;
     expect(nav.textContent).not.toContain('我的比赛');
@@ -316,30 +331,32 @@ describe('登录、邀请与场内体验', () => {
   });
   it('未接受邀请时无进入入口，接受完成后移除按钮并直接显示进入比赛', async () => {
     let bound = false;
-    const fetcher = vi.fn(async (url: string) => {
-      if (url === '/api/auth/session') {
-        return Response.json(session);
-      }
-      if (url === '/api/me/matches') {
-        return Response.json([
-          {
-            ...entry,
-            membership: {
-              ...entry.membership,
-              ...(bound ? {state: 'bound', local_id: 'C01'} : {}),
+    const fetcher = vi.fn(
+      promiseStub((url: string) => {
+        if (url === '/api/auth/session') {
+          return Response.json(session);
+        }
+        if (url === '/api/me/matches') {
+          return Response.json([
+            {
+              ...entry,
+              membership: {
+                ...entry.membership,
+                ...(bound ? {state: 'bound', local_id: 'C01'} : {}),
+              },
             },
-          },
-        ]);
-      }
-      if (url.endsWith('/members/accept')) {
-        return Response.json({operationId: 'accept-operation'});
-      }
-      if (url === '/api/me/operations/accept-operation') {
-        bound = true;
-        return Response.json({status: 'succeeded'});
-      }
-      throw new Error(`Unexpected request ${url}`);
-    });
+          ]);
+        }
+        if (url.endsWith('/members/accept')) {
+          return Response.json({operationId: 'accept-operation'});
+        }
+        if (url === '/api/me/operations/accept-operation') {
+          bound = true;
+          return Response.json({status: 'succeeded'});
+        }
+        throw new Error(`Unexpected request ${url}`);
+      }),
+    );
     vi.stubGlobal('fetch', fetcher);
     await mount(<PlatformApp />);
     expect(document.body.textContent).not.toContain('进入比赛');
@@ -347,7 +364,7 @@ describe('登录、邀请与场内体验', () => {
     const accept = [...document.querySelectorAll('button')].find(
       button => button.textContent === '接受邀请',
     )!;
-    await act(async () => accept.click());
+    await act(promiseStub(() => accept.click()));
     expect(
       [...document.querySelectorAll('button')].some(
         button => button.textContent === '接受邀请',
@@ -366,20 +383,22 @@ describe('登录、邀请与场内体验', () => {
     sessionStorage.setItem('df.portal.audience', 'staff');
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string) =>
-        Response.json(
-          url === '/api/auth/session'
-            ? {...session, account: {...session.account, kind: 'staff'}}
-            : [
-                {
-                  ...entry,
-                  membership: {
-                    ...entry.membership,
-                    kind: 'staff',
-                    state: 'accepted',
+      vi.fn(
+        promiseStub((url: string) =>
+          Response.json(
+            url === '/api/auth/session'
+              ? {...session, account: {...session.account, kind: 'staff'}}
+              : [
+                  {
+                    ...entry,
+                    membership: {
+                      ...entry.membership,
+                      kind: 'staff',
+                      state: 'accepted',
+                    },
                   },
-                },
-              ],
+                ],
+          ),
         ),
       ),
     );
@@ -401,48 +420,50 @@ describe('登录、邀请与场内体验', () => {
       ].map(a => ({...session.account, ...a, name: a.id}));
       const fetcher = vi.fn<
         (...args: [string, RequestInit?]) => Promise<Response>
-      >(async url => {
-        if (url === '/api/auth/session') {
-          return Response.json({
-            ...session,
-            account: {...session.account, kind: 'staff'},
-            roles: admin ? ['owner'] : [],
-          });
-        }
-        if (url === '/api/me/matches') {
-          return Response.json([entry]);
-        }
-        if (url === '/api/matches/match-a/manage') {
-          return Response.json({
-            match: entry,
-            current: {
-              players: 0,
-              phase: 'setup',
-              assignments: [],
-              members: accounts.map(a => ({
-                ...entry.membership,
-                account_id: a.id,
-                name: a.name,
-                kind: a.kind,
-                state: a.id === 'staff-invited' ? 'invited' : 'accepted',
-              })),
-            },
-          });
-        }
-        if (
-          url ===
-          (admin ? '/api/platform/accounts' : '/api/matches/match-a/eligible')
-        ) {
-          return Response.json(accounts);
-        }
-        if (url.endsWith('/members/invite')) {
-          return Response.json({operationId: 'invitation'});
-        }
-        if (url.endsWith('/preview')) {
-          return Response.json({previewToken: 'judge-preview'});
-        }
-        throw new Error(`Unexpected request ${url}`);
-      });
+      >(
+        promiseStub(url => {
+          if (url === '/api/auth/session') {
+            return Response.json({
+              ...session,
+              account: {...session.account, kind: 'staff'},
+              roles: admin ? ['owner'] : [],
+            });
+          }
+          if (url === '/api/me/matches') {
+            return Response.json([entry]);
+          }
+          if (url === '/api/matches/match-a/manage') {
+            return Response.json({
+              match: entry,
+              current: {
+                players: 0,
+                phase: 'setup',
+                assignments: [],
+                members: accounts.map(a => ({
+                  ...entry.membership,
+                  account_id: a.id,
+                  name: a.name,
+                  kind: a.kind,
+                  state: a.id === 'staff-invited' ? 'invited' : 'accepted',
+                })),
+              },
+            });
+          }
+          if (
+            url ===
+            (admin ? '/api/platform/accounts' : '/api/matches/match-a/eligible')
+          ) {
+            return Response.json(accounts);
+          }
+          if (url.endsWith('/members/invite')) {
+            return Response.json({operationId: 'invitation'});
+          }
+          if (url.endsWith('/preview')) {
+            return Response.json({previewToken: 'judge-preview'});
+          }
+          throw new Error(`Unexpected request ${url}`);
+        }),
+      );
       vi.stubGlobal('fetch', fetcher);
       await mount(<MatchApp id="match-a" />);
       const sections = [
@@ -467,61 +488,66 @@ describe('登录、邀请与场内体验', () => {
         'staff-a',
         'staff-b',
       ]);
-      await act(async () => {
-        inviteSelect.value = 'player-a';
-        inviteSelect.dispatchEvent(new Event('change', {bubbles: true}));
-      });
+      await act(
+        promiseStub(() => {
+          inviteSelect.value = 'player-a';
+          inviteSelect.dispatchEvent(new Event('change', {bubbles: true}));
+        }),
+      );
       const invite = invitation.querySelector('button')!;
       expect(invite.disabled).toBe(false);
       expect(judgeSelect!.value).toBe('');
       expect(preview.disabled).toBe(true);
-      await act(async () => invite.click());
+      await act(promiseStub(() => invite.click()));
       const inviteRequest = fetcher.mock.calls.find(([url]) =>
         url.endsWith('/members/invite'),
       )!;
-      expect(JSON.parse(String(inviteRequest[1]?.body))).toMatchObject({
+      expect(parseJson(jsonString(inviteRequest[1]?.body))).toMatchObject({
         accountId: 'player-a',
         reason: '邀请账号加入本场比赛',
       });
-      await act(async () => {
-        judgeSelect!.value = 'staff-a';
-        judgeSelect!.dispatchEvent(new Event('change', {bubbles: true}));
-        Object.getOwnPropertyDescriptor(
-          HTMLInputElement.prototype,
-          'value',
-        )!.set!.call(reason, '现场换班');
-        reason.dispatchEvent(new Event('input', {bubbles: true}));
-      });
+      await act(
+        promiseStub(() => {
+          judgeSelect!.value = 'staff-a';
+          judgeSelect!.dispatchEvent(new Event('change', {bubbles: true}));
+          Object.getOwnPropertyDescriptor(
+            HTMLInputElement.prototype,
+            'value',
+          )!.set!.call(reason, '现场换班');
+          reason.dispatchEvent(new Event('input', {bubbles: true}));
+        }),
+      );
       expect(inviteSelect.value).toBe('player-a');
       expect(preview.disabled).toBe(false);
-      await act(async () => preview.click());
+      await act(promiseStub(() => preview.click()));
       const previewRequest = fetcher.mock.calls.find(([url]) =>
         url.endsWith('/preview'),
       )!;
-      expect(JSON.parse(String(previewRequest[1]?.body))).toMatchObject({
+      expect(parseJson(jsonString(previewRequest[1]?.body))).toMatchObject({
         path: '/matches/match-a/staff/assign',
         payload: {accountId: 'staff-a', reason: '现场换班', seat: 'J01'},
       });
-      await act(async () => {
-        inviteSelect.value = 'staff-b';
-        inviteSelect.dispatchEvent(new Event('change', {bubbles: true}));
-      });
+      await act(
+        promiseStub(() => {
+          inviteSelect.value = 'staff-b';
+          inviteSelect.dispatchEvent(new Event('change', {bubbles: true}));
+        }),
+      );
       expect(judgeSelect!.value).toBe('staff-a');
       expect(judge.textContent).toContain('确认交接');
-      await act(async () => {
-        seatSelect!.value = 'J02';
-        seatSelect!.dispatchEvent(new Event('change', {bubbles: true}));
-      });
+      await act(
+        promiseStub(() => {
+          seatSelect!.value = 'J02';
+          seatSelect!.dispatchEvent(new Event('change', {bubbles: true}));
+        }),
+      );
       expect(judge.textContent).not.toContain('确认交接');
     },
   );
   it('旧比赛地址的访客返回统一登录页，不出现旧口令表单', async () => {
     history.replaceState({}, '', '/m/match-a/');
     const replace = vi.spyOn(location, 'replace').mockImplementation(() => {});
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => Response.json(null)),
-    );
+    vi.stubGlobal('fetch', vi.fn(promiseStub(() => Response.json(null))));
     await mount(<MatchApp id="match-a" />);
     expect(replace).toHaveBeenCalledWith('/?audience=player');
     expect(document.querySelector('input[type="password"]')).toBeNull();
@@ -531,8 +557,8 @@ describe('登录、邀请与场内体验', () => {
     history.replaceState({}, '', '/player/me');
     const source = new MockSource();
     const snapshot = await source.read('/player/me');
-    vi.spyOn(source, 'read').mockImplementation(async () =>
-      structuredClone(snapshot),
+    vi.spyOn(source, 'read').mockImplementation(
+      promiseStub(() => structuredClone(snapshot)),
     );
     await mount(
       <App source={source} matchContext={{entry, audience: 'player'}} />,
@@ -560,13 +586,15 @@ describe('登录、邀请与场内体验', () => {
     )!;
     expect(preview.disabled).toBe(true);
     const input = document.querySelector('textarea')!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        'value',
-      )!.set!.call(input, '核对现场情况');
-      input.dispatchEvent(new Event('input', {bubbles: true}));
-    });
+    await act(
+      promiseStub(() => {
+        Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          'value',
+        )!.set!.call(input, '核对现场情况');
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+      }),
+    );
     expect(preview.disabled).toBe(false);
   });
 });

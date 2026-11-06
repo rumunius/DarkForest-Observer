@@ -1,3 +1,4 @@
+import {parseJson, jsonObject, jsonObjects} from '../helpers/json';
 import {beforeEach, describe, expect, it} from 'vitest';
 import {env} from 'cloudflare:workers';
 import {
@@ -46,7 +47,7 @@ async function call(path: string, body?: unknown, login?: Login) {
     });
   }
   const reply = await stub().call(input);
-  return {...reply, body: JSON.parse(reply.body) as unknown};
+  return {...reply, body: parseJson(reply.body)};
 }
 async function seed(n = 3) {
   const accounts = await Promise.all(
@@ -528,9 +529,10 @@ describe('audit fixes without a complete command language', () => {
     expect((snapshot.body as Snapshot).judge!.scheduler.error).not.toBe('');
     const details = await call('/judge/events/broken-song', undefined, head);
     expect(details.status).toBe(200);
+    const attemptsMatcher: unknown = expect.any(Number);
     expect(details.body).toMatchObject({
       status: 'pending',
-      attempts: expect.any(Number),
+      attempts: attemptsMatcher,
       payload: {invalid: true},
     });
     expect((details.body as ScheduledEvent).attempts).toBeGreaterThan(0);
@@ -725,24 +727,34 @@ describe('audit fixes without a complete command language', () => {
         .all<{detail: string; game_ms: number}>(
           "SELECT detail,game_ms FROM audit_logs WHERE action='/judge/correction' ORDER BY seq",
         )
-        .map(row => ({...JSON.parse(row.detail), game: row.game_ms})),
+        .map(row => ({
+          ...jsonObject(parseJson(row.detail)),
+          game: row.game_ms,
+        })),
     );
-    expect(audits.map(a => a.status)).toEqual([
+    expect(audits.map(a => jsonObject(a).status)).toEqual([
       'previewed',
       'executed',
       'failed',
     ]);
     expect(
-      audits[1].before.players.find((p: {id: string}) => p.id === 'C01')
-        .photons,
+      jsonObject(
+        jsonObjects(jsonObject(jsonObject(audits[1]).before).players).find(
+          p => p.id === 'C01',
+        ),
+      ).photons,
     ).toBe(0);
     expect(
-      audits[1].after.players.find((p: {id: string}) => p.id === 'C01').photons,
+      jsonObject(
+        jsonObjects(jsonObject(jsonObject(audits[1]).after).players).find(
+          p => p.id === 'C01',
+        ),
+      ).photons,
     ).toBe(1);
-    expect(audits[1].preview.changes).toEqual(
+    expect(jsonObject(jsonObject(audits[1]).preview).changes).toEqual(
       (p.body as OperationResult).preview!.changes,
     );
-    expect(audits[1].game).toBe(123456);
+    expect(jsonObject(audits[1]).game).toBe(123456);
     const projected = (
       (await call('/snapshot?route=%2Fjudge%2Faudit', undefined, head))
         .body as Snapshot
@@ -832,9 +844,12 @@ describe('real Workers SQLite and RPC', () => {
       (await action('/player/nickname', p, {nickname: 'Alpha'})).status,
     ).toBe(200);
     await evictDurableObject(stub());
+    const actionsMatcher: unknown = expect.arrayContaining([
+      'homeworld-submit',
+    ]);
     expect((await call('/player/self', undefined, p)).body).toMatchObject({
       nickname: 'Alpha',
-      actions: expect.arrayContaining(['homeworld-submit']),
+      actions: actionsMatcher,
     });
     expect(
       (
@@ -1699,7 +1714,7 @@ describe('real Workers SQLite and RPC', () => {
     expect((await manage('/judge/pause', head)).status).toBe(200);
     const reply = await call('/judge/export?kind=backup', undefined, head);
     expect(reply.status, JSON.stringify(reply.body)).toBe(200);
-    const envelope = JSON.parse((reply.body as {text: string}).text) as {
+    const envelope = parseJson((reply.body as {text: string}).text) as {
       createdUtc: number;
       ciphertext: string;
       format: string;
@@ -1709,7 +1724,7 @@ describe('real Workers SQLite and RPC', () => {
     await runInDurableObject(stub(), async (_instance, state) => {
       const e = new Engine(new Store(state.storage), bindings);
       const keys = await e.keys();
-      const decoded = JSON.parse(
+      const decoded = parseJson(
         await decrypt(
           keys.encryption,
           envelope.ciphertext,

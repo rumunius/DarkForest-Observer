@@ -1,4 +1,8 @@
 import {
+  parseJson,
+  scalarText,
+} from '../../../../packages/contracts/src/backend';
+import {
   integer,
   object,
   stableJson,
@@ -122,7 +126,7 @@ export async function openCheckpoint(
   const keys = await e.keys();
   let tables: Tables;
   try {
-    tables = JSON.parse(
+    tables = parseJson(
       await decrypt(keys.encryption, ciphertext, aad(header)),
     ) as Tables;
   } catch {
@@ -217,7 +221,7 @@ export async function openCarry(
   text(body.ciphertext, 32_000_000);
   const envelope = body as unknown as Carry;
   const keys = await e.keys();
-  const data = JSON.parse(
+  const data = parseJson(
     await decrypt(
       keys.encryption,
       envelope.ciphertext,
@@ -248,7 +252,7 @@ export async function configureRestore(e: Engine, raw: unknown): Promise<void> {
   );
   requireThat(
     log &&
-      JSON.parse(log.detail).carryDigest ===
+      object(parseJson(log.detail)).carryDigest ===
         (await digest(stableJson(envelope))),
     'RECOVERY_EVIDENCE_MISSING',
     '请先保存完整恢复材料。',
@@ -322,7 +326,7 @@ export async function completeRecovery(
       stableJson(db.all('SELECT * FROM sighting_codes ORDER BY id')) ===
         stableJson(
           [...(target.tables.sighting_codes ?? [])].sort((a, b) =>
-            String(a.id).localeCompare(String(b.id)),
+            scalarText(a.id).localeCompare(scalarText(b.id)),
           ),
         ),
     'RECOVERY_STATE_CONFLICT',
@@ -332,7 +336,7 @@ export async function completeRecovery(
     for (const row of data.latest.accounts ?? []) {
       const account = db.one<Actor>(
         'SELECT * FROM accounts WHERE id=?',
-        String(row.id),
+        scalarText(row.id),
       );
       requireThat(
         account,
@@ -421,7 +425,7 @@ export async function completeRecovery(
         insertRow(e, 'event_log', {
           ...rest,
           audience: 'global',
-          body: `${row.body}（恢复前记录）`,
+          body: `${scalarText(row.body)}（恢复前记录）`,
         });
       }
     }
@@ -494,7 +498,9 @@ export async function completeRecovery(
     );
     for (const row of data.latest.scheduled_events ?? []) {
       if (
-        ['judge_command_task', 'judge_command_job'].includes(String(row.kind))
+        ['judge_command_task', 'judge_command_job'].includes(
+          scalarText(row.kind),
+        )
       ) {
         insertRow(e, 'scheduled_events', row);
       }

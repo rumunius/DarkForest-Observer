@@ -1,3 +1,4 @@
+import {parseJson} from '../../../../packages/contracts/src/backend';
 import {gameTime, uniformInt} from '../domain/rules';
 import {
   APOCALYPSE_COPY,
@@ -134,7 +135,7 @@ export function settleDue(e: Engine): void {
 function settleEvent(e: Engine, event: Scheduled, utc: number): void {
   const db = e.db;
   const m = db.match();
-  const payload = object(JSON.parse(event.payload));
+  const payload = object(parseJson(event.payload));
   const game =
     event.clock === 'game'
       ? event.due

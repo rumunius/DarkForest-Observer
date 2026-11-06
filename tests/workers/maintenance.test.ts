@@ -1,3 +1,10 @@
+import {
+  parseJson,
+  jsonObject,
+  jsonArray,
+  jsonObjects,
+  jsonString,
+} from '../helpers/json';
 import {beforeEach, expect, it} from 'vitest';
 import {env} from 'cloudflare:workers';
 import {reset, runInDurableObject} from 'cloudflare:test';
@@ -49,7 +56,7 @@ async function call(path: string, body?: unknown, login?: Login) {
     ...(login ? {token: login.token, csrf: login.csrf} : {}),
   };
   const reply = await stub().call(input);
-  return {...reply, body: JSON.parse(reply.body)};
+  return {...reply, body: parseJson(reply.body)};
 }
 async function login(
   id: string,
@@ -60,7 +67,10 @@ async function login(
     credential,
   });
   expect(r.status, JSON.stringify(r.body)).toBe(200);
-  return {token: r.sessionToken!, csrf: r.body.csrfToken};
+  return {
+    token: r.sessionToken!,
+    csrf: jsonString(jsonObject(r.body).csrfToken),
+  };
 }
 async function action(
   path: string,
@@ -80,14 +90,14 @@ async function manage(
     path,
     ...body,
     reason: '维护验收',
-    expected_revision: state.body.revision,
+    expected_revision: jsonObject(state.body).revision,
   });
   expect(p.status, JSON.stringify(p.body)).toBe(200);
   return action(path, l, {
     ...body,
     reason: '维护验收',
-    expected_revision: p.body.preview.revision,
-    preview_token: p.body.preview.token,
+    expected_revision: jsonObject(jsonObject(p.body).preview).revision,
+    preview_token: jsonObject(jsonObject(p.body).preview).token,
   });
 }
 beforeEach(async () => {
@@ -247,12 +257,12 @@ it('revokes sessions and old credentials, recovers the same reset result, and re
     expected_version: 1,
   });
   expect(result.status).toBe(200);
-  const id = result.body.credentialDeliveryId;
+  const id = jsonString(jsonObject(result.body).credentialDeliveryId);
   expect(id).toBeTypeOf('string');
   expect((await call('/player/self', undefined, player)).status).toBe(401);
   const credential = await call(`/judge/credentials/${id}`, undefined, head);
   expect(credential.status).toBe(200);
-  expect(credential.body.credential).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(jsonObject(credential.body).credential).toMatch(/^[A-Za-z0-9_-]{43}$/);
   expect(
     (await call(`/judge/credentials/${id}`, undefined, communications)).status,
   ).toBe(403);
@@ -264,19 +274,22 @@ it('revokes sessions and old credentials, recovers the same reset result, and re
       })
     ).status,
   ).toBe(401);
-  const next = await login('C01', credential.body.credential);
+  const next = await login(
+    'C01',
+    jsonString(jsonObject(credential.body).credential),
+  );
   expect((await call('/player/self', undefined, next)).status).toBe(200);
   await runInDurableObject(stub(), (_i, state) => {
     expect(
       JSON.stringify(
         state.storage.sql.exec('SELECT * FROM request_journal').toArray(),
       ),
-    ).not.toContain(credential.body.credential);
+    ).not.toContain(jsonObject(credential.body).credential);
     expect(
       JSON.stringify(
         state.storage.sql.exec('SELECT * FROM credential_deliveries').toArray(),
       ),
-    ).not.toContain(credential.body.credential);
+    ).not.toContain(jsonObject(credential.body).credential);
   });
   expect(
     (
@@ -325,7 +338,7 @@ it('keeps report versions immutable while corrections recalculate rankings', asy
     finish(e, 'regulation', 7200000, Date.now(), 'test');
   });
   const first = await call('/results/report?version=1', undefined, player);
-  expect(first.body.champions).toEqual(['C01', 'C02']);
+  expect(jsonObject(first.body).champions).toEqual(['C01', 'C02']);
   const corrected = await manage('/judge/report-correction', head, {
     field: 'nickname',
     target: 'C01',
@@ -337,8 +350,10 @@ it('keeps report versions immutable while corrections recalculate rankings', asy
     (await call('/results/report?version=1', undefined, player)).body,
   ).toEqual(first.body);
   const second = await call('/results/report?version=2', undefined, player);
-  expect(second.body.standings[0].nickname).toBe('更正文明');
-  expect(second.body.correctionReason).toBe('维护验收');
+  expect(
+    jsonObject(jsonArray(jsonObject(second.body).standings)[0]).nickname,
+  ).toBe('更正文明');
+  expect(jsonObject(second.body).correctionReason).toBe('维护验收');
   expect(
     (
       await action('/judge/manage/preview', head, {
@@ -348,7 +363,8 @@ it('keeps report versions immutable while corrections recalculate rankings', asy
         value: '旧版本',
         expected_version: 1,
         reason: '测试',
-        expected_revision: (await call('/public/match')).body.revision,
+        expected_revision: jsonObject((await call('/public/match')).body)
+          .revision,
       })
     ).status,
   ).toBe(409);
@@ -369,7 +385,9 @@ it('recalculates champions and elimination rankings without changing earlier rep
     );
     finish(e, 'regulation', 7200000, Date.now(), 'rank-test');
   });
-  const first = (await call('/results/report?version=1', undefined, head)).body;
+  const first = jsonObject(
+    (await call('/results/report?version=1', undefined, head)).body,
+  );
   expect(first.champions).toEqual(['C01']);
   expect(
     (
@@ -382,7 +400,8 @@ it('recalculates champions and elimination rankings without changing earlier rep
     ).status,
   ).toBe(200);
   expect(
-    (await call('/results/report?version=2', undefined, head)).body.champions,
+    jsonObject((await call('/results/report?version=2', undefined, head)).body)
+      .champions,
   ).toEqual(['C01', 'C02']);
   await runInDurableObject(stub(), async (_i, state) => {
     const e = new Engine(new Store(state.storage), bindings);
@@ -407,11 +426,13 @@ it('recalculates champions and elimination rankings without changing earlier rep
       })
     ).status,
   ).toBe(200);
-  const third = (await call('/results/report?version=3', undefined, head)).body;
-  expect(third.champions).toEqual(['C01']);
-  expect(third.standings.find((c: {id: string}) => c.id === 'C02').rank).toBe(
-    2,
+  const third = jsonObject(
+    (await call('/results/report?version=3', undefined, head)).body,
   );
+  expect(third.champions).toEqual(['C01']);
+  expect(
+    jsonObject(jsonObjects(third.standings).find(c => c.id === 'C02')).rank,
+  ).toBe(2);
   expect(
     (
       await manage('/judge/report-correction', head, {
@@ -423,7 +444,8 @@ it('recalculates champions and elimination rankings without changing earlier rep
     ).status,
   ).toBe(200);
   expect(
-    (await call('/results/report?version=4', undefined, head)).body.champions,
+    jsonObject((await call('/results/report?version=4', undefined, head)).body)
+      .champions,
   ).toEqual(['C01', 'C02']);
   expect(
     (await call('/results/report?version=1', undefined, head)).body,
@@ -437,9 +459,9 @@ it('blocks an already preparing write when recovery starts before its final tran
   await runInDurableObject(stub(), async (_i, state) => {
     const e = new Engine(new Store(state.storage), bindings);
     await e.keys();
-    e.prepareCode = async () => {
+    e.prepareCode = () => {
       e.db.exec("UPDATE matches SET recovery_state='prepared:race-test'");
-      return [];
+      return Promise.resolve([]);
     };
     const result = await e.call({
       method: 'POST',
@@ -483,14 +505,16 @@ it('paginates all notice and audit records without duplicates under concurrent i
       e.audit('J01', '测试操作', 'C01', String(i));
     }
   });
-  const initial = (await call('/snapshot?route=/judge', undefined, head)).body
-    .judge;
+  const initial = jsonObject(
+    jsonObject((await call('/snapshot?route=/judge', undefined, head)).body)
+      .judge,
+  );
   expect((await call('/judge/records/notices', undefined, head)).status).toBe(
     200,
   );
   expect(initial.notices).toHaveLength(100);
-  const all = new Set(initial.notices.map((n: {id: string}) => n.id));
-  let cursor = initial.cursors.notices;
+  const all = new Set(jsonObjects(initial.notices).map(n => n.id));
+  let cursor = jsonObject(initial.cursors).notices;
   await runInDurableObject(stub(), (_i, state) =>
     new Engine(new Store(state.storage), bindings).notice(
       'new-notice',
@@ -501,16 +525,16 @@ it('paginates all notice and audit records without duplicates under concurrent i
   );
   while (cursor) {
     const page = await call(
-      `/judge/records/notices?before=${cursor}`,
+      `/judge/records/notices?before=${jsonString(cursor)}`,
       undefined,
       head,
     );
     expect(page.status).toBe(200);
-    for (const row of page.body.items) {
-      expect(all.has(row.id)).toBe(false);
-      all.add(row.id);
+    for (const row of jsonArray(jsonObject(page.body).items)) {
+      expect(all.has(jsonString(jsonObject(row).id))).toBe(false);
+      all.add(jsonString(jsonObject(row).id));
     }
-    cursor = page.body.nextCursor;
+    cursor = jsonObject(page.body).nextCursor;
   }
   expect(all.size).toBe(350);
   expect(
@@ -575,7 +599,9 @@ it('restores checkpoint data, preserves every issued code, invalidates late requ
       carry.ciphertext,
       `recovery|integration|${carry.id}|${carry.createdUtc}`,
     );
-    expect(JSON.parse(plaintext).latest.sighting_codes).toHaveLength(2);
+    expect(
+      jsonObject(jsonObject(parseJson(plaintext)).latest).sighting_codes,
+    ).toHaveLength(2);
     const reportCount = e.db.all('SELECT version FROM result_reports').length;
     expect(reportCount).toBe(0);
   });

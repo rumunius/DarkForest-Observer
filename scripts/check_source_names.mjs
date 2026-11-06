@@ -19,7 +19,6 @@ const generated = new Set([
 ]);
 const frameworkFiles = new Set([
   'eslint.config.mjs',
-  'eslint.audit.config.mjs',
   'vitest.config.ts',
   'vitest.workers.config.ts',
   'apps/web/vite.config.ts',

@@ -1,3 +1,4 @@
+import {accountPermissions} from '../storage/store';
 import type {AccountSummary} from '@darkforest/contracts';
 import {integer, text} from '../../../../packages/contracts/src/backend';
 import {permission, requireThat, type Actor} from '../storage/store';
@@ -27,7 +28,7 @@ export function accountList(e: Engine, actor: Actor): AccountSummary[] {
     role: a.role,
     enabled: !!a.enabled,
     version: a.version,
-    permissions: JSON.parse(a.permissions) as string[],
+    permissions: accountPermissions(a),
   }));
 }
 export async function prepareCredential(
@@ -69,8 +70,7 @@ export function validateAccount(
     );
   }
   requireThat(
-    target !== actor.id &&
-      !(JSON.parse(account.permissions) as string[]).includes('system'),
+    target !== actor.id && !accountPermissions(account).includes('system'),
     'HEAD_ACCOUNT_PROTECTED',
     '总裁判账号由部署管理员管理。',
   );

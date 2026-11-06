@@ -51,8 +51,7 @@ npm run dev:preview
 | `npm run admin:wizard`         | 中文安装、旧场接入、检查点恢复与所有者救援向导 |
 | `npm run dev:preview`          | 只启动前端并打开独立模拟数据预览               |
 | `npm run check`                | 格式、ESLint、类型与构建检查，不部署云端       |
-| `npm run lint:audit`           | 全库类型感知审计；存在迁移剩余项时返回失败     |
-| `npm run lint:ratchet`         | 检查类型审计与已审核基线一致，阻止新增问题     |
+| `npm run lint:audit`           | 输出全库类型感知报告；任何问题均返回失败       |
 | `npm run build`                | 构建前端，并 dry-run 打包 preview Worker       |
 | `npm run cf:types`             | 根据 Wrangler 配置重新生成绑定类型             |
 | `npm test`                     | 执行规范工具、单元及真实Workers集成测试        |

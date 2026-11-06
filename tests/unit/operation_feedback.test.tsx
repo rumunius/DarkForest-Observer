@@ -1,3 +1,5 @@
+import {promiseStub} from '../helpers/promise_stub';
+import {jsonObject, jsonString, parseJson} from '../helpers/json';
 // @vitest-environment happy-dom
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {act, type ReactNode} from 'react';
@@ -40,7 +42,7 @@ async function mount(node: ReactNode) {
   const host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  await act(async () => root!.render(node));
+  await act(promiseStub(() => root!.render(node)));
 }
 function button(text: string) {
   return [...document.querySelectorAll('button')].find(
@@ -84,7 +86,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (root) {
-    await act(async () => root!.unmount());
+    await act(promiseStub(() => root!.unmount()));
   }
   root = undefined;
   document.body.replaceChildren();
@@ -126,9 +128,9 @@ describe('操作在当前页面反馈实际结果', () => {
           return Response.json({previewToken: 'handover-preview'});
         }
         if (url.endsWith('/staff/assign')) {
-          expect(JSON.parse(init!.body as string).preview_token).toBe(
-            'handover-preview',
-          );
+          expect(
+            jsonObject(parseJson(jsonString(init?.body))).preview_token,
+          ).toBe('handover-preview');
           return Response.json({
             operationId: 'handover-task',
             status: 'pending',
@@ -149,33 +151,39 @@ describe('操作在当前页面反馈实际结果', () => {
       const setReason = Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
         'value',
-      )!.set!;
-      await act(async () => {
-        judge.value = 'next-judge';
-        judge.dispatchEvent(new Event('change', {bubbles: true}));
-        setReason.call(reason, '现场换班');
-        reason.dispatchEvent(new Event('input', {bubbles: true}));
-      });
+      )!.set!.bind(reason);
+      await act(
+        promiseStub(() => {
+          judge.value = 'next-judge';
+          judge.dispatchEvent(new Event('change', {bubbles: true}));
+          setReason('现场换班');
+          reason.dispatchEvent(new Event('input', {bubbles: true}));
+        }),
+      );
       for (const status of ['succeeded', 'failed']) {
         outcome = new Promise<Response>(resolve => {
           finish = resolve;
         });
-        await act(async () => button('预览影响').click());
+        await act(promiseStub(() => button('预览影响').click()));
         const confirm = button(`确认交接 ${entry.name}，J01`);
         expect(confirm).toBeDefined();
-        await act(async () => {
-          confirm.click();
-          confirm.click();
-        });
+        await act(
+          promiseStub(() => {
+            confirm.click();
+            confirm.click();
+          }),
+        );
         expect(section.textContent).not.toContain('确认后旧任职结束');
         expect(button(`确认交接 ${entry.name}，J01`)).toBeUndefined();
         expect(button('预览影响').closest('fieldset')?.disabled).toBe(true);
-        await act(async () =>
-          finish(
-            Response.json({
-              status,
-              error: status === 'failed' ? '本场总裁判已变化。' : '',
-            }),
+        await act(
+          promiseStub(() =>
+            finish(
+              Response.json({
+                status,
+                error: status === 'failed' ? '本场总裁判已变化。' : '',
+              }),
+            ),
           ),
         );
         expect(button(`确认交接 ${entry.name}，J01`)).toBeUndefined();
@@ -217,8 +225,8 @@ describe('操作在当前页面反馈实际结果', () => {
     vi.useFakeTimers();
     const client = new PlatformClient('staff');
     client.session = session;
-    const fetcher = vi.fn(async () =>
-      Response.json({id: 'slow-task', status: 'pending'}),
+    const fetcher = vi.fn(
+      promiseStub(() => Response.json({id: 'slow-task', status: 'pending'})),
     );
     vi.stubGlobal('fetch', fetcher);
     const waiting = expect(client.waitOperation('slow-task')).rejects.toThrow(
@@ -230,8 +238,8 @@ describe('操作在当前页面反馈实际结果', () => {
     await expect(
       client.mutate('/matches/feedback-match/publish', {}),
     ).rejects.toThrow('请先查询上一次操作结果。');
-    fetcher.mockImplementation(async () =>
-      Response.json({id: 'slow-task', status: 'succeeded'}),
+    fetcher.mockImplementation(
+      promiseStub(() => Response.json({id: 'slow-task', status: 'succeeded'})),
     );
     expect(
       await client.completeOperation(await client.resolvePending(), vi.fn()),
@@ -262,10 +270,12 @@ describe('操作在当前页面反馈实际结果', () => {
       vi.stubGlobal('fetch', fetcher);
       await mountManagement(route);
       const publish = button('发布准备入口');
-      await act(async () => {
-        publish.click();
-        publish.click();
-      });
+      await act(
+        promiseStub(() => {
+          publish.click();
+          publish.click();
+        }),
+      );
       expect(
         document.querySelector('.feedback-stack [role="status"]')?.textContent,
       ).toContain('操作正在处理中');
@@ -273,13 +283,15 @@ describe('操作在当前页面反馈实际结果', () => {
       expect(
         fetcher.mock.calls.filter(([url]) => url.endsWith('/publish')),
       ).toHaveLength(1);
-      await act(async () =>
-        finish(
-          Response.json({
-            id: 'publish-task',
-            status: 'failed',
-            error: '发布准备入口前至少绑定两名玩家。',
-          }),
+      await act(
+        promiseStub(() =>
+          finish(
+            Response.json({
+              id: 'publish-task',
+              status: 'failed',
+              error: '发布准备入口前至少绑定两名玩家。',
+            }),
+          ),
         ),
       );
       const alert = document.querySelector('.feedback-stack [role="alert"]')!;
@@ -298,15 +310,17 @@ describe('操作在当前页面反馈实际结果', () => {
   it.each(routes)('%s 直接拒绝同样使用共用横幅显示原因', async route => {
     vi.stubGlobal(
       'fetch',
-      managementFetch(async () =>
-        Response.json(
-          {message: '当前账号没有平台管理权限。', definitive: true},
-          {status: 403},
+      managementFetch(
+        promiseStub(() =>
+          Response.json(
+            {message: '当前账号没有平台管理权限。', definitive: true},
+            {status: 403},
+          ),
         ),
       ),
     );
     await mountManagement(route);
-    await act(async () => button('发布准备入口').click());
+    await act(promiseStub(() => button('发布准备入口').click()));
     expect(
       document.querySelector('.feedback-stack [role="alert"]')?.textContent,
     ).toContain('当前账号没有平台管理权限。');
@@ -318,38 +332,45 @@ describe('操作在当前页面反馈实际结果', () => {
     async route => {
       let connected = false;
       let reads = 0;
-      const fetcher = managementFetch(async url => {
-        if (url.endsWith('/publish')) {
-          return Response.json({
-            operationId: 'original-task',
-            status: 'pending',
-          });
-        }
-        if (url === '/api/me/operations/original-task') {
-          reads++;
-          if (!connected) {
-            throw new Error('Failed to fetch');
+      const fetcher = managementFetch(
+        promiseStub(url => {
+          if (url.endsWith('/publish')) {
+            return Response.json({
+              operationId: 'original-task',
+              status: 'pending',
+            });
           }
-          return Response.json({
-            id: 'original-task',
-            status: 'failed',
-            error: '需要先安排有效总裁判。',
-          });
-        }
-        throw new Error(`Unexpected request ${url}`);
-      });
+          if (url === '/api/me/operations/original-task') {
+            reads++;
+            if (!connected) {
+              throw new Error('Failed to fetch');
+            }
+            return Response.json({
+              id: 'original-task',
+              status: 'failed',
+              error: '需要先安排有效总裁判。',
+            });
+          }
+          throw new Error(`Unexpected request ${url}`);
+        }),
+      );
       vi.stubGlobal('fetch', fetcher);
       await mountManagement(route);
-      await act(async () => button('发布准备入口').click());
+      await act(promiseStub(() => button('发布准备入口').click()));
       expect(document.querySelector('[role="alert"]')?.textContent).toContain(
         '暂时无法查询操作结果',
       );
       expect(
-        JSON.parse(sessionStorage.getItem('darkforest.platform-pending.staff')!)
-          .id,
+        jsonObject(
+          parseJson(
+            jsonString(
+              sessionStorage.getItem('darkforest.platform-pending.staff'),
+            ),
+          ),
+        ).id,
       ).toBe('original-task');
       connected = true;
-      await act(async () => button('查询原操作结果').click());
+      await act(promiseStub(() => button('查询原操作结果').click()));
       expect(document.querySelector('[role="alert"]')?.textContent).toContain(
         '需要先安排有效总裁判。',
       );
@@ -369,44 +390,46 @@ describe('操作在当前页面反馈实际结果', () => {
       history.replaceState({}, '', `/matches?audience=${audience}`);
       vi.stubGlobal(
         'fetch',
-        vi.fn(async (url: string) => {
-          if (url === '/api/auth/session') {
-            return Response.json({
-              ...session,
-              roles: [],
-              account: {...session.account, kind: audience},
-            });
-          }
-          if (url === '/api/me/matches') {
-            return Response.json([
-              {
-                ...entry,
-                membership: {
-                  account_id: 'manager',
-                  kind: audience,
-                  name: '本人',
-                  state: 'invited',
-                  epoch: 1,
-                  assignment_id: null,
-                  local_id: null,
+        vi.fn(
+          promiseStub((url: string) => {
+            if (url === '/api/auth/session') {
+              return Response.json({
+                ...session,
+                roles: [],
+                account: {...session.account, kind: audience},
+              });
+            }
+            if (url === '/api/me/matches') {
+              return Response.json([
+                {
+                  ...entry,
+                  membership: {
+                    account_id: 'manager',
+                    kind: audience,
+                    name: '本人',
+                    state: 'invited',
+                    epoch: 1,
+                    assignment_id: null,
+                    local_id: null,
+                  },
                 },
-              },
-            ]);
-          }
-          if (url.endsWith('/members/accept')) {
-            return Response.json({operationId: 'accept-task'});
-          }
-          if (url === '/api/me/operations/accept-task') {
-            return Response.json({
-              status: 'failed',
-              error: '本场邀请已撤销，请联系主办方。',
-            });
-          }
-          throw new Error(`Unexpected request ${url}`);
-        }),
+              ]);
+            }
+            if (url.endsWith('/members/accept')) {
+              return Response.json({operationId: 'accept-task'});
+            }
+            if (url === '/api/me/operations/accept-task') {
+              return Response.json({
+                status: 'failed',
+                error: '本场邀请已撤销，请联系主办方。',
+              });
+            }
+            throw new Error(`Unexpected request ${url}`);
+          }),
+        ),
       );
       await mount(<PlatformApp />);
-      await act(async () => button('接受邀请').click());
+      await act(promiseStub(() => button('接受邀请').click()));
       expect(
         document.querySelector('.feedback-stack [role="alert"]')?.textContent,
       ).toContain('本场邀请已撤销，请联系主办方。');
@@ -416,21 +439,26 @@ describe('操作在当前页面反馈实际结果', () => {
   );
 
   it.each(routes)('%s 成功收据到达后才显示完成并刷新页面状态', async route => {
-    const fetcher = managementFetch(async url => {
-      if (url.endsWith('/publish')) {
-        return Response.json({operationId: 'success-task', status: 'pending'});
-      }
-      if (url === '/api/me/operations/success-task') {
-        return Response.json({status: 'succeeded'});
-      }
-      throw new Error(`Unexpected request ${url}`);
-    });
+    const fetcher = managementFetch(
+      promiseStub(url => {
+        if (url.endsWith('/publish')) {
+          return Response.json({
+            operationId: 'success-task',
+            status: 'pending',
+          });
+        }
+        if (url === '/api/me/operations/success-task') {
+          return Response.json({status: 'succeeded'});
+        }
+        throw new Error(`Unexpected request ${url}`);
+      }),
+    );
     vi.stubGlobal('fetch', fetcher);
     await mountManagement(route);
     const before = fetcher.mock.calls.filter(([url]) =>
       url.endsWith('/manage'),
     ).length;
-    await act(async () => button('发布准备入口').click());
+    await act(promiseStub(() => button('发布准备入口').click()));
     expect(
       document.querySelector('.feedback-stack [role="status"]')?.textContent,
     ).toContain('操作已完成。');
@@ -438,10 +466,12 @@ describe('操作在当前页面反馈实际结果', () => {
       fetcher.mock.calls.filter(([url]) => url.endsWith('/manage')).length,
     ).toBeGreaterThan(before);
     expect(document.querySelector('[role="alert"]')).toBeNull();
-    await act(async () =>
-      document
-        .querySelector<HTMLButtonElement>('[aria-label="关闭本次操作结果"]')!
-        .click(),
+    await act(
+      promiseStub(() =>
+        document
+          .querySelector<HTMLButtonElement>('[aria-label="关闭本次操作结果"]')!
+          .click(),
+      ),
     );
     expect(document.querySelector('.feedback-stack')).toBeNull();
   });
@@ -469,7 +499,7 @@ describe('操作在当前页面反馈实际结果', () => {
         code,
       });
       await mount(<App source={source} />);
-      await act(async () => button('查询原操作结果').click());
+      await act(promiseStub(() => button('查询原操作结果').click()));
       const feedback = document.querySelector('.feedback-stack')!;
       expect(feedback.textContent).toContain('请查看当前状态。');
       if (code === '938472') {

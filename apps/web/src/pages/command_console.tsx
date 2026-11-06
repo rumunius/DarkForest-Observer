@@ -1,3 +1,4 @@
+import {handleAsync} from '../data/async_event';
 import {useId, useRef, useState} from 'react';
 import {
   COLORS,
@@ -15,7 +16,7 @@ import {useApp} from '../state';
 import {Button, CutOutline, Disclosure, Field, Frame, PageTitle} from '../ui';
 
 export function CommandConsole() {
-  const {data, operate, busy} = useApp();
+  const {reportError, data, operate, busy} = useApp();
   const [command, setCommand] = useState('');
   const [reason, setReason] = useState('');
   const [caret, setCaret] = useState(0);
@@ -252,7 +253,7 @@ export function CommandConsole() {
         <Button
           className="primary"
           disabled={busy || !!syntax || !spec}
-          onClick={() => execute()}
+          onClick={handleAsync(() => execute(), reportError)}
         >
           {direct ? (spec?.query ? '执行查询' : '执行指令') : '预览指令影响'}
         </Button>
@@ -280,20 +281,20 @@ export function CommandConsole() {
           <Button
             className="primary"
             disabled={busy}
-            onClick={() => execute(true)}
+            onClick={handleAsync(() => execute(true), reportError)}
           >
             确认执行
           </Button>
           <Button
             disabled={busy}
-            onClick={async () => {
+            onClick={handleAsync(async () => {
               const r = await operate('/judge/command/execute', {
                 command: `/plan cancel ${preview.token}`,
               });
               if (r) {
                 setPreview(null);
               }
-            }}
+            }, reportError)}
           >
             取消计划
           </Button>

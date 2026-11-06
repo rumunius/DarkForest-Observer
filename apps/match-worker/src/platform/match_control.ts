@@ -1,3 +1,4 @@
+import {parseJson} from '../../../../packages/contracts/src/backend';
 import type {BackendEnv, MatchGrant} from '../rpc/types';
 import type {Engine} from '../services/engine';
 import {DEFAULT_SITE, requireThat, type Actor} from '../storage/store';
@@ -170,7 +171,7 @@ export async function matchControl(
       'OPERATION_CONFLICT',
       '该操作编号已用于不同内容。',
     );
-    return JSON.parse(prior.result);
+    return parseJson(prior.result);
   }
   const p = object(request.payload);
   if (request.action === 'initialize') {
@@ -189,7 +190,7 @@ export async function matchControl(
         'OPERATION_CONFLICT',
         '操作编号冲突。',
       );
-      return JSON.parse(old.result);
+      return parseJson(old.result);
     }
     const db = e.db;
     let result: unknown;
@@ -228,7 +229,7 @@ export async function matchControl(
       );
       if (p.template) {
         const template = object(p.template);
-        const site = JSON.parse(db.match().site_json) as typeof DEFAULT_SITE;
+        const site = parseJson(db.match().site_json) as typeof DEFAULT_SITE;
         site.colors = object(template.colors) as typeof DEFAULT_SITE.colors;
         db.exec('UPDATE matches SET site_json=?', JSON.stringify(site));
         db.exec(
@@ -355,7 +356,7 @@ export async function matchControl(
         410,
       );
       if (request.action === 'template') {
-        const site = JSON.parse(db.match().site_json) as typeof DEFAULT_SITE;
+        const site = parseJson(db.match().site_json) as typeof DEFAULT_SITE;
         result = {
           description: site.description,
           colors: site.colors,
@@ -401,7 +402,7 @@ export async function matchControl(
             'SELECT version,snapshot_json FROM result_reports WHERE snapshot_json IS NOT NULL',
           )) {
             const standings = (
-              JSON.parse(row.snapshot_json) as Array<Record<string, unknown>>
+              parseJson(row.snapshot_json) as Array<Record<string, unknown>>
             ).map(
               ({
                 id,

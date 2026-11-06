@@ -1,3 +1,5 @@
+import {accountPermissions} from '../storage/store';
+import {parseJson} from '../../../../packages/contracts/src/backend';
 import type {OperationResult, Session} from '@darkforest/contracts';
 import {qqCopy} from '../../../../packages/contracts/src/message_copy';
 import {
@@ -251,7 +253,7 @@ export class Engine {
         actor.role === 'player'
           ? (this.db.player(actor.id).nickname ?? actor.name)
           : actor.name,
-      permissions: JSON.parse(actor.permissions) as string[],
+      permissions: accountPermissions(actor),
       csrfToken: csrf,
     };
   }
@@ -262,7 +264,7 @@ export class Engine {
       id,
     );
     return row
-      ? (JSON.parse(row.result_json) as OperationResult)
+      ? (parseJson(row.result_json) as OperationResult)
       : {
           requestId: id,
           status: 'pending',
@@ -297,7 +299,7 @@ export class Engine {
         '本次操作内容有变，请刷新后重新提交。',
       );
     }
-    return JSON.parse(row.result_json) as OperationResult;
+    return parseJson(row.result_json) as OperationResult;
   }
   saveResult(
     actor: Actor,
@@ -709,7 +711,7 @@ export class Engine {
               node.words[1] ?? '',
             );
             if (plan?.actor === actor.id && plan.status === 'pending') {
-              node = (JSON.parse(plan.data) as {node: typeof node}).node;
+              node = (parseJson(plan.data) as {node: typeof node}).node;
             }
           } else if (
             node.words[0] === 'plan' &&

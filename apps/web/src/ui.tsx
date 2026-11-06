@@ -1,3 +1,4 @@
+import {handleAsync} from './data/async_event';
 import {Button, CutOutline, Frame} from './components/cut_frame';
 import {
   useEffect,
@@ -782,6 +783,7 @@ export function Disclosure({
 
 export function ColorEditor() {
   const {
+    reportError,
     draft,
     setDraft,
     selectedArm,
@@ -1041,7 +1043,7 @@ export function ColorEditor() {
                 ?.focus({preventScroll: true}),
             );
           }}
-          onConfirm={async () => {
+          onConfirm={handleAsync(async () => {
             const arms = confirmation;
             setConfirmation(null);
             const response = await operate('/action/sighting', {
@@ -1052,7 +1054,7 @@ export function ColorEditor() {
               setDraft([[], []]);
               setSelectedArm(0);
             }
-          }}
+          }, reportError)}
         />
       )}
     </div>

@@ -1,3 +1,5 @@
+import {accountPermissions} from '../storage/store';
+import {parseJson} from '../../../../packages/contracts/src/backend';
 import type {
   Civilization,
   GameEvent,
@@ -227,7 +229,7 @@ export function events(
     ),
     audience: r.audience,
     ...(r.owner ? {recipient: r.owner} : {}),
-    civilizationIds: JSON.parse(r.civilization_ids) as string[],
+    civilizationIds: parseJson(r.civilization_ids) as string[],
     gameMs: r.game_ms,
     utcMs: r.utc_ms,
     ...(r.code ? {code: r.code} : {}),
@@ -268,7 +270,7 @@ export function intel(e: Engine, actor: Actor): Intel[] {
 }
 function judgeProjection(e: Engine, actor: Actor): JudgeState {
   permission(actor, 'overview');
-  const permits = JSON.parse(actor.permissions) as string[];
+  const permits = accountPermissions(actor);
   const db = e.db;
   const health = db.one<{
     last_success: number;
@@ -305,7 +307,7 @@ function judgeProjection(e: Engine, actor: Actor): JudgeState {
               committedUtcMs: event.committed_utc,
               payload: (() => {
                 try {
-                  return JSON.parse(event.payload) as Record<string, unknown>;
+                  return parseJson(event.payload) as Record<string, unknown>;
                 } catch {
                   return {invalid: true};
                 }
@@ -402,7 +404,7 @@ export function projectSnapshot(
 ): Snapshot {
   const snapshot: Snapshot = {
     parameters: e.db.parameters(),
-    site: JSON.parse(e.db.match().site_json) as SiteConfig,
+    site: parseJson(e.db.match().site_json) as SiteConfig,
     session,
     match: matchProjection(e),
     player:
@@ -425,7 +427,7 @@ export function projectSnapshot(
       permission(actor, area === 'commands' ? 'overview' : area);
     }
     snapshot.judge = judgeProjection(e, actor);
-    const permits = JSON.parse(actor.permissions) as string[];
+    const permits = accountPermissions(actor);
     if (permits.includes('system')) {
       snapshot.judge.accounts = accountList(e, actor);
     }
@@ -598,7 +600,7 @@ export function readEndpoint(
     );
   }
   if (route === '/public/site-config') {
-    return JSON.parse(e.db.match().site_json);
+    return parseJson(e.db.match().site_json);
   }
   if (route === '/public/match') {
     return matchProjection(e);

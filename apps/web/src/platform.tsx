@@ -1,3 +1,4 @@
+import {object, parseJson} from '../../../packages/contracts/src/backend';
 import {
   useCallback,
   useEffect,
@@ -110,19 +111,20 @@ function Delivery({value}: {value: Record<string, unknown> | null}) {
   if (!value) {
     return null;
   }
+  const invitation = value.invitation;
   return (
     <section className="platform-delivery">
       <h2>本次交付</h2>
       <p>
         请单人复制或打印交付；长期口令只在领取时显示。邀请7天有效，交付原文24小时后清除。
       </p>
-      {typeof value.invitation === 'string' && (
+      {typeof invitation === 'string' && (
         <>
-          <code className="credential-text">{`${location.origin}/claim#${value.invitation}`}</code>
+          <code className="credential-text">{`${location.origin}/claim#${invitation}`}</code>
           <Button
             onClick={() =>
               void navigator.clipboard.writeText(
-                `${location.origin}/claim#${value.invitation}`,
+                `${location.origin}/claim#${invitation}`,
               )
             }
           >
@@ -523,7 +525,7 @@ function matchEnded(entry: MatchEntry) {
     return entry.phase === 'ended';
   }
   try {
-    return JSON.parse(entry.summary).phase === 'ended';
+    return object(parseJson(entry.summary)).phase === 'ended';
   } catch {
     return false;
   }
@@ -1946,7 +1948,11 @@ function MatchManagement({client, id}: {client: PlatformClient; id: string}) {
     void client
       .load()
       .then(() => setReady(true))
-      .catch(e => setError(e.message));
+      .catch((error: unknown) =>
+        setError(
+          error instanceof Error ? error.message : '暂时无法读取账号信息。',
+        ),
+      );
   }, [client]);
   const run: Run = async work => {
     if (running.current) {

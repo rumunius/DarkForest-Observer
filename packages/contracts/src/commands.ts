@@ -1,3 +1,4 @@
+import {parseJson} from './backend';
 /** DF-Judge/1: shared, executable command catalogue and syntax. No browser rule engine. */
 export const LANGUAGE_VERSION = 'DF-Judge/1';
 export const COMMAND_LIMITS = {
@@ -163,7 +164,7 @@ export function tokenizeCommand(input: string): Lexeme[] {
       }
       i++;
       try {
-        JSON.parse(input.slice(start, i));
+        parseJson(input.slice(start, i));
       } catch {
         throw new CommandSyntaxError('字符串须使用JSON转义', start);
       }
@@ -281,12 +282,12 @@ export function parseCommandTree(input: string): CommandNode {
           throw new CommandSyntaxError('选项缺少值', t.start);
         }
         node.options[key] = value.value.startsWith('"')
-          ? (JSON.parse(value.value) as string)
+          ? (parseJson(value.value) as string)
           : value.value;
       } else {
         let atom = t.value.replace(/^\//, '');
         if (atom.startsWith('"')) {
-          atom = JSON.stringify(JSON.parse(atom));
+          atom = JSON.stringify(parseJson(atom));
         } else if (/^(?:\d+(?:\.\d+)?(?:ms|s|m|h|d))+$/.test(atom)) {
           atom = durationMs(atom) + 'ms';
         }

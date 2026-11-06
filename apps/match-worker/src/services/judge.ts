@@ -1,4 +1,9 @@
 import {
+  parseJson,
+  scalarText,
+  stringArray,
+} from '../../../../packages/contracts/src/backend';
+import {
   COLORS,
   type OperationResult,
   type SiteConfig,
@@ -173,7 +178,7 @@ function validate(
     );
     requireThat(
       Array.isArray(body.expected_roster) &&
-        stableJson([...body.expected_roster].sort()) ===
+        stableJson(stringArray(body.expected_roster).sort()) ===
           stableJson(roster.map(p => p.id)),
       'ROSTER_CHANGED',
       '正式名单已变化，请刷新后重新核对。',
@@ -819,7 +824,7 @@ export function judgeAction(
     permission(actor, 'settings');
     strict(raw, ['request_id', 'site', 'expected_version', 'reason']);
     requireThat(m.phase === 'setup', 'PARAMETERS_LOCKED', '活动设置已锁定。');
-    const previous = JSON.parse(m.site_json) as SiteConfig;
+    const previous = parseJson(m.site_json) as SiteConfig;
     const site = strict(raw.site, [
       'version',
       'title',
@@ -1113,7 +1118,7 @@ export function judgeAction(
       if (raw.revoke) {
         db.exec(
           'UPDATE admin_effects SET active=0 WHERE id=?',
-          String(raw.revoke),
+          scalarText(raw.revoke),
         );
       } else {
         db.exec(
@@ -1250,7 +1255,7 @@ export function judgeAction(
       requestId: id,
       status: 'executed',
       parameters: payloadOf(raw),
-      preview: preview.impact ? JSON.parse(preview.impact) : null,
+      preview: preview.impact ? parseJson(preview.impact) : null,
       before,
       after: managementState(e),
     },
