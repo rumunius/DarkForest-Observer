@@ -1,17 +1,26 @@
+import type {DomainPhase} from './backend';
+
 /** Public frontend contracts. Server implementations must enforce every permission. */
 export const COLORS = [
-  { id: 'BK', name: '黑色' },
-  { id: 'WH', name: '白色' },
-  { id: 'GY', name: '灰色' },
-  { id: 'YL', name: '黄色' },
-  { id: 'OR', name: '桔色' },
-  { id: 'SB', name: '天蓝色' },
-  { id: 'PU', name: '紫色' },
+  {id: 'BK', name: '黑色'},
+  {id: 'WH', name: '白色'},
+  {id: 'GY', name: '灰色'},
+  {id: 'YL', name: '黄色'},
+  {id: 'OR', name: '桔色'},
+  {id: 'SB', name: '天蓝色'},
+  {id: 'PU', name: '紫色'},
 ] as const;
 export type ColorId = (typeof COLORS)[number]['id'];
 export type Arms = [ColorId[], ColorId[]];
 export type Stage =
-  'setup' | 'outfitting' | 'countdown' | 'forest' | 'apocalypse' | 'transfer' | 'hunt' | 'ended';
+  | 'setup'
+  | 'outfitting'
+  | 'countdown'
+  | 'forest'
+  | 'apocalypse'
+  | 'transfer'
+  | 'hunt'
+  | 'ended';
 export type Flight =
   | 'nickname'
   | 'unregistered'
@@ -65,7 +74,7 @@ export interface MatchState {
   id: string;
   revision: number;
   stage: Stage;
-  phase?: import('./backend').DomainPhase;
+  phase?: DomainPhase;
   gameMs: number;
   serverUtcMs: number;
   running: boolean;
@@ -183,7 +192,7 @@ export interface JudgeState {
   scheduledEvents?: ScheduledEvent[];
   cursors?: Partial<Record<'notices' | 'audits' | 'attacks', string | null>>;
   accounts?: AccountSummary[];
-  attacks?: {
+  attacks?: Array<{
     id: string;
     actor: string;
     target: string | null;
@@ -192,13 +201,13 @@ export interface JudgeState {
     wrongIndex: number | null;
     utcMs: number;
     valid: boolean;
-  }[];
+  }>;
   roster?: {
     members: string[];
-    accounts: { id: string; nickname: string; eligible: boolean }[];
+    accounts: Array<{id: string; nickname: string; eligible: boolean}>;
     locked: boolean;
   };
-  parameters?: { version: number; locked: boolean; values: RuleParameters };
+  parameters?: {version: number; locked: boolean; values: RuleParameters};
   notices: Notice[];
   audits: AuditEntry[];
   effects: Effect[];
@@ -225,7 +234,7 @@ export interface ScheduledEvent {
 }
 export interface ResultsState {
   correctionReason?: string;
-  versions?: { version: number; reason: string; createdUtc: number }[];
+  versions?: Array<{version: number; reason: string; createdUtc: number}>;
   version: number;
   reason: string;
   champions: string[];
@@ -255,7 +264,7 @@ export interface RuleParameters {
   sightingsPerMinute: number;
 }
 export interface OperationResult {
-  scheduler?: { settledEvents: string[]; remaining: number };
+  scheduler?: {settledEvents: string[]; remaining: number};
   credentialDeliveryId?: string;
   requestId: string;
   status: 'complete' | 'pending';
@@ -287,7 +296,7 @@ export interface ManagementPreview {
   token: string;
   revision: number;
   title: string;
-  changes: { target: string; before: string; after: string }[];
+  changes: Array<{target: string; before: string; after: string}>;
   consequences: string[];
 }
 export interface Operation {
@@ -306,12 +315,12 @@ export interface DataSource {
     items: Notice[] | AuditEntry[] | NonNullable<JudgeState['attacks']>;
     nextCursor: string | null;
   }>;
-  credential?(id: string): Promise<{ accountId: string; credential: string }>;
-  exportData?(kind: string): Promise<{ fileName: string; text: string }>;
+  credential?(id: string): Promise<{accountId: string; credential: string}>;
+  exportData?(kind: string): Promise<{fileName: string; text: string}>;
   eventsPage?(
     route: string,
     cursor: string,
-  ): Promise<{ items: GameEvent[]; nextCursor: string | null }>;
+  ): Promise<{items: GameEvent[]; nextCursor: string | null}>;
   read(route: string): Promise<Snapshot>;
   login(credential: string, judge: boolean): Promise<void>;
   logout(): Promise<void>;
@@ -356,13 +365,13 @@ export const RULES = {
 export function validArms(arms: Arms): boolean {
   const all = arms.flat();
   const shape = arms
-    .map((a) => a.length)
+    .map(a => a.length)
     .sort()
     .join('+');
   return (
     ['1+2', '2+2', '1+3'].includes(shape) &&
     new Set(all).size === all.length &&
-    all.every((id) => COLORS.some((c) => c.id === id))
+    all.every(id => COLORS.some(c => c.id === id))
   );
 }
 export function validCode(value: string): boolean {

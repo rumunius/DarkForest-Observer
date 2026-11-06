@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { DataSource } from '@darkforest/contracts';
-import { AppProvider, useApp } from './state';
-import { judgeCan } from './permissions';
+import {useEffect, useRef, useState, type ReactNode} from 'react';
+import type {DataSource} from '@darkforest/contracts';
+import {AppProvider, useApp} from './state';
+import {judgeCan} from './permissions';
 import {
   Button,
   Empty,
@@ -14,30 +14,34 @@ import {
   MatchSummary,
   PageTitle,
 } from './ui';
-import { PlayerPages, Rules } from './pages/player';
-import { Display, ObserverPages, ResultsPages } from './pages/observe';
-import { JUDGE_NAV, JudgePages } from './pages/judge';
-import { Atmosphere } from './components/atmosphere';
-import { MatchContextProvider, MatchHeading, type MatchContext } from './components/match-context';
+import {PlayerPages, Rules} from './pages/player';
+import {Display, ObserverPages, ResultsPages} from './pages/observe';
+import {JUDGE_NAV, JudgePages} from './pages/judge';
+import {Atmosphere} from './components/atmosphere';
+import {
+  MatchContextProvider,
+  MatchHeading,
+  type MatchContext,
+} from './components/match_context';
 
 function Stars() {
   return (
     <div className="stars" aria-hidden="true">
-      {Array.from({ length: 12 }, (_, i) => (
+      {Array.from({length: 12}, (_, i) => (
         <i key={i} />
       ))}
     </div>
   );
 }
 function Landing() {
-  const { data } = useApp();
+  const {data} = useApp();
   return (
     <div className="landing">
       <div className="entry-symbol" aria-hidden="true">
         <Icon name="planet" size={46} />
       </div>
       <h1>
-        {data.site.title.split('：').map((part) => (
+        {data.site.title.split('：').map(part => (
           <span key={part}>{part}</span>
         ))}
       </h1>
@@ -61,13 +65,14 @@ function Landing() {
   );
 }
 function Login() {
-  const { source, refresh, go, route } = useApp();
+  const {source, refresh, go, route} = useApp();
   const [credential, setCredential] = useState('');
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const judge =
-    new URLSearchParams(location.search).get('audience') === 'judge' || route.startsWith('/judge');
+    new URLSearchParams(location.search).get('audience') === 'judge' ||
+    route.startsWith('/judge');
   return (
     <>
       <PageTitle title={judge ? '裁判登录' : '玩家登录'} back="/" />
@@ -76,16 +81,24 @@ function Login() {
       </p>
       <form
         className="login-form form-stack"
-        onSubmit={async (e) => {
+        onSubmit={async e => {
           e.preventDefault();
-          if (!credential.trim() || busy) return;
+          if (!credential.trim() || busy) {
+            return;
+          }
           setBusy(true);
           setError('');
           try {
             await source.login(credential, judge);
             setCredential('');
             await refresh();
-            go(judge ? '/judge' : route.startsWith('/player/') ? route : '/player');
+            go(
+              judge
+                ? '/judge'
+                : route.startsWith('/player/')
+                  ? route
+                  : '/player',
+            );
           } catch (e) {
             setError(e instanceof Error ? e.message : '登录未完成，请重试。');
           } finally {
@@ -97,14 +110,18 @@ function Login() {
           <input
             type={show ? 'text' : 'password'}
             value={credential}
-            onChange={(e) => setCredential(e.target.value)}
+            onChange={e => setCredential(e.target.value)}
             autoComplete="current-password"
             autoCapitalize="none"
             spellCheck={false}
           />
         </Field>
         <label className="check-label">
-          <input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={show}
+            onChange={e => setShow(e.target.checked)}
+          />
           显示口令
         </label>
         {error && (
@@ -127,9 +144,19 @@ function Login() {
   );
 }
 function useFeedbackMessages() {
-  const { error, result, pending, busy, refresh, recover, clearFeedback, data, online } = useApp();
+  const {
+    error,
+    result,
+    pending,
+    busy,
+    refresh,
+    recover,
+    clearFeedback,
+    data,
+    online,
+  } = useApp();
   const messages: FeedbackMessage[] = [];
-  if (!online || error)
+  if (!online || error) {
     messages.push({
       tone: 'error',
       content: (
@@ -149,20 +176,26 @@ function useFeedbackMessages() {
         </>
       ),
     });
-  if (pending)
+  }
+  if (pending) {
     messages.push({
       tone: 'pending',
       content: (
         <>
           <strong>正在确认上一次操作结果</strong>
           <p>请等待结果。</p>
-          <button className="text-button" disabled={busy} onClick={() => void recover()}>
+          <button
+            className="text-button"
+            disabled={busy}
+            onClick={() => void recover()}
+          >
             查询原操作结果
           </button>
         </>
       ),
     });
-  if (result?.status === 'complete' && !result.preview)
+  }
+  if (result?.status === 'complete' && !result.preview) {
     messages.push({
       tone: 'result',
       onClose: clearFeedback,
@@ -176,10 +209,11 @@ function useFeedbackMessages() {
         </>
       ),
     });
+  }
   return messages;
 }
 function Navigation() {
-  const { data, route, unread } = useApp();
+  const {data, route, unread} = useApp();
   const judge = data.session?.role === 'judge';
   const observer = route.startsWith('/observer');
   const tabs = judge
@@ -204,9 +238,13 @@ function Navigation() {
         ];
   const active = (path: string) => {
     if (!judge && !observer) {
-      if (path === '/player/actions') return route.startsWith(path);
-      if (path === '/player/messages') return route.startsWith(path) || route === '/player/intel';
-      if (path === '/player/me')
+      if (path === '/player/actions') {
+        return route.startsWith(path);
+      }
+      if (path === '/player/messages') {
+        return route.startsWith(path) || route === '/player/intel';
+      }
+      if (path === '/player/me') {
         return [
           '/player/me',
           '/player/bracelets',
@@ -215,6 +253,7 @@ function Navigation() {
           '/player/exception',
           '/player/account',
         ].includes(route);
+      }
       return (
         !route.startsWith('/player/actions') &&
         ![
@@ -226,13 +265,18 @@ function Navigation() {
           '/player/help',
           '/player/exception',
           '/player/account',
-        ].some((p) => route.startsWith(p))
+        ].some(p => route.startsWith(p))
       );
     }
-    return path === (judge ? '/judge' : '/observer') ? route === path : route.startsWith(path);
+    return path === (judge ? '/judge' : '/observer')
+      ? route === path
+      : route.startsWith(path);
   };
   return (
-    <nav className={`bottom-nav ${judge ? 'judge-bottom-nav' : ''}`} aria-label="主导航">
+    <nav
+      className={`bottom-nav ${judge ? 'judge-bottom-nav' : ''}`}
+      aria-label="主导航"
+    >
       {tabs.map(([path, label, icon]) => (
         <Link
           to={path!}
@@ -243,7 +287,10 @@ function Navigation() {
           <Icon name={icon!} />
           <span>{label}</span>
           {!judge && label === '消息' && unread > 0 && (
-            <i className="unread-dot" aria-label={`有${unread}条未读本人消息`} />
+            <i
+              className="unread-dot"
+              aria-label={`有${unread}条未读本人消息`}
+            />
           )}
         </Link>
       ))}
@@ -251,7 +298,7 @@ function Navigation() {
   );
 }
 function Sidebar() {
-  const { data, route } = useApp();
+  const {data, route} = useApp();
   return (
     <aside className="judge-sidebar">
       <Link className="judge-brand" to="/judge">
@@ -259,7 +306,7 @@ function Sidebar() {
       </Link>
       <div className="sidebar-duty">{data.session!.name}</div>
       <nav>
-        {JUDGE_NAV.map((group) => {
+        {JUDGE_NAV.map(group => {
           const items = group.items.filter(([area]) => judgeCan(data, area!));
           return (
             items.length > 0 && (
@@ -270,13 +317,20 @@ function Sidebar() {
                     key={area}
                     to={path!}
                     className={
-                      (path === '/judge' ? route === path : route.startsWith(path!)) ? 'active' : ''
+                      (
+                        path === '/judge'
+                          ? route === path
+                          : route.startsWith(path!)
+                      )
+                        ? 'active'
+                        : ''
                     }
                   >
                     {label}
                     {area === 'notices' && (
                       <small className="numeric">
-                        {data.judge?.notices.filter((n) => n.status !== 'sent').length ?? ''}
+                        {data.judge?.notices.filter(n => n.status !== 'sent')
+                          .length ?? ''}
                       </small>
                     )}
                   </Link>
@@ -294,7 +348,7 @@ function Sidebar() {
   );
 }
 function Screen() {
-  const { data, route, loading, go, base } = useApp();
+  const {data, route, loading, go, base} = useApp();
   const feedback = useFeedbackMessages();
   const main = useRef<HTMLElement>(null);
   const judge = data.session?.role === 'judge' && route.startsWith('/judge');
@@ -306,22 +360,28 @@ function Screen() {
       const target =
         main.current?.querySelector<HTMLElement>('.color-editor .arm-select') ??
         main.current?.querySelector<HTMLElement>('h1');
-      target?.focus({ preventScroll: true });
+      target?.focus({preventScroll: true});
     }, 30);
     return () => clearTimeout(timer);
   }, [route]);
   useEffect(() => {
-    if (data.session && (route === '/' || route === '/login'))
+    if (data.session && (route === '/' || route === '/login')) {
       go(data.session.role === 'judge' ? '/judge' : '/player', true);
+    }
   }, [data.session?.id, route, go, data.session]);
   useEffect(() => {
-    if (base.startsWith('/m/') && !loading && !data.session)
-      location.replace(`/?audience=${route.startsWith('/judge') ? 'staff' : 'player'}`);
+    if (base.startsWith('/m/') && !loading && !data.session) {
+      location.replace(
+        `/?audience=${route.startsWith('/judge') ? 'staff' : 'player'}`,
+      );
+    }
   }, [base, loading, data.session, route]);
-  const allowedGlobal = !!data.player?.observerAllowed || data.session?.role === 'judge';
+  const allowedGlobal =
+    !!data.player?.observerAllowed || data.session?.role === 'judge';
   let content: ReactNode;
-  if (route === '/rules') content = <Rules />;
-  else if (loading)
+  if (route === '/rules') {
+    content = <Rules />;
+  } else if (loading) {
     content = (
       <>
         <PageTitle title="黑暗森林" />
@@ -330,9 +390,9 @@ function Screen() {
         </p>
       </>
     );
-  else if (!data.session && base.startsWith('/m/'))
+  } else if (!data.session && base.startsWith('/m/')) {
     content = <p role="status">正在返回账号登录页</p>;
-  else if (!data.session)
+  } else if (!data.session) {
     content =
       route === '/' ? (
         <Landing />
@@ -343,29 +403,33 @@ function Screen() {
       ) : (
         <Empty title="页面不存在" to="/" action="返回进入页" />
       );
-  else if (display)
+  } else if (display) {
     content =
       data.session.role === 'judge' ? (
         <Display />
       ) : (
         <Empty title="请由裁判登录后打开观战大屏" to="/player" />
       );
-  else if (observer)
+  } else if (observer) {
     content = allowedGlobal ? (
       <ObserverPages />
     ) : (
       <Empty title="宇宙观测尚未开放">
-        永久淘汰满{data.parameters?.observerWaitSeconds ?? 180}秒后可以进入宇宙观测。
+        永久淘汰满{data.parameters?.observerWaitSeconds ?? 180}
+        秒后可以进入宇宙观测。
       </Empty>
     );
-  else if (results)
+  } else if (results) {
     content =
       data.match?.stage === 'ended' ? (
         <ResultsPages />
       ) : (
-        <Empty title="比赛尚未结束" to={data.session.role === 'judge' ? '/judge' : '/player'} />
+        <Empty
+          title="比赛尚未结束"
+          to={data.session.role === 'judge' ? '/judge' : '/player'}
+        />
       );
-  else if (route.startsWith('/judge'))
+  } else if (route.startsWith('/judge')) {
     content = judge ? (
       data.judge ? (
         <JudgePages />
@@ -375,31 +439,38 @@ function Screen() {
     ) : (
       <Empty title="当前账号不能进入裁判后台" />
     );
-  else if (route.startsWith('/player'))
+  } else if (route.startsWith('/player')) {
     content = data.player ? (
       <PlayerPages />
     ) : (
       <Empty title="请返回裁判工作台" to="/judge" action="返回工作台" />
     );
-  else
+  } else {
     content = (
-      <Empty title="页面不存在" to={data.session.role === 'judge' ? '/judge' : '/player'} />
+      <Empty
+        title="页面不存在"
+        to={data.session.role === 'judge' ? '/judge' : '/player'}
+      />
     );
+  }
   return (
     <div
       className={`site-shell ${judge ? 'judge-shell' : display ? 'display-shell' : 'player-shell'} ${!data.session ? 'public-shell' : ''}`}
     >
       <Atmosphere />
-      {(route === '/' || route === '/player' || route === '/player/bracelets' || display) && (
-        <Stars />
-      )}
+      {(route === '/' ||
+        route === '/player' ||
+        route === '/player/bracelets' ||
+        display) && <Stars />}
       {judge && <Sidebar />}
       {!judge && !display && data.session && (
         <aside className="player-aside">
           <Link className="site-name" to={observer ? '/observer' : '/player'}>
             黑暗森林
           </Link>
-          {data.player && <Identity id={data.player.id} nickname={data.player.nickname} />}
+          {data.player && (
+            <Identity id={data.player.id} nickname={data.player.nickname} />
+          )}
           <MatchSummary compact />
         </aside>
       )}

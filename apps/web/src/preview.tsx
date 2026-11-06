@@ -1,13 +1,18 @@
-import { useState } from 'react';
-import { createRoot } from 'react-dom/client';
-import { App } from './app';
-import { MockSource, PREVIEW_ROLES, SCENARIOS, type PreviewRole } from './dev/mock-source';
-import { useApp } from './state';
+import {useState} from 'react';
+import {createRoot} from 'react-dom/client';
+import {App} from './app';
+import {
+  MockSource,
+  PREVIEW_ROLES,
+  SCENARIOS,
+  type PreviewRole,
+} from './dev/mock_source';
+import {useApp} from './state';
 import './styles.css';
 
 const preferences = (() => {
   const params = new URLSearchParams(location.search);
-  let saved: { role?: string; scenario?: string } = {};
+  let saved: {role?: string; scenario?: string} = {};
   try {
     saved = JSON.parse(sessionStorage.getItem('darkforest.preview') ?? '{}');
   } catch {
@@ -16,16 +21,16 @@ const preferences = (() => {
   const role = params.get('role') ?? saved.role ?? 'player';
   const scenario = params.get('scene') ?? saved.scenario ?? 'active';
   return {
-    role: PREVIEW_ROLES.some((r) => r.id === role)
+    role: PREVIEW_ROLES.some(r => r.id === role)
       ? (role as PreviewRole)
       : ('player' as PreviewRole),
-    scenario: SCENARIOS.some((s) => s.id === scenario) ? scenario : 'active',
+    scenario: SCENARIOS.some(s => s.id === scenario) ? scenario : 'active',
   };
 })();
 const source = new MockSource();
 source.reset(preferences.role, preferences.scenario);
-function Controls({ onReset }: { onReset: () => void }) {
-  const { go, refresh, logout } = useApp();
+function Controls({onReset}: {onReset: () => void}) {
+  const {go, refresh, logout} = useApp();
   const [role, setRole] = useState<PreviewRole>(preferences.role);
   const [scenario, setScenario] = useState(preferences.scenario);
   const [open, setOpen] = useState(false);
@@ -38,7 +43,7 @@ function Controls({ onReset }: { onReset: () => void }) {
     try {
       sessionStorage.setItem(
         'darkforest.preview',
-        JSON.stringify({ role: nextRole, scenario: nextScenario }),
+        JSON.stringify({role: nextRole, scenario: nextScenario}),
       );
     } catch {
       /* Optional display preference only. */
@@ -64,12 +69,12 @@ function Controls({ onReset }: { onReset: () => void }) {
           角色
           <select
             value={role}
-            onChange={(e) => {
+            onChange={e => {
               const next = e.target.value as PreviewRole;
               apply(next, next === 'observer' ? 'observer' : scenario);
             }}
           >
-            {PREVIEW_ROLES.map((role) => (
+            {PREVIEW_ROLES.map(role => (
               <option key={role.id} value={role.id}>
                 {role.label}
               </option>
@@ -78,8 +83,8 @@ function Controls({ onReset }: { onReset: () => void }) {
         </label>
         <label className="preview-scenario">
           场景
-          <select value={scenario} onChange={(e) => apply(role, e.target.value)}>
-            {SCENARIOS.map((s) => (
+          <select value={scenario} onChange={e => apply(role, e.target.value)}>
+            {SCENARIOS.map(s => (
               <option key={s.id} value={s.id}>
                 {s.label}
               </option>
@@ -89,7 +94,11 @@ function Controls({ onReset }: { onReset: () => void }) {
         <button type="button" onClick={() => apply(role, scenario)}>
           重置场景
         </button>
-        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
           {open ? '收起工具' : '更多工具'}
         </button>
       </div>
@@ -97,7 +106,10 @@ function Controls({ onReset }: { onReset: () => void }) {
         <div className="preview-extra">
           <label>
             下次目击结果
-            <select onChange={(e) => source.setSightingResult(e.target.value)} defaultValue="hit">
+            <select
+              onChange={e => source.setSightingResult(e.target.value)}
+              defaultValue="hit"
+            >
               <option value="hit">击毁成功</option>
               <option value="neutral">未产生击毁，错误次数不变</option>
               <option value="wrong">错误提交，按累计次数处罚</option>
@@ -107,7 +119,7 @@ function Controls({ onReset }: { onReset: () => void }) {
             连接与请求
             <select
               value={fault}
-              onChange={(e) => {
+              onChange={e => {
                 setFault(e.target.value);
                 source.setFault(e.target.value);
                 void refresh();
@@ -139,8 +151,9 @@ function PreviewApp() {
       base="/dev-preview"
       epoch={epoch}
       preview={
-        new URLSearchParams(location.search).get('tools') === 'hidden' ? null : (
-          <Controls onReset={() => setEpoch((e) => e + 1)} />
+        new URLSearchParams(location.search).get('tools') ===
+        'hidden' ? null : (
+          <Controls onReset={() => setEpoch(e => e + 1)} />
         )
       }
     />

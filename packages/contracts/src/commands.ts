@@ -17,21 +17,25 @@ export function commandByteLength(input: string): number {
   }
   return size;
 }
-export type CommandSpec = {
+export interface CommandSpec {
   path: string;
   args: string;
   description: string;
   permission: string;
   query: boolean;
   direct: boolean;
-};
-const groups: [string, string, string][] = [
+}
+const groups: Array<[string, string, string]> = [
   [
     'help|["命令路径"]|中文帮助;version||语言版本;whoami||当前操作者;capability list||权限列表;selector inspect|<target>|预览目标集合;match status||比赛状态;roster list||正式名单;preflight list||准备缺项;player list||文明列表;inspect|<target>|文明状态;history|<target> [kind <history-kind>]|文明分类历史;flight list|<target>|航次历史;flight inspect|<id>|航次详情;player resources|<target>|资源与来源;player restrictions|<target>|行动限制;clock status||比赛时钟;clock pauses||暂停历史;tag list|<target>|文明标签;observer status|<target>|观战资格;stats count|<target>|文明数量;stats sum|<score> of <target>|资源与战绩总计;stats events|<kind> [window <duration>]|有效事件统计;event-log list||已发生事件;event-log inspect|<id>|事件事实详情',
     'overview',
     'query',
   ],
-  ['homeworld pending||待审核母星;homeworld inspect|<target>|母星登记详情', 'homeworlds', 'query'],
+  [
+    'homeworld pending||待审核母星;homeworld inspect|<target>|母星登记详情',
+    'homeworlds',
+    'query',
+  ],
   [
     'event list||真实事件计划;event inspect|<id>|计划详情;effect list||静默效果;effect inspect|<id>|效果详情;scheduler health||调度健康',
     'events',
@@ -42,7 +46,11 @@ const groups: [string, string, string][] = [
     'notices',
     'query',
   ],
-  ['audit list||业务审计;audit inspect|<id>|审计详情;command history||命令历史', 'audit', 'query'],
+  [
+    'audit list||业务审计;audit inspect|<id>|审计详情;command history||命令历史',
+    'audit',
+    'query',
+  ],
   [
     'codebook status||码本容量;codebook list||发行历史;code inspect|<id>|手环发行详情;attack list|[<target>]|攻击记录;attack inspect|<id>|攻击详情;case list||个案列表;case inspect|<id>|个案详情;case graph|<id>|个案关联图;hunt status||终局核验;hunt draft inspect|<id>|核验草稿;report show|[version <int>]|正式战报;report versions||战报版本;schedule list||定时任务;schedule inspect|<id>|任务详情;macro list||宏版本;macro inspect|<text> [version <int>]|宏详情;job list||逐步作业;job inspect|<id>|作业进度',
     'commands',
@@ -99,27 +107,28 @@ const groups: [string, string, string][] = [
     'control',
   ],
 ];
-export const COMMAND_SPECS: CommandSpec[] = groups.flatMap(([source, permission, mode]) =>
-  source.split(';').map((entry) => {
-    const [path = '', args = '', description = ''] = entry.split('|');
-    return {
-      path,
-      args,
-      description,
-      permission:
-        mode === 'query' && /^(schedule|job|macro) (list|inspect)$/.test(path)
-          ? 'overview'
-          : permission,
-      query: mode === 'query',
-      direct: mode === 'direct',
-    };
-  }),
+export const COMMAND_SPECS: CommandSpec[] = groups.flatMap(
+  ([source, permission, mode]) =>
+    source.split(';').map(entry => {
+      const [path = '', args = '', description = ''] = entry.split('|');
+      return {
+        path,
+        args,
+        description,
+        permission:
+          mode === 'query' && /^(schedule|job|macro) (list|inspect)$/.test(path)
+            ? 'overview'
+            : permission,
+        query: mode === 'query',
+        direct: mode === 'direct',
+      };
+    }),
 );
-export type CommandNode = {
+export interface CommandNode {
   words: string[];
   block?: CommandNode[];
   options: Record<string, string>;
-};
+}
 export class CommandSyntaxError extends Error {
   constructor(
     message: string,
@@ -128,7 +137,11 @@ export class CommandSyntaxError extends Error {
     super(`${message}（位置 ${offset + 1}）`);
   }
 }
-export type Lexeme = { value: string; start: number; end: number };
+export interface Lexeme {
+  value: string;
+  start: number;
+  end: number;
+}
 export function tokenizeCommand(input: string): Lexeme[] {
   const result: Lexeme[] = [];
   for (let i = 0; i < input.length;) {
@@ -140,39 +153,65 @@ export function tokenizeCommand(input: string): Lexeme[] {
     if (input[i] === '"') {
       i++;
       while (i < input.length && input[i] !== '"') {
-        if (input[i] === '\\') i++;
+        if (input[i] === '\\') {
+          i++;
+        }
         i++;
       }
-      if (i >= input.length) throw new CommandSyntaxError('字符串缺少结束引号', start);
+      if (i >= input.length) {
+        throw new CommandSyntaxError('字符串缺少结束引号', start);
+      }
       i++;
       try {
         JSON.parse(input.slice(start, i));
       } catch {
         throw new CommandSyntaxError('字符串须使用JSON转义', start);
       }
-    } else if (input[i] === '@' || (input[i] === '{' && /^\{\s*C\d/.test(input.slice(i)))) {
-      let brackets = 0,
-        braces = 0,
-        quoted = false;
+    } else if (
+      input[i] === '@' ||
+      (input[i] === '{' && /^\{\s*C\d/.test(input.slice(i)))
+    ) {
+      let brackets = 0;
+      let braces = 0;
+      let quoted = false;
       do {
         const c = input[i++]!;
         if (c === '\\' && quoted) {
           i++;
           continue;
         }
-        if (c === '"') quoted = !quoted;
-        if (!quoted) {
-          if (c === '[') brackets++;
-          if (c === ']') brackets--;
-          if (c === '{') braces++;
-          if (c === '}') braces--;
+        if (c === '"') {
+          quoted = !quoted;
         }
-      } while (i < input.length && (brackets > 0 || braces > 0 || !/[\s;(){}]/.test(input[i]!)));
-      if (brackets || braces || quoted)
+        if (!quoted) {
+          if (c === '[') {
+            brackets++;
+          }
+          if (c === ']') {
+            brackets--;
+          }
+          if (c === '{') {
+            braces++;
+          }
+          if (c === '}') {
+            braces--;
+          }
+        }
+      } while (
+        i < input.length &&
+        (brackets > 0 || braces > 0 || !/[\s;(){}]/.test(input[i]!))
+      );
+      if (brackets || braces || quoted) {
         throw new CommandSyntaxError('目标集合或选择器未闭合', start);
-    } else if (/[{}();,\n]/.test(input[i]!)) i++;
-    else while (i < input.length && !/[\s{}();,]/.test(input[i]!)) i++;
-    result.push({ value: input.slice(start, i), start, end: i });
+      }
+    } else if (/[{}();,\n]/.test(input[i]!)) {
+      i++;
+    } else {
+      while (i < input.length && !/[\s{}();,]/.test(input[i]!)) {
+        i++;
+      }
+    }
+    result.push({value: input.slice(start, i), start, end: i});
   }
   return result;
 }
@@ -198,19 +237,25 @@ const optionNames = new Set([
   'search',
 ]);
 export function parseCommandTree(input: string): CommandNode {
-  if (commandByteLength(input) > COMMAND_LIMITS.bytes)
+  if (commandByteLength(input) > COMMAND_LIMITS.bytes) {
     throw new CommandSyntaxError('输入超过256KiB');
-  if (!input.trimStart().startsWith('/')) throw new CommandSyntaxError('指令须以 / 开头');
+  }
+  if (!input.trimStart().startsWith('/')) {
+    throw new CommandSyntaxError('指令须以 / 开头');
+  }
   const tokens = tokenizeCommand(input.trimStart().slice(1));
   let i = 0;
   const read = (depth: number): CommandNode => {
-    if (depth > COMMAND_LIMITS.depth)
+    if (depth > COMMAND_LIMITS.depth) {
       throw new CommandSyntaxError('嵌套超过32层', tokens[i]?.start);
-    const node: CommandNode = { words: [], options: {} };
+    }
+    const node: CommandNode = {words: [], options: {}};
     while (i < tokens.length && ![';', '\n', '}'].includes(tokens[i]!.value)) {
       const t = tokens[i++]!;
       if (t.value === '{') {
-        if (node.block) throw new CommandSyntaxError('一个操作只能有一个块', t.start);
+        if (node.block) {
+          throw new CommandSyntaxError('一个操作只能有一个块', t.start);
+        }
         node.block = [];
         while (tokens[i] && tokens[i]!.value !== '}') {
           if ([';', '\n'].includes(tokens[i]!.value)) {
@@ -219,57 +264,93 @@ export function parseCommandTree(input: string): CommandNode {
           }
           node.block.push(read(depth + 1));
         }
-        if (tokens[i++]?.value !== '}') throw new CommandSyntaxError('操作块未闭合', t.start);
+        if (tokens[i++]?.value !== '}') {
+          throw new CommandSyntaxError('操作块未闭合', t.start);
+        }
       } else if (t.value.startsWith('--')) {
         const key = t.value.slice(2);
-        if (!optionNames.has(key) || key in node.options)
+        if (!optionNames.has(key) || key in node.options) {
           throw new CommandSyntaxError('未知或重复选项 ' + t.value, t.start);
+        }
         const value = tokens[i++];
-        if (!value || /^[;{}\n]/.test(value.value) || value.value.startsWith('--'))
+        if (
+          !value ||
+          /^[;{}\n]/.test(value.value) ||
+          value.value.startsWith('--')
+        ) {
           throw new CommandSyntaxError('选项缺少值', t.start);
+        }
         node.options[key] = value.value.startsWith('"')
           ? (JSON.parse(value.value) as string)
           : value.value;
       } else {
         let atom = t.value.replace(/^\//, '');
-        if (atom.startsWith('"')) atom = JSON.stringify(JSON.parse(atom));
-        else if (/^(?:\d+(?:\.\d+)?(?:ms|s|m|h|d))+$/.test(atom)) atom = durationMs(atom) + 'ms';
+        if (atom.startsWith('"')) {
+          atom = JSON.stringify(JSON.parse(atom));
+        } else if (/^(?:\d+(?:\.\d+)?(?:ms|s|m|h|d))+$/.test(atom)) {
+          atom = durationMs(atom) + 'ms';
+        }
         node.words.push(atom);
       }
     }
-    if (!node.words.length) throw new CommandSyntaxError('缺少操作', tokens[i]?.start);
+    if (!node.words.length) {
+      throw new CommandSyntaxError('缺少操作', tokens[i]?.start);
+    }
     return node;
   };
   const node = read(0);
-  while ([';', '\n'].includes(tokens[i]?.value ?? '')) i++;
-  if (i !== tokens.length)
-    throw new CommandSyntaxError('顶层仅允许一条指令，请使用batch run', tokens[i]?.start);
+  while ([';', '\n'].includes(tokens[i]?.value ?? '')) {
+    i++;
+  }
+  if (i !== tokens.length) {
+    throw new CommandSyntaxError(
+      '顶层仅允许一条指令，请使用batch run',
+      tokens[i]?.start,
+    );
+  }
   return node;
 }
 export function commandSpec(node: CommandNode): CommandSpec | undefined {
-  return COMMAND_SPECS.filter((s) => s.path.split(' ').every((w, i) => node.words[i] === w)).sort(
-    (a, b) => b.path.length - a.path.length,
-  )[0];
+  return COMMAND_SPECS.filter(s =>
+    s.path.split(' ').every((w, i) => node.words[i] === w),
+  ).sort((a, b) => b.path.length - a.path.length)[0];
 }
 export function durationMs(value: string): number {
   const parts = [...value.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h|d)/g)];
-  if (!parts.length || parts.map((p) => p[0]).join('') !== value)
+  if (!parts.length || parts.map(p => p[0]).join('') !== value) {
     throw new CommandSyntaxError('时长须带ms/s/m/h/d单位');
-  const units: Record<string, number> = { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 };
+  }
+  const units: Record<string, number> = {
+    ms: 1,
+    s: 1000,
+    m: 60000,
+    h: 3600000,
+    d: 86400000,
+  };
   const n = parts.reduce((sum, p) => sum + Number(p[1]) * units[p[2]!]!, 0);
-  if (!Number.isSafeInteger(n) || n < 0) throw new CommandSyntaxError('时长超出整数毫秒范围');
+  if (!Number.isSafeInteger(n) || n < 0) {
+    throw new CommandSyntaxError('时长超出整数毫秒范围');
+  }
   return n;
 }
 export function instantMs(value: string): number {
   if (
-    !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?(Z|[+-]\d\d:\d\d)$/.test(value) ||
+    !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?(Z|[+-]\d\d:\d\d)$/.test(
+      value,
+    ) ||
     !Number.isFinite(Date.parse(value))
-  )
+  ) {
     throw new CommandSyntaxError('时间须为带时区的RFC3339格式');
+  }
   return Date.parse(value);
 }
-export type Completion = { value: string; description: string; start: number; end: number };
-const values: Record<string, [string, string][]> = {
+export interface Completion {
+  value: string;
+  description: string;
+  start: number;
+  end: number;
+}
+const values: Record<string, Array<[string, string]>> = {
   'history-kind': [
     ['all', '职责内全部历史'],
     ['attack', '攻击与原判罚'],
@@ -357,14 +438,16 @@ const values: Record<string, [string, string][]> = {
     'qq-group-number',
     'judge-contact',
     'qq-material-name',
-  ].map((v) => [v, '活动设置项']),
+  ].map(v => [v, '活动设置项']),
 };
 export function commandCompletions(
   input: string,
   caret = input.length,
-  players: { id: string; nickname?: string | null }[] = [],
+  players: Array<{id: string; nickname?: string | null}> = [],
 ): Completion[] {
-  if (!input.trim()) return [];
+  if (!input.trim()) {
+    return [];
+  }
   const left = input.slice(0, caret);
   const boundary = Math.max(
     left.lastIndexOf(';'),
@@ -373,7 +456,9 @@ export function commandCompletions(
   );
   const fragment =
     boundary >= 0
-      ? left.slice(boundary + (left.slice(boundary).startsWith('run {') ? 5 : 1))
+      ? left.slice(
+          boundary + (left.slice(boundary).startsWith('run {') ? 5 : 1),
+        )
       : left;
   const match = /[^\s]*$/.exec(fragment)!;
   const prefix = match[0];
@@ -385,13 +470,13 @@ export function commandCompletions(
     .replace(/^\//, '')
     .split(/\s+/)
     .filter(Boolean);
-  const options: [string, string][] = [];
+  const options: Array<[string, string]> = [];
   const filter = /^(@(?:a|alive|dead|random|pool)\[)(.*)$/.exec(prefix);
   if (filter && !filter[2]!.includes(']')) {
     const comma = filter[2]!.lastIndexOf(',');
     const base = filter[1]! + filter[2]!.slice(0, comma + 1);
     const fragment = filter[2]!.slice(comma + 1);
-    const filters: [string, string][] = [
+    const filters: Array<[string, string]> = [
       ['status=active', '正在出航'],
       ['status=returning', '正在返航'],
       ['status=preparing', '准备重生'],
@@ -420,34 +505,48 @@ export function commandCompletions(
   }
   for (const spec of COMMAND_SPECS) {
     const path = spec.path.split(' ');
-    if (!prior.every((w, i) => path[i] === w) || prior.length >= path.length) continue;
+    if (!prior.every((w, i) => path[i] === w) || prior.length >= path.length) {
+      continue;
+    }
     options.push([
       (prior.length === 0 && boundary < 0 ? '/' : '') + path[prior.length]!,
       spec.description,
     ]);
   }
   if (!options.length) {
-    const spec = COMMAND_SPECS.filter((s) =>
+    const spec = COMMAND_SPECS.filter(s =>
       s.path.split(' ').every((w, i) => prior[i] === w),
     ).sort((a, b) => b.path.length - a.path.length)[0];
     if (spec) {
       const argIndex = prior.length - spec.path.split(' ').length;
       const slot = spec.args.replace(/[[\]]/g, '').split(/\s+/)[argIndex];
       const kind = /^<([^>]+)>$/.exec(slot ?? '')?.[1];
-      if (kind)
+      if (kind) {
         options.push(
           ...(values[kind] ?? []),
           ...(kind === 'target'
-            ? players.map((p) => [p.id, p.nickname ?? '指定文明'] as [string, string])
+            ? players.map(
+                p => [p.id, p.nickname ?? '指定文明'] as [string, string],
+              )
             : []),
         );
-      else if (slot) options.push([slot, '参数关键字']);
+      } else if (slot) {
+        options.push([slot, '参数关键字']);
+      }
     }
   }
-  if (prefix.startsWith('--'))
-    options.push(...[...optionNames].map((k) => ['--' + k, '指令选项'] as [string, string]));
+  if (prefix.startsWith('--')) {
+    options.push(
+      ...[...optionNames].map(k => ['--' + k, '指令选项'] as [string, string]),
+    );
+  }
   const seen = new Set<string>();
   return options
     .filter(([v]) => v.startsWith(prefix) && !seen.has(v) && !!seen.add(v))
-    .map(([value, description]) => ({ value, description, start, end: caret + tail }));
+    .map(([value, description]) => ({
+      value,
+      description,
+      start,
+      end: caret + tail,
+    }));
 }

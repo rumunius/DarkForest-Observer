@@ -1,14 +1,14 @@
-import type { Action, OperationResult } from '@darkforest/contracts';
+import type {Action, OperationResult} from '@darkforest/contracts';
 import {
   coordinate,
   homeworldSubmission,
   nickname,
   strict,
 } from '../../../../packages/contracts/src/backend';
-import { firstSongDue, normalizeArms, TIMES, uniformInt } from '../domain/rules';
-import { Fault, requireThat, type Actor, type CodeRow } from '../storage/store';
-import { completed, type Engine, type PreparedCode } from './engine';
-import { autoFinish, destroyHome, eliminate, logEvent, retire } from './life';
+import {firstSongDue, normalizeArms, TIMES, uniformInt} from '../domain/rules';
+import {Fault, requireThat, type Actor, type CodeRow} from '../storage/store';
+import {completed, type Engine, type PreparedCode} from './engine';
+import {autoFinish, destroyHome, eliminate, logEvent, retire} from './life';
 import {
   broadcastCopy,
   clearingCopy,
@@ -16,41 +16,59 @@ import {
   shipDestroyedCopy,
   gameTimeCopy,
   messageDuration,
-} from '../../../../packages/contracts/src/message-copy';
+} from '../../../../packages/contracts/src/message_copy';
 
 export function allowedActions(e: Engine, player: string): Action[] {
-  if (e.db.match().recovery_state) return [];
-  const db = e.db,
-    m = db.match(),
-    p = db.player(player),
-    f = db.flight(player),
-    h = db.home(player),
-    now = e.now();
+  if (e.db.match().recovery_state) {
+    return [];
+  }
+  const db = e.db;
+  const m = db.match();
+  const p = db.player(player);
+  const f = db.flight(player);
+  const h = db.home(player);
+  const now = e.now();
   if (
     p.entry_status !== 'registered' ||
     f.status === 'eliminated' ||
     m.phase === 'ended' ||
     m.paused_at !== null
-  )
+  ) {
     return [];
+  }
   const actions: Action[] = [];
-  if (m.phase !== 'start_countdown') actions.push('withdraw');
+  if (m.phase !== 'start_countdown') {
+    actions.push('withdraw');
+  }
   if (m.phase === 'setup') {
-    if (!p.nickname) return [...actions, 'nickname'];
+    if (!p.nickname) {
+      return [...actions, 'nickname'];
+    }
     if (f.status === 'prelaunch') {
-      if (h?.status !== 'verified') actions.push('homeworld-submit');
-      else if (f.departed === null) actions.push('preflight-depart');
-      else actions.push('preflight-stage');
+      if (h?.status !== 'verified') {
+        actions.push('homeworld-submit');
+      } else if (f.departed === null) {
+        actions.push('preflight-depart');
+      } else {
+        actions.push('preflight-stage');
+      }
     }
   }
-  if (!db.one('SELECT player_id FROM roster_members WHERE player_id=?', player))
+  if (
+    !db.one('SELECT player_id FROM roster_members WHERE player_id=?', player)
+  ) {
     return m.phase === 'setup' ? actions : [];
+  }
   if (m.phase === 'outfitting') {
-    if (f.status === 'staged') actions.push('preflight-issue-code');
-    if (f.status === 'outfitting') actions.push('preflight-ready');
+    if (f.status === 'staged') {
+      actions.push('preflight-issue-code');
+    }
+    if (f.status === 'outfitting') {
+      actions.push('preflight-ready');
+    }
   }
   if (f.status === 'active') {
-    const controls = db.one<{ locked_until: number }>(
+    const controls = db.one<{locked_until: number}>(
       'SELECT locked_until FROM attack_controls WHERE player_id=?',
       player,
     )!;
@@ -66,11 +84,16 @@ export function allowedActions(e: Engine, player: string): Action[] {
       (m.phase !== 'hunt' || m.hunt_finalized !== null) &&
       controls.locked_until <= now &&
       !silent
-    )
+    ) {
       actions.push('sighting');
+    }
     if (m.phase === 'forest') {
-      if (p.broadcasts < 2) actions.push('broadcast');
-      if (p.tech && p.photons) actions.push('photon');
+      if (p.broadcasts < 2) {
+        actions.push('broadcast');
+      }
+      if (p.tech && p.photons) {
+        actions.push('photon');
+      }
     }
   }
   if (
@@ -80,9 +103,15 @@ export function allowedActions(e: Engine, player: string): Action[] {
     f.deadline !== null &&
     e.game() < Math.min(f.deadline, TIMES.apocalypse)
   ) {
-    if (f.status === 'returning') actions.push('return-confirm');
-    if (f.status === 'preparing') actions.push('issue-code');
-    if (f.status === 'issued') actions.push('launch');
+    if (f.status === 'returning') {
+      actions.push('return-confirm');
+    }
+    if (f.status === 'preparing') {
+      actions.push('issue-code');
+    }
+    if (f.status === 'issued') {
+      actions.push('launch');
+    }
   }
   return actions;
 }
@@ -97,14 +126,15 @@ export function playerAction(
   keys: Awaited<ReturnType<Engine['keys']>>,
 ): OperationResult {
   requireThat(actor.role === 'player', 'FORBIDDEN', '请使用参赛账号。', 403);
-  const action = path === '/player/nickname' ? 'nickname' : path.slice('/action/'.length);
-  const db = e.db,
-    now = e.now(),
-    game = e.game(now),
-    m = db.match(),
-    p = db.player(actor.id),
-    f = db.flight(actor.id),
-    home = db.home(actor.id);
+  const action =
+    path === '/player/nickname' ? 'nickname' : path.slice('/action/'.length);
+  const db = e.db;
+  const now = e.now();
+  const game = e.game(now);
+  const m = db.match();
+  const p = db.player(actor.id);
+  const f = db.flight(actor.id);
+  const home = db.home(actor.id);
   // Format validation precedes eligibility, rate accounting, and random penalties.
   if (action === 'sighting') {
     strict(raw, ['request_id', 'arm_a', 'arm_b']);
@@ -117,7 +147,9 @@ export function playerAction(
   } else if (action === 'nickname') {
     strict(raw, ['request_id', 'nickname']);
     nickname(raw.nickname);
-  } else strict(raw, ['request_id']);
+  } else {
+    strict(raw, ['request_id']);
+  }
   requireThat(
     allowedActions(e, actor.id).includes(action as Action),
     'ACTION_UNAVAILABLE',
@@ -133,7 +165,11 @@ export function playerAction(
         'NICKNAME_TAKEN',
         '这个昵称已被使用。',
       );
-      db.exec('UPDATE players SET nickname=? WHERE id=? AND nickname IS NULL', name, actor.id);
+      db.exec(
+        'UPDATE players SET nickname=? WHERE id=? AND nickname IS NULL',
+        name,
+        actor.id,
+      );
       result = completed(id, '昵称已确认');
       break;
     }
@@ -144,7 +180,11 @@ export function playerAction(
         actor.id,
         code,
       );
-      result = completed(id, '母星登记已提交', '请复制消息，附上时间水印照片后发送给裁判。');
+      result = completed(
+        id,
+        '母星登记已提交',
+        '请复制消息，附上时间水印照片后发送给裁判。',
+      );
       break;
     }
     case 'preflight-depart':
@@ -152,21 +192,35 @@ export function playerAction(
       result = completed(id, '已确认离开母星');
       break;
     case 'preflight-stage':
-      db.exec("UPDATE flights SET status='staged',staged=? WHERE player_id=?", now, actor.id);
+      db.exec(
+        "UPDATE flights SET status='staged',staged=? WHERE player_id=?",
+        now,
+        actor.id,
+      );
       result = completed(id, '准备完成', '等待统一发码。');
       break;
     case 'preflight-issue-code': {
       e.issue(actor.id, id, prepared);
-      db.exec("UPDATE flights SET status='outfitting' WHERE player_id=?", actor.id);
+      db.exec(
+        "UPDATE flights SET status='outfitting' WHERE player_id=?",
+        actor.id,
+      );
       result = completed(id, '配置已领取', '请在安全位置按图示佩戴手环。');
       break;
     }
     case 'preflight-ready':
-      db.exec("UPDATE flights SET status='ready',ready=? WHERE player_id=?", now, actor.id);
+      db.exec(
+        "UPDATE flights SET status='ready',ready=? WHERE player_id=?",
+        now,
+        actor.id,
+      );
       result = completed(id, '穿戴就绪', '等待统一开赛。');
       break;
     case 'return-confirm':
-      db.exec("UPDATE flights SET status='preparing' WHERE player_id=?", actor.id);
+      db.exec(
+        "UPDATE flights SET status='preparing' WHERE player_id=?",
+        actor.id,
+      );
       result = completed(id, '已确认返航', '离开母星50米后领取新配置。');
       break;
     case 'issue-code':
@@ -186,7 +240,10 @@ export function playerAction(
         'CODE_NOT_RESERVED',
         '请重新核对当前配置。',
       );
-      db.exec("UPDATE flights SET status='active',deadline=NULL WHERE player_id=?", actor.id);
+      db.exec(
+        "UPDATE flights SET status='active',deadline=NULL WHERE player_id=?",
+        actor.id,
+      );
       db.exec(
         "UPDATE scheduled_events SET status='cancelled' WHERE kind='respawn_timeout' AND status='pending' AND json_extract(payload,'$.player')=?",
         actor.id,
@@ -207,10 +264,14 @@ export function playerAction(
       break;
     }
     case 'withdraw': {
-      if (m.start_settled) eliminate(e, actor.id, 'withdrawn', eventId, game, now);
-      else {
+      if (m.start_settled) {
+        eliminate(e, actor.id, 'withdrawn', eventId, game, now);
+      } else {
         retire(e, actor.id, 'withdrawn', game, now);
-        db.exec("UPDATE players SET entry_status='withdrawn' WHERE id=?", actor.id);
+        db.exec(
+          "UPDATE players SET entry_status='withdrawn' WHERE id=?",
+          actor.id,
+        );
         db.exec('DELETE FROM roster_members WHERE player_id=?', actor.id);
       }
       result = completed(id, '已退出比赛');
@@ -225,21 +286,25 @@ export function playerAction(
         wrong: number;
         locked_until: number;
       }>('SELECT * FROM attack_controls WHERE player_id=?', actor.id)!;
-      const count = db.one<{ count: number }>(
+      const count = db.one<{count: number}>(
         'SELECT COUNT(*) AS count FROM attacks WHERE actor=? AND committed_utc>?',
         actor.id,
         now - 60_000,
       )!.count;
       requireThat(
-        (control.last_at === null || now - control.last_at >= params.sightingIntervalMs) &&
+        (control.last_at === null ||
+          now - control.last_at >= params.sightingIntervalMs) &&
           count < params.sightingsPerMinute,
         'SIGHTING_THROTTLED',
         '提交过于频繁，请稍后再试。',
         429,
       );
-      const key = normalizeArms(raw.arm_a, raw.arm_b),
-        attempted = keys.codes.find((c) => c.key === key)!;
-      const code = db.one<CodeRow>('SELECT * FROM sighting_codes WHERE mac=?', attempted.mac);
+      const key = normalizeArms(raw.arm_a, raw.arm_b);
+      const attempted = keys.codes.find(c => c.key === key)!;
+      const code = db.one<CodeRow>(
+        'SELECT * FROM sighting_codes WHERE mac=?',
+        attempted.mac,
+      );
       const before = {
         wrong: control.wrong,
         lockedUntil: control.locked_until,
@@ -256,9 +321,9 @@ export function playerAction(
             : code.status === 'reserved'
               ? 'reserved_code'
               : 'hit';
-      let roll: number | null = null,
-        wrong = control.wrong,
-        locked = control.locked_until;
+      let roll: number | null = null;
+      let wrong = control.wrong;
+      let locked = control.locked_until;
       let target: string | null = null;
       if (
         classification === 'retired_code' &&
@@ -273,12 +338,13 @@ export function playerAction(
           "SELECT id FROM attacks WHERE code_id=? AND classification='hit' AND valid=1",
           code.id,
         )
-      )
+      ) {
         classification = 'lost_race';
+      }
       if (classification === 'hit' && code) {
         target = code.player_id;
-        const targetFlight = db.flight(target),
-          targetHome = db.home(target);
+        const targetFlight = db.flight(target);
+        const targetHome = db.home(target);
         requireThat(
           targetFlight.status === 'active' &&
             targetFlight.code_id === code.id &&
@@ -311,17 +377,19 @@ export function playerAction(
           'TARGET_STATE_CONFLICT',
           '请稍后重试。',
         );
-        if (canRespawn)
+        if (canRespawn) {
           e.schedule(
             `respawn:${target}:${code.id}`,
             'respawn_timeout',
             'game',
             game + params.respawnSeconds * 1000,
             1,
-            { player: target, deadline: game + params.respawnSeconds * 1000 },
+            {player: target, deadline: game + params.respawnSeconds * 1000},
           );
-        else eliminate(e, target, 'sighting', eventId, game, now);
-        if (targetHome)
+        } else {
+          eliminate(e, target, 'sighting', eventId, game, now);
+        }
+        if (targetHome) {
           db.exec(
             'INSERT OR IGNORE INTO intel_grants(id,owner,target,code,source,game_ms) VALUES(?,?,?,?,?,?)',
             `${eventId}:intel`,
@@ -331,6 +399,7 @@ export function playerAction(
             eventId,
             game,
           );
+        }
         logEvent(
           e,
           eventId,
@@ -355,18 +424,25 @@ export function playerAction(
         );
       } else if (['reserved_code', 'unknown_code'].includes(classification)) {
         wrong++;
-        if (wrong === 2) roll = uniformInt(100);
+        if (wrong === 2) {
+          roll = uniformInt(100);
+        }
         if (wrong >= 3 || (wrong === 2 && roll! < params.secondOutPercent)) {
-          if (home?.destroyed_game === null)
+          if (home?.destroyed_game === null) {
             db.exec(
               'UPDATE homeworlds SET destroyed_game=?,source=? WHERE player_id=?',
               game,
               eventId,
               actor.id,
             );
+          }
           eliminate(e, actor.id, 'wrong_attack_direct_out', eventId, game, now);
-        } else
-          locked = now + (wrong === 1 ? params.firstLockSeconds : params.secondLockSeconds) * 1000;
+        } else {
+          locked =
+            now +
+            (wrong === 1 ? params.firstLockSeconds : params.secondLockSeconds) *
+              1000;
+        }
       }
       db.exec(
         'UPDATE attack_controls SET wrong=?,locked_until=?,last_at=?,attempts=attempts+1 WHERE player_id=?',
@@ -396,13 +472,17 @@ export function playerAction(
       );
       const eliminated = db.flight(actor.id).status === 'eliminated';
       const mismatch = wrong > control.wrong;
-      const missedTitle = mismatch ? (eliminated ? '直接出局' : '禁止攻击') : '本次目击未产生击毁';
+      const missedTitle = mismatch
+        ? eliminated
+          ? '直接出局'
+          : '禁止攻击'
+        : '本次目击未产生击毁';
       const missedBody = mismatch
         ? eliminated
           ? `文明${e.identity(actor.id)}，本次提交的手环颜色有误，你已永久淘汰。\n请在安全位置摘下全部比赛手环，返回中控室，查看官网上的宇宙观测开放时间。`
-          : `文明${e.identity(actor.id)}，本次提交的手环颜色有误。\n累计错误：${wrong}次。禁止目击攻击：${messageDuration((locked - now) / 1000)}。\n恢复攻击时间：${new Date(locked).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}。\n再次提交错误颜色的处罚：${wrong === 1 ? `${params.secondOutPercent}%概率永久淘汰，${100 - params.secondOutPercent}%概率禁止目击攻击${messageDuration(params.secondLockSeconds)}` : '永久淘汰'}。`
+          : `文明${e.identity(actor.id)}，本次提交的手环颜色有误。\n累计错误：${wrong}次。禁止目击攻击：${messageDuration((locked - now) / 1000)}。\n恢复攻击时间：${new Date(locked).toLocaleTimeString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false})}。\n再次提交错误颜色的处罚：${wrong === 1 ? `${params.secondOutPercent}%概率永久淘汰，${100 - params.secondOutPercent}%概率禁止目击攻击${messageDuration(params.secondLockSeconds)}` : '永久淘汰'}。`
         : '本次目击未产生击毁。';
-      if (!target)
+      if (!target) {
         logEvent(
           e,
           eventId,
@@ -415,7 +495,7 @@ export function playerAction(
           now,
           actor.id,
         );
-      else
+      } else {
         logEvent(
           e,
           `${eventId}:target`,
@@ -428,7 +508,8 @@ export function playerAction(
           now,
           target,
         );
-      if (control.attempts === 120)
+      }
+      if (control.attempts === 120) {
         e.notice(
           `sighting-threshold:${actor.id}`,
           'J01',
@@ -436,6 +517,7 @@ export function playerAction(
           `${e.identity(actor.id)}本场已提交121次目击，请复核。`,
           game,
         );
+      }
       const intel =
         target && db.home(target)
           ? {
@@ -458,8 +540,8 @@ export function playerAction(
             wrongCount: wrong,
             lockedUntilUtcMs: locked,
             eliminated,
-            ...(target ? { target } : {}),
-            ...(intel ? { intel } : {}),
+            ...(target ? {target} : {}),
+            ...(intel ? {intel} : {}),
           },
         },
       );
@@ -497,12 +579,16 @@ export function playerAction(
         songDue,
         songDue === null ? 'not_selected' : 'pending',
       );
-      db.exec('UPDATE players SET broadcasts=broadcasts+1 WHERE id=?', actor.id);
-      if (songDue !== null)
+      db.exec(
+        'UPDATE players SET broadcasts=broadcasts+1 WHERE id=?',
+        actor.id,
+      );
+      if (songDue !== null) {
         e.schedule(`song:${eventId}`, 'song_visit', 'game', songDue, 2, {
           code,
           broadcast: eventId,
         });
+      }
       const target = db.officialHome(code);
       if (target && home) {
         db.exec(
@@ -518,21 +604,38 @@ export function playerAction(
           eventId,
           target.player_id,
           '你被广播了',
-          reverseListeningCopy(e.identity(target.player_id), code, e.identity(actor.id), home.code),
+          reverseListeningCopy(
+            e.identity(target.player_id),
+            code,
+            e.identity(actor.id),
+            home.code,
+          ),
           game,
         );
       }
-      e.notice(eventId, 'group', '坐标广播', broadcastCopy(e.identity(actor.id), code), game);
+      e.notice(
+        eventId,
+        'group',
+        '坐标广播',
+        broadcastCopy(e.identity(actor.id), code),
+        game,
+      );
       result = completed(id, '广播已发布', `坐标${code}已暴露给全宇宙。`, {
-        outcome: { accepted: true, eventId, remaining: 1 - p.broadcasts },
+        outcome: {accepted: true, eventId, remaining: 1 - p.broadcasts},
       });
       break;
     }
     case 'photon': {
       const code = coordinate(raw.code);
       const target = db.officialHome(code, true);
-      const hit = target ? destroyHome(e, target.player_id, eventId, game, now) : false;
-      const body = clearingCopy('photon', code, hit ? e.identity(target!.player_id) : undefined);
+      const hit = target
+        ? destroyHome(e, target.player_id, eventId, game, now)
+        : false;
+      const body = clearingCopy(
+        'photon',
+        code,
+        hit ? e.identity(target!.player_id) : undefined,
+      );
       const title = hit ? '光粒命中' : '光粒清理';
       logEvent(
         e,
@@ -558,7 +661,7 @@ export function playerAction(
       db.exec('UPDATE players SET photons=0 WHERE id=?', actor.id);
       e.notice(eventId, 'group', title, body, game);
       result = completed(id, '光粒已发射', body, {
-        outcome: { accepted: true, eventId, remaining: 0 },
+        outcome: {accepted: true, eventId, remaining: 0},
       });
       autoFinish(e, game, now, eventId);
       break;
@@ -566,7 +669,7 @@ export function playerAction(
     default:
       throw new Fault(404, 'NOT_FOUND', '未找到这项操作。');
   }
-  e.audit(actor.id, path, actor.id, '玩家操作', { requestId: id });
+  e.audit(actor.id, path, actor.id, '玩家操作', {requestId: id});
   db.bump();
   result.revision = db.match().revision;
   return result;

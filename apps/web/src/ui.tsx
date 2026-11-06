@@ -1,13 +1,13 @@
+import {Button, CutOutline, Frame} from './components/cut_frame';
 import {
   useEffect,
   useId,
   useLayoutEffect,
   useRef,
   useState,
-  type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
-import { createPortal } from 'react-dom';
+import {createPortal} from 'react-dom';
 import {
   COLORS,
   FLIGHT_NAMES,
@@ -18,9 +18,11 @@ import {
   type ColorId,
   type GameEvent,
 } from '@darkforest/contracts';
-import { useApp, useClock } from './state';
-import { attackWarning } from './rule-text';
-import { moveBracelet } from './bracelets';
+import {useApp, useClock} from './state';
+import {attackWarning} from './rule_text';
+import {moveBracelet} from './bracelets';
+
+export {Button, CutOutline, Frame, notchPath} from './components/cut_frame';
 
 const paths: Record<string, ReactNode> = {
   current: (
@@ -96,7 +98,7 @@ const paths: Record<string, ReactNode> = {
   play: <path d="m7 3 14 9-14 9V3Z" />,
   logout: <path d="M9 4H3v16h6m6-13 5 5-5 5M8 12h12" />,
 };
-export function Icon({ name, size = 24 }: { name: string; size?: number }) {
+export function Icon({name, size = 24}: {name: string; size?: number}) {
   return (
     <svg
       width={size}
@@ -114,16 +116,18 @@ export function Icon({ name, size = 24 }: { name: string; size?: number }) {
   );
 }
 
-export type FeedbackMessage = {
+export interface FeedbackMessage {
   tone: 'error' | 'pending' | 'result';
   content: ReactNode;
   onClose?: () => void;
-};
-export function Feedback({ messages }: { messages: FeedbackMessage[] }) {
-  if (!messages.length) return null;
+}
+export function Feedback({messages}: {messages: FeedbackMessage[]}) {
+  if (!messages.length) {
+    return null;
+  }
   return createPortal(
     <div className="feedback-stack">
-      {messages.map(({ tone, content, onClose }, index) => (
+      {messages.map(({tone, content, onClose}, index) => (
         <div
           key={`${tone}:${index}`}
           className={`global-feedback ${tone}-feedback`}
@@ -131,12 +135,22 @@ export function Feedback({ messages }: { messages: FeedbackMessage[] }) {
           aria-atomic="true"
         >
           <Icon
-            name={tone === 'error' ? 'alert' : tone === 'pending' ? 'clock' : 'check'}
+            name={
+              tone === 'error'
+                ? 'alert'
+                : tone === 'pending'
+                  ? 'clock'
+                  : 'check'
+            }
             size={20}
           />
           <div>{content}</div>
           {onClose && (
-            <button className="icon-button" aria-label="关闭本次操作结果" onClick={onClose}>
+            <button
+              className="icon-button"
+              aria-label="关闭本次操作结果"
+              onClick={onClose}
+            >
               <Icon name="close" size={18} />
             </button>
           )}
@@ -147,64 +161,6 @@ export function Feedback({ messages }: { messages: FeedbackMessage[] }) {
   );
 }
 
-export function notchPath(width: number, height: number, cut: number, inset = 0.5): string {
-  return `M ${cut} ${inset} H ${width - inset} V ${height - cut} L ${width - cut} ${height - inset} H ${inset} V ${cut} Z`;
-}
-/** A closed stroked path draws BOTH diagonal edges; clip-path alone cannot. */
-export function CutOutline({ cut = 6 }: { cut?: number }) {
-  const ref = useRef<SVGSVGElement>(null);
-  const [size, setSize] = useState({ width: 1, height: 1 });
-  useLayoutEffect(() => {
-    const parent = ref.current?.parentElement;
-    if (!parent) return;
-    const update = () => {
-      const { width, height } = parent.getBoundingClientRect();
-      setSize({ width, height });
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(parent);
-    return () => observer.disconnect();
-  }, []);
-  return (
-    <svg ref={ref} className="cut-outline" width="100%" height="100%" aria-hidden="true">
-      <path className="cut-fill" d={notchPath(size.width, size.height, cut)} />
-      <path
-        className="cut-focus"
-        d={notchPath(size.width + 6, size.height + 6, cut + 2)}
-        transform="translate(-3 -3)"
-      />
-    </svg>
-  );
-}
-export function Frame({
-  children,
-  className = '',
-  cut = 10,
-}: {
-  children: ReactNode;
-  className?: string;
-  cut?: number;
-}) {
-  return (
-    <div className={`cut frame ${className}`}>
-      <CutOutline cut={cut} />
-      <div className="frame-content">{children}</div>
-    </div>
-  );
-}
-export function Button({
-  children,
-  className = '',
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button type="button" className={`cut button ${className}`} {...props}>
-      <CutOutline />
-      <span className="button-content">{children}</span>
-    </button>
-  );
-}
 export function ConfirmDialog({
   title,
   children,
@@ -228,8 +184,9 @@ export function ConfirmDialog({
     element.showModal();
     return () => {
       element.close();
-      if (trigger instanceof HTMLElement && trigger.isConnected)
-        trigger.focus({ preventScroll: true });
+      if (trigger instanceof HTMLElement && trigger.isConnected) {
+        trigger.focus({preventScroll: true});
+      }
     };
   }, []);
   return createPortal(
@@ -238,7 +195,7 @@ export function ConfirmDialog({
       className="confirmation-dialog"
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
-      onCancel={(event) => {
+      onCancel={event => {
         event.preventDefault();
         onCancel();
       }}
@@ -270,14 +227,20 @@ export function Link({
   className?: string;
   current?: boolean;
 }) {
-  const { go, base } = useApp();
+  const {go, base} = useApp();
   return (
     <a
       href={`${base}${to}`}
       aria-current={current ? 'page' : undefined}
       className={className}
-      onClick={(e) => {
-        if (e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      onClick={e => {
+        if (
+          e.button === 0 &&
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.shiftKey &&
+          !e.altKey
+        ) {
           e.preventDefault();
           go(to);
         }
@@ -372,7 +335,7 @@ export function CodeField({
         autoComplete="off"
         maxLength={6}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={e => onChange(e.target.value)}
         placeholder="000000"
         spellCheck={false}
       />
@@ -397,7 +360,7 @@ export function Timer({
   large?: boolean;
 }) {
   const now = useClock();
-  const { refresh } = useApp();
+  const {refresh} = useApp();
   const remaining = deadline - now[clock];
   const fired = useRef(false);
   useEffect(() => {
@@ -409,22 +372,26 @@ export function Timer({
   return (
     <div className={`timer ${large ? 'timer-large' : ''}`}>
       <span className="eyebrow">{label}</span>
-      <span className="numeric">{remaining <= 0 ? '正在更新' : formatTime(remaining)}</span>
+      <span className="numeric">
+        {remaining <= 0 ? '正在更新' : formatTime(remaining)}
+      </span>
     </div>
   );
 }
-export function MatchSummary({ compact = false }: { compact?: boolean }) {
-  const { data } = useApp();
+export function MatchSummary({compact = false}: {compact?: boolean}) {
+  const {data} = useApp();
   const now = useClock();
   const match = data.match;
-  if (!match) return null;
+  if (!match) {
+    return null;
+  }
   const elapsed = Math.min(RULES.regulationMs, Math.max(0, now.game));
   const ended = match.stage === 'ended';
   const stages = [
-    { id: 'forest', start: 0, end: RULES.apocalypseMs },
-    { id: 'apocalypse', start: RULES.apocalypseMs, end: RULES.transferMs },
-    { id: 'transfer', start: RULES.transferMs, end: RULES.cutoffMs },
-    { id: 'hunt', start: RULES.cutoffMs, end: RULES.regulationMs },
+    {id: 'forest', start: 0, end: RULES.apocalypseMs},
+    {id: 'apocalypse', start: RULES.apocalypseMs, end: RULES.transferMs},
+    {id: 'transfer', start: RULES.transferMs, end: RULES.cutoffMs},
+    {id: 'hunt', start: RULES.cutoffMs, end: RULES.regulationMs},
   ] as const;
   return (
     <div className={`match-block ${compact ? 'compact' : ''}`}>
@@ -448,7 +415,11 @@ export function MatchSummary({ compact = false }: { compact?: boolean }) {
           <span>
             赛程 <span className="numeric">120</span> 分钟
           </span>
-          <span>{ended ? '比赛已结束' : `剩余 ${formatTime(RULES.regulationMs - elapsed)}`}</span>
+          <span>
+            {ended
+              ? '比赛已结束'
+              : `剩余 ${formatTime(RULES.regulationMs - elapsed)}`}
+          </span>
         </div>
         <div
           className="timeline-track"
@@ -459,11 +430,13 @@ export function MatchSummary({ compact = false }: { compact?: boolean }) {
           aria-valuenow={Math.floor(elapsed / 60000)}
           aria-valuetext={`${STAGE_NAMES[match.stage]}，${ended ? '比赛已结束' : `剩余${formatTime(RULES.regulationMs - elapsed)}`}${match.paused ? '，已暂停' : ''}`}
         >
-          {stages.map((stage) => (
+          {stages.map(stage => (
             <span
               key={stage.id}
               className={`timeline-segment ${match.stage === stage.id && !ended ? 'current' : ''}`}
-              style={{ width: `${((stage.end - stage.start) / RULES.regulationMs) * 100}%` }}
+              style={{
+                width: `${((stage.end - stage.start) / RULES.regulationMs) * 100}%`,
+              }}
             >
               <span
                 className="timeline-elapsed"
@@ -475,14 +448,16 @@ export function MatchSummary({ compact = false }: { compact?: boolean }) {
           ))}
           <span
             className={`timeline-marker ${match.paused ? 'paused' : ''}`}
-            style={{ left: `${(elapsed / RULES.regulationMs) * 100}%` }}
+            style={{left: `${(elapsed / RULES.regulationMs) * 100}%`}}
           />
         </div>
         <div className="timeline-legend">
-          {stages.map((stage) => (
+          {stages.map(stage => (
             <span
               key={stage.id}
-              aria-current={match.stage === stage.id && !ended ? 'step' : undefined}
+              aria-current={
+                match.stage === stage.id && !ended ? 'step' : undefined
+              }
             >
               <span>{STAGE_NAMES[stage.id]}</span>
               <small className="numeric">
@@ -495,10 +470,16 @@ export function MatchSummary({ compact = false }: { compact?: boolean }) {
     </div>
   );
 }
-export function Status({ children, tone = '' }: { children: ReactNode; tone?: string }) {
+export function Status({
+  children,
+  tone = '',
+}: {
+  children: ReactNode;
+  tone?: string;
+}) {
   return <span className={`status ${tone}`}>{children}</span>;
 }
-export function Identity({ id, nickname }: { id: string; nickname: string }) {
+export function Identity({id, nickname}: {id: string; nickname: string}) {
   return (
     <div className="identity">
       <span className="numeric civilization-id">{id}</span>
@@ -507,9 +488,11 @@ export function Identity({ id, nickname }: { id: string; nickname: string }) {
   );
 }
 export function PlayerStatus() {
-  const { data } = useApp();
+  const {data} = useApp();
   const me = data.player;
-  const danger = me && ['eliminated', 'returning', 'preparing', 'issued'].includes(me.flight);
+  const danger =
+    me &&
+    ['eliminated', 'returning', 'preparing', 'issued'].includes(me.flight);
   const attention = me?.flight === 'active' && !me.homeAlive;
   return (
     me && (
@@ -519,20 +502,26 @@ export function PlayerStatus() {
     )
   );
 }
-export function MiniArms({ arms }: { arms: Arms | null }) {
-  const { data } = useApp();
-  if (!arms) return <span className="muted">暂无手环配置</span>;
+export function MiniArms({arms}: {arms: Arms | null}) {
+  const {data} = useApp();
+  if (!arms) {
+    return <span className="muted">暂无手环配置</span>;
+  }
   return (
     <div className="mini-arms" aria-label="两侧手环配置">
       {arms.map((arm, i) => (
-        <span className="mini-arm" key={i} aria-label={i ? '另一侧手臂' : '一侧手臂'}>
-          {COLORS.filter((c) => arm.includes(c.id)).map((c) => (
+        <span
+          className="mini-arm"
+          key={i}
+          aria-label={i ? '另一侧手臂' : '一侧手臂'}
+        >
+          {COLORS.filter(c => arm.includes(c.id)).map(c => (
             <span
               className="mini-band"
               key={c.id}
               title={c.name}
               aria-label={c.name}
-              style={{ backgroundColor: data.site.colors[c.id] }}
+              style={{backgroundColor: data.site.colors[c.id]}}
             />
           ))}
         </span>
@@ -540,7 +529,7 @@ export function MiniArms({ arms }: { arms: Arms | null }) {
     </div>
   );
 }
-function Hand({ mirror = false }: { mirror?: boolean }) {
+function Hand({mirror = false}: {mirror?: boolean}) {
   // Adapted from Tabler Icons hand-stop (MIT), with adjusted finger lengths and a forearm.
   // Source and license: docs/手部SVG参考与许可.md
   return (
@@ -552,7 +541,10 @@ function Hand({ mirror = false }: { mirror?: boolean }) {
           vectorEffect="non-scaling-stroke"
           d="M6.8 51.6C7.4 42 8.3 32 9 26C9.2 24 8.8 22.7 7.196 20.3C6.884 19.821 5.489 17.312 3.21 13.172A1.5 1.5 0 0 1 3.746 11.15A1.867 1.867 0 0 1 6.026 11.43L8 14.1L7.6 5.5a1.3 1.3 0 0 1 2.6 0L10.8 10.3Q11 10.8 11.2 10.3V3.5a1.3 1.3 0 0 1 2.6 0V10.2Q14 10.7 14.2 10.2L14.7 5.75a1.3 1.3 0 0 1 2.6 0L17.1 10.7Q17.2 11.2 17.4 10.7L17.8 7.75a1.15 1.15 0 0 1 2.3 0L20 16C20 19 18.8 20.5 18.8 23L19 26C19.7 32 20.6 42 21.2 51.6Z"
         />
-        <path className="hand-detail" d="M60 98C69 106 74 115 75 126M66 168Q90 173 114 168" />
+        <path
+          className="hand-detail"
+          d="M60 98C69 106 74 115 75 126M66 168Q90 173 114 168"
+        />
       </g>
     </svg>
   );
@@ -570,7 +562,7 @@ export function ArmsView({
   onSelect?: (arm: number) => void;
   onRemove?: (id: ColorId) => void;
 }) {
-  const { data, names } = useApp();
+  const {data, names} = useApp();
   return (
     <div className={`arms ${editable ? 'editable-arms' : 'readonly-arms'}`}>
       {arms.map((arm, index) => (
@@ -587,7 +579,9 @@ export function ArmsView({
               aria-pressed={selected === index}
             >
               <CutOutline cut={10} />
-              <span className="arm-title">{index ? '另一侧手臂' : '一侧手臂'}</span>
+              <span className="arm-title">
+                {index ? '另一侧手臂' : '一侧手臂'}
+              </span>
             </button>
           ) : (
             <div className="arm-title">{index ? '另一侧手臂' : '一侧手臂'}</div>
@@ -595,7 +589,7 @@ export function ArmsView({
           <div className="arm-figure">
             <Hand mirror={index === 1} />
             <div className="arm-bands">
-              {COLORS.filter((c) => arm.includes(c.id)).map((c) =>
+              {COLORS.filter(c => arm.includes(c.id)).map(c =>
                 editable ? (
                   <button
                     key={c.id}
@@ -607,7 +601,7 @@ export function ArmsView({
                     <span
                       data-swatch={c.id}
                       className="swatch"
-                      style={{ backgroundColor: data.site.colors[c.id] }}
+                      style={{backgroundColor: data.site.colors[c.id]}}
                     />
                     {names && <span className="band-name">{c.name}</span>}
                   </button>
@@ -615,7 +609,7 @@ export function ArmsView({
                   <div key={c.id} className="wrist-band">
                     <span
                       className="swatch"
-                      style={{ backgroundColor: data.site.colors[c.id] }}
+                      style={{backgroundColor: data.site.colors[c.id]}}
                       role="img"
                       aria-label={c.name}
                     />
@@ -641,7 +635,7 @@ export function CopyText({
   label?: string;
   onCopied?: () => void;
 }) {
-  const { source } = useApp();
+  const {source} = useApp();
   const [body, setBody] = useState(text ?? '');
   const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(false);
@@ -682,11 +676,17 @@ export function CopyText({
     </div>
   );
 }
-export function Events({ events, detailsPrefix }: { events: GameEvent[]; detailsPrefix?: string }) {
-  const { data, loadEarlierEvents } = useApp();
+export function Events({
+  events,
+  detailsPrefix,
+}: {
+  events: GameEvent[];
+  detailsPrefix?: string;
+}) {
+  const {data, loadEarlierEvents} = useApp();
   return events.length ? (
     <div className="event-list">
-      {events.map((event) => (
+      {events.map(event => (
         <article
           className={`event-row ${['photon', 'singer'].includes(event.kind) ? 'event-danger' : ''}`}
           key={event.id}
@@ -714,11 +714,15 @@ export function Events({ events, detailsPrefix }: { events: GameEvent[]; details
               <h3>{event.title}</h3>
             )}
             <p>{event.body}</p>
-            {event.code && <span className="numeric event-code">{event.code}</span>}
+            {event.code && (
+              <span className="numeric event-code">{event.code}</span>
+            )}
           </div>
           <time
             className="numeric"
-            title={new Date(event.utcMs).toLocaleString('zh-CN', { timeZone: data.site.timezone })}
+            title={new Date(event.utcMs).toLocaleString('zh-CN', {
+              timeZone: data.site.timezone,
+            })}
           >
             {formatTime(event.gameMs)}
           </time>
@@ -737,13 +741,13 @@ export function Tabs({
   active,
   onChange,
 }: {
-  tabs: { id: string; label: string; count?: number }[];
+  tabs: Array<{id: string; label: string; count?: number}>;
   active: string;
   onChange: (id: string) => void;
 }) {
   return (
     <div className="tabs" role="tablist">
-      {tabs.map((t) => (
+      {tabs.map(t => (
         <button
           type="button"
           role="tab"
@@ -758,7 +762,13 @@ export function Tabs({
     </div>
   );
 }
-export function Disclosure({ title, children }: { title: string; children: ReactNode }) {
+export function Disclosure({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
   return (
     <details className="disclosure">
       <summary>
@@ -792,47 +802,64 @@ export function ColorEditor() {
   const locked = busy || !!pending || !online;
   const valid = validArms(draft);
   const capturePositions = () => {
-    root.current?.querySelectorAll<HTMLElement>('[data-swatch]').forEach((element) => {
-      previous.current.set(element.dataset.swatch!, element.getBoundingClientRect());
-    });
+    root.current
+      ?.querySelectorAll<HTMLElement>('[data-swatch]')
+      .forEach(element => {
+        previous.current.set(
+          element.dataset.swatch!,
+          element.getBoundingClientRect(),
+        );
+      });
   };
   useEffect(() => {
     setSelectedArm(0);
-    root.current?.querySelector<HTMLElement>('.arm-select')?.focus({ preventScroll: true });
+    root.current
+      ?.querySelector<HTMLElement>('.arm-select')
+      ?.focus({preventScroll: true});
   }, [setSelectedArm]);
   useLayoutEffect(() => {
     const next = new Map<string, DOMRect>();
-    root.current?.querySelectorAll<HTMLElement>('[data-swatch]').forEach((element) => {
-      const key = element.dataset.swatch!;
-      const rect = element.getBoundingClientRect();
-      const old = previous.current.get(key);
-      if (old && !reduced && (old.x !== rect.x || old.y !== rect.y || old.width !== rect.width)) {
-        element.getAnimations().forEach((a) => a.cancel());
-        element.animate(
-          [
-            {
-              transform: `translate(${old.x - rect.x}px,${old.y - rect.y}px) scale(${old.width / rect.width},${old.height / rect.height})`,
-            },
-            { transform: 'none' },
-          ],
-          { duration: 300, easing: 'cubic-bezier(.22,1,.36,1)' },
-        );
-      }
-      next.set(key, rect);
-    });
+    root.current
+      ?.querySelectorAll<HTMLElement>('[data-swatch]')
+      .forEach(element => {
+        const key = element.dataset.swatch!;
+        const rect = element.getBoundingClientRect();
+        const old = previous.current.get(key);
+        if (
+          old &&
+          !reduced &&
+          (old.x !== rect.x || old.y !== rect.y || old.width !== rect.width)
+        ) {
+          element.getAnimations().forEach(a => a.cancel());
+          element.animate(
+            [
+              {
+                transform: `translate(${old.x - rect.x}px,${old.y - rect.y}px) scale(${old.width / rect.width},${old.height / rect.height})`,
+              },
+              {transform: 'none'},
+            ],
+            {duration: 300, easing: 'cubic-bezier(.22,1,.36,1)'},
+          );
+        }
+        next.set(key, rect);
+      });
     previous.current = next;
   }, [draft, reduced]);
   useEffect(() => {
     const settle = () => {
-      root.current?.querySelectorAll('[data-swatch], .palette-color').forEach((element) => {
-        element.getAnimations().forEach((animation) => animation.cancel());
-      });
+      root.current
+        ?.querySelectorAll('[data-swatch], .palette-color')
+        .forEach(element => {
+          element.getAnimations().forEach(animation => animation.cancel());
+        });
       previous.current.clear();
     };
     window.addEventListener('resize', settle);
     window.addEventListener('blur', settle);
     document.addEventListener('visibilitychange', settle);
-    if (reduced || locked) settle();
+    if (reduced || locked) {
+      settle();
+    }
     return () => {
       window.removeEventListener('resize', settle);
       window.removeEventListener('blur', settle);
@@ -840,29 +867,36 @@ export function ColorEditor() {
     };
   }, [reduced, locked]);
   const rejectPaletteColor = (id: ColorId) => {
-    const element = root.current?.querySelector<HTMLElement>(`.palette-color[data-color="${id}"]`);
-    if (!element) return;
-    element.getAnimations().forEach((animation) => animation.cancel());
-    const still = reduced || matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const element = root.current?.querySelector<HTMLElement>(
+      `.palette-color[data-color="${id}"]`,
+    );
+    if (!element) {
+      return;
+    }
+    element.getAnimations().forEach(animation => animation.cancel());
+    const still =
+      reduced || matchMedia('(prefers-reduced-motion: reduce)').matches;
     element.animate(
       still
         ? [
-            { boxShadow: 'inset 0 0 0 1px var(--attention)' },
-            { boxShadow: 'inset 0 0 0 1px transparent' },
+            {boxShadow: 'inset 0 0 0 1px var(--attention)'},
+            {boxShadow: 'inset 0 0 0 1px transparent'},
           ]
         : [
-            { transform: 'translateX(0)' },
-            { transform: 'translateX(-4px)' },
-            { transform: 'translateX(4px)' },
-            { transform: 'translateX(-3px)' },
-            { transform: 'translateX(3px)' },
-            { transform: 'translateX(0)' },
+            {transform: 'translateX(0)'},
+            {transform: 'translateX(-4px)'},
+            {transform: 'translateX(4px)'},
+            {transform: 'translateX(-3px)'},
+            {transform: 'translateX(3px)'},
+            {transform: 'translateX(0)'},
           ],
-      { duration: still ? 160 : 260, easing: 'ease-out' },
+      {duration: still ? 160 : 260, easing: 'ease-out'},
     );
   };
   const move = (id: ColorId, target: number | null) => {
-    if (locked) return;
+    if (locked) {
+      return;
+    }
     const result = moveBracelet(draftRef.current, id, target);
     if ('error' in result) {
       rejectPaletteColor(id);
@@ -870,23 +904,31 @@ export function ColorEditor() {
     }
     const next = result.arms;
     target = result.target;
-    if (target !== null) setSelectedArm(target);
-    const viewport = { x: window.scrollX, y: window.scrollY };
+    if (target !== null) {
+      setSelectedArm(target);
+    }
+    const viewport = {x: window.scrollX, y: window.scrollY};
     capturePositions();
     setDraft(next);
     requestAnimationFrame(() => {
       root.current
         ?.querySelector<HTMLElement>(`[data-color="${id}"]`)
-        ?.focus({ preventScroll: true });
+        ?.focus({preventScroll: true});
       // Reparenting the focused color must not scroll the player's input away.
       window.scrollTo(viewport.x, viewport.y);
     });
   };
   const click = (id: ColorId, remove = false) => {
-    if (locked) return;
-    if (remove) move(id, null);
-    else if (selectedArm === null) rejectPaletteColor(id);
-    else move(id, selectedArm);
+    if (locked) {
+      return;
+    }
+    if (remove) {
+      move(id, null);
+    } else if (selectedArm === null) {
+      rejectPaletteColor(id);
+    } else {
+      move(id, selectedArm);
+    }
   };
   useEffect(() => {
     if (locked) {
@@ -906,13 +948,13 @@ export function ColorEditor() {
         editable={!locked}
         selected={selectedArm}
         onSelect={setSelectedArm}
-        onRemove={(id) => click(id, true)}
+        onRemove={id => click(id, true)}
       />
       <p className="arm-caption">同侧顺序不限，两侧可以交换。</p>
       {!locked && (
         <>
           <div className="palette" aria-label="共享七色盘">
-            {COLORS.map((c) =>
+            {COLORS.map(c =>
               draft.flat().includes(c.id) ? (
                 <span key={c.id} className="palette-space" aria-hidden="true" />
               ) : (
@@ -927,7 +969,7 @@ export function ColorEditor() {
                   <span
                     className="swatch"
                     data-swatch={c.id}
-                    style={{ backgroundColor: data.site.colors[c.id] }}
+                    style={{backgroundColor: data.site.colors[c.id]}}
                   />
                   {names && <span className="color-name">{c.name}</span>}
                 </button>
@@ -940,14 +982,14 @@ export function ColorEditor() {
                 <button
                   className="text-button"
                   onClick={() => {
-                    const viewport = { x: window.scrollX, y: window.scrollY };
+                    const viewport = {x: window.scrollX, y: window.scrollY};
                     capturePositions();
                     setDraft([[], []]);
                     setSelectedArm(0);
                     requestAnimationFrame(() => {
                       root.current
                         ?.querySelector<HTMLElement>('.arm-select')
-                        ?.focus({ preventScroll: true });
+                        ?.focus({preventScroll: true});
                       window.scrollTo(viewport.x, viewport.y);
                     });
                   }}
@@ -960,7 +1002,9 @@ export function ColorEditor() {
         </>
       )}
       <div className="attack-commit">
-        <div className={`attack-consequence ${wrong > 0 ? 'consequence-danger' : ''}`}>
+        <div
+          className={`attack-consequence ${wrong > 0 ? 'consequence-danger' : ''}`}
+        >
           <p className="secondary">
             提交错误手环颜色的次数 <strong className="numeric">{wrong}</strong>
           </p>
@@ -978,7 +1022,7 @@ export function ColorEditor() {
         ) : (
           !locked && (
             <p className="confirm-hint">
-              {draft.every((a) => a.length)
+              {draft.every(a => a.length)
                 ? '两侧数量应为两条与一条、两条与两条，或三条与一条。'
                 : '请选完两侧手臂的颜色。'}
             </p>
@@ -994,13 +1038,16 @@ export function ColorEditor() {
             requestAnimationFrame(() =>
               root.current
                 ?.querySelector<HTMLElement>('.attack-submit')
-                ?.focus({ preventScroll: true }),
+                ?.focus({preventScroll: true}),
             );
           }}
           onConfirm={async () => {
             const arms = confirmation;
             setConfirmation(null);
-            const response = await operate('/action/sighting', { arm_a: arms[0], arm_b: arms[1] });
+            const response = await operate('/action/sighting', {
+              arm_a: arms[0],
+              arm_b: arms[1],
+            });
             if (response?.status === 'complete') {
               setDraft([[], []]);
               setSelectedArm(0);
@@ -1024,7 +1071,7 @@ function AttackConfirmation({
   onConfirm: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const { data, names } = useApp();
+  const {data, names} = useApp();
   useEffect(() => {
     const element = dialog.current!;
     element.showModal();
@@ -1035,7 +1082,7 @@ function AttackConfirmation({
       ref={dialog}
       className="attack-dialog"
       aria-labelledby="attack-confirm-title"
-      onCancel={(event) => {
+      onCancel={event => {
         event.preventDefault();
         onCancel();
       }}
@@ -1046,11 +1093,11 @@ function AttackConfirmation({
           <div className="confirmation-arm" key={index}>
             <span>{index ? '另一侧手臂' : '一侧手臂'}</span>
             <div>
-              {COLORS.filter((color) => arm.includes(color.id)).map((color) => (
+              {COLORS.filter(color => arm.includes(color.id)).map(color => (
                 <span key={color.id}>
                   <span
                     className="mini-band"
-                    style={{ backgroundColor: data.site.colors[color.id] }}
+                    style={{backgroundColor: data.site.colors[color.id]}}
                     role="img"
                     aria-label={color.name}
                   />
@@ -1060,7 +1107,9 @@ function AttackConfirmation({
             </div>
           </div>
         ))}
-        <p className="secondary">请确认这是你在现场亲眼观察到的对手两臂完整手环颜色。</p>
+        <p className="secondary">
+          请确认这是你在现场亲眼观察到的对手两臂完整手环颜色。
+        </p>
         <p className="attention">{attackWarning(wrong, data.parameters)}</p>
         <div className="confirmation-actions">
           <Button autoFocus onClick={onCancel}>

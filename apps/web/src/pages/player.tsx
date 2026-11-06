@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import {useEffect, useState, type ReactNode} from 'react';
 import {
   COLORS,
   FLIGHT_NAMES,
@@ -6,16 +6,17 @@ import {
   STAGE_NAMES,
   validCode,
   type Action,
+  type HomeworldSubmission,
 } from '@darkforest/contracts';
-import { useApp } from '../state';
-import { DEFAULT_PARAMETERS, duration } from '../rule-text';
-import { canAct } from '../permissions';
-import { MatchLinks } from '../components/match-context';
-import { personalMessage } from '../data/messages';
+import {useApp} from '../state';
+import {DEFAULT_PARAMETERS, duration} from '../rule_text';
+import {canAct} from '../permissions';
+import {MatchLinks} from '../components/match_context';
+import {personalMessage} from '../data/messages';
 import {
   dimensionCopy,
   OBSERVER_AGREEMENT_COPY,
-} from '../../../../packages/contracts/src/message-copy';
+} from '../../../../packages/contracts/src/message_copy';
 import {
   ArmsView,
   Button,
@@ -42,24 +43,32 @@ import {
 } from '../ui';
 
 function LockedAction() {
-  const { data } = useApp();
+  const {data} = useApp();
   const me = data.player;
   const match = data.match;
   let reason = '当前没有可以执行的比赛行动。';
-  if (match?.stage === 'ended') reason = '比赛已结束，可以查看正式结果和完整复盘。';
-  else if (me?.flight === 'eliminated')
+  if (match?.stage === 'ended') {
+    reason = '比赛已结束，可以查看正式结果和完整复盘。';
+  } else if (me?.flight === 'eliminated') {
     reason = '你已永久淘汰，请在安全位置摘下全部比赛手环，步行返回中控室。';
-  else if (['returning', 'preparing', 'issued'].includes(me?.flight ?? ''))
+  } else if (['returning', 'preparing', 'issued'].includes(me?.flight ?? '')) {
     reason = '飞船已被击毁，请继续完成当前重生步骤。';
-  else if (match?.verification) reason = '终局资格确认中，请保持QQ群位置共享，等待裁判完成核验。';
-  else if (match?.paused) reason = `比赛已暂停。${match.pauseReason}`;
-  else if (match?.stage === 'transfer')
-    reason = '已进入转场，目击攻击暂停。请加入QQ群位置共享，正常步行前往终局圈。';
-  else if (me?.attackLockedUntil && me.attackLockedUntil > (match?.serverUtcMs ?? 0))
+  } else if (match?.verification) {
+    reason = '终局资格确认中，请保持QQ群位置共享，等待裁判完成核验。';
+  } else if (match?.paused) {
+    reason = `比赛已暂停。${match.pauseReason}`;
+  } else if (match?.stage === 'transfer') {
+    reason =
+      '已进入转场，目击攻击暂停。请加入QQ群位置共享，正常步行前往终局圈。';
+  } else if (
+    me?.attackLockedUntil &&
+    me.attackLockedUntil > (match?.serverUtcMs ?? 0)
+  ) {
     reason = '暂时禁止目击攻击，请查看恢复时间。';
+  }
   return <Empty title="查看当前任务">{reason}</Empty>;
 }
-function TaskButton({ to, children }: { to: string; children: ReactNode }) {
+function TaskButton({to, children}: {to: string; children: ReactNode}) {
   return (
     <Link className="task-button cut" to={to}>
       <span>{children}</span>
@@ -69,14 +78,16 @@ function TaskButton({ to, children }: { to: string; children: ReactNode }) {
   );
 }
 function Current() {
-  const { data } = useApp();
+  const {data} = useApp();
   const me = data.player!;
   const match = data.match!;
-  let title = '飞船保持正常出航',
-    body = '亲眼观察其他飞船两臂的完整颜色分组，提交目击攻击。',
-    to = '/player/actions',
-    action = '前往行动';
-  let countdown: ReactNode = <Timer label="距离宇宙末日" deadline={RULES.apocalypseMs} large />;
+  let title = '飞船保持正常出航';
+  let body = '亲眼观察其他飞船两臂的完整颜色分组，提交目击攻击。';
+  let to = '/player/actions';
+  let action = '前往行动';
+  let countdown: ReactNode = (
+    <Timer label="距离宇宙末日" deadline={RULES.apocalypseMs} large />
+  );
   if (match.stage === 'ended') {
     title = '本场比赛已经结束';
     body = '正式结果与完整战报已开放，所有本场参赛者均可复盘。';
@@ -94,7 +105,10 @@ function Current() {
         <Timer
           label="距离开放宇宙观测"
           clock="utc"
-          deadline={me.eliminatedAt + (data.parameters?.observerWaitSeconds ?? 180) * 1000}
+          deadline={
+            me.eliminatedAt +
+            (data.parameters?.observerWaitSeconds ?? 180) * 1000
+          }
           large
         />
       ) : null;
@@ -106,8 +120,12 @@ function Current() {
     body = '请在安全位置摘下全部比赛手环，正常步行返回母星，在截止前完成重生。';
     to = '/player/respawn';
     action = '继续重生';
-    countdown = <Timer label="距离重生截止" deadline={me.respawnDeadline} large />;
-  } else if (['nickname', 'unregistered', 'pending', 'rejected'].includes(me.flight)) {
+    countdown = (
+      <Timer label="距离重生截止" deadline={me.respawnDeadline} large />
+    );
+  } else if (
+    ['nickname', 'unregistered', 'pending', 'rejected'].includes(me.flight)
+  ) {
     title =
       me.flight === 'nickname'
         ? '为你的文明命名'
@@ -128,7 +146,11 @@ function Current() {
           ? '查看登记情况'
           : '登记母星';
     countdown = null;
-  } else if (['verified', 'departed', 'staged', 'outfitting', 'ready'].includes(me.flight)) {
+  } else if (
+    ['verified', 'departed', 'staged', 'outfitting', 'ready'].includes(
+      me.flight,
+    )
+  ) {
     title = FLIGHT_NAMES[me.flight];
     body =
       me.flight === 'ready'
@@ -138,7 +160,12 @@ function Current() {
     action = me.flight === 'ready' ? '查看准备情况' : '继续首航准备';
     countdown =
       me.flight === 'ready' && match.startAt ? (
-        <Timer label="距离正式开赛" clock="utc" deadline={match.startAt} large />
+        <Timer
+          label="距离正式开赛"
+          clock="utc"
+          deadline={match.startAt}
+          large
+        />
       ) : me.flight === 'staged' && match.releaseAt ? (
         <Timer label="距离发码" clock="utc" deadline={match.releaseAt} large />
       ) : null;
@@ -156,21 +183,31 @@ function Current() {
     countdown = null;
   } else if (match.stage === 'transfer') {
     title = '步行前往终局圈';
-    body = '加入比赛QQ群的实时位置共享。查看QQ群文件中的终局圈图片，使用手机高德地图前往。';
+    body =
+      '加入比赛QQ群的实时位置共享。查看QQ群文件中的终局圈图片，使用手机高德地图前往。';
     to = '/player/endgame';
     action = '查看终局要求';
-    countdown = <Timer label="距离终局资格截止" deadline={RULES.cutoffMs} large />;
+    countdown = (
+      <Timer label="距离终局资格截止" deadline={RULES.cutoffMs} large />
+    );
   } else if (match.stage === 'hunt') {
     title = '最后狩猎已开始';
     body = '请持续共享位置，在终局圈内正常步行，亲眼观察后提交目击攻击。';
     action = '目击攻击';
-    countdown = <Timer label="比赛剩余有效时间" deadline={RULES.regulationMs} large />;
+    countdown = (
+      <Timer label="比赛剩余有效时间" deadline={RULES.regulationMs} large />
+    );
   } else if (me.attackLockedUntil > match.serverUtcMs) {
     title = '暂时禁止目击攻击';
     body = '本次提交的手环颜色有误，暂时禁止目击攻击。';
     action = '查看其他行动';
     countdown = (
-      <Timer label="距离恢复目击攻击" clock="utc" deadline={me.attackLockedUntil} large />
+      <Timer
+        label="距离恢复目击攻击"
+        clock="utc"
+        deadline={me.attackLockedUntil}
+        large
+      />
     );
   } else if (!me.homeAlive) {
     title = '母星已毁灭，最后一命';
@@ -202,7 +239,9 @@ function Current() {
           查看消息
           <Icon name="arrow" size={18} />
         </Link>
-        <Link to={me.flight === 'active' ? '/player/bracelets' : '/player/help'}>
+        <Link
+          to={me.flight === 'active' ? '/player/bracelets' : '/player/help'}
+        >
           {me.flight === 'active' ? '本航次手环' : '联系裁判'}
           <Icon name="arrow" size={18} />
         </Link>
@@ -219,7 +258,7 @@ function Current() {
   );
 }
 function IdentityPage() {
-  const { data, operate, busy, go } = useApp();
+  const {data, operate, busy, go} = useApp();
   const me = data.player!;
   const [value, setValue] = useState('');
   const trimmed = value.trim();
@@ -240,7 +279,7 @@ function IdentityPage() {
             <input
               value={value}
               maxLength={8}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={e => setValue(e.target.value)}
               autoComplete="off"
               placeholder="为文明命名"
             />
@@ -254,8 +293,12 @@ function IdentityPage() {
                 className="primary full"
                 disabled={busy}
                 onClick={async () => {
-                  const r = await operate('/player/nickname', { nickname: trimmed });
-                  if (r?.status === 'complete') go('/player/homeworld');
+                  const r = await operate('/player/nickname', {
+                    nickname: trimmed,
+                  });
+                  if (r?.status === 'complete') {
+                    go('/player/homeworld');
+                  }
                 }}
               >
                 确认昵称
@@ -269,7 +312,7 @@ function IdentityPage() {
   );
 }
 function Homeworld() {
-  const { data, operate, busy } = useApp();
+  const {data, operate, busy} = useApp();
   const me = data.player!;
   const [value, setValue] = useState(me.homeworld ?? '');
   const [editing, setEditing] = useState(false);
@@ -282,11 +325,13 @@ function Homeworld() {
       {editable ? (
         <form
           className="form-stack"
-          onSubmit={(e) => {
+          onSubmit={e => {
             e.preventDefault();
           }}
         >
-          <p className="secondary">选择你的秘密母星，填写高德地图生成的六位位置口令。</p>
+          <p className="secondary">
+            选择你的秘密母星，填写高德地图生成的六位位置口令。
+          </p>
           <CodeField value={value} onChange={setValue} />
           {validCode(value) && (
             <Button
@@ -295,8 +340,10 @@ function Homeworld() {
               onClick={async () => {
                 const r = await operate('/action/homeworld-submit', {
                   code: value,
-                } satisfies import('@darkforest/contracts').HomeworldSubmission);
-                if (r?.status === 'complete') setEditing(false);
+                } satisfies HomeworldSubmission);
+                if (r?.status === 'complete') {
+                  setEditing(false);
+                }
               }}
             >
               保存母星口令
@@ -320,10 +367,15 @@ function Homeworld() {
           {pending && (
             <>
               <h2>发送QQ登记材料</h2>
-              <p>请复制下方登记消息，发到裁判QQ私聊，并附上母星现场时间水印照片。</p>
+              <p>
+                请复制下方登记消息，发到裁判QQ私聊，并附上母星现场时间水印照片。
+              </p>
               <CopyText kind="homeworld" label="复制登记消息" />
               {canAct(data, 'homeworld-submit') && (
-                <button className="text-button" onClick={() => setEditing(true)}>
+                <button
+                  className="text-button"
+                  onClick={() => setEditing(true)}
+                >
                   修改并重新提交口令
                 </button>
               )}
@@ -337,7 +389,7 @@ function Homeworld() {
   );
 }
 function Preflight() {
-  const { data, operate, busy } = useApp();
+  const {data, operate, busy} = useApp();
   const me = data.player!;
   const match = data.match!;
   const [checked, setChecked] = useState(false);
@@ -354,7 +406,7 @@ function Preflight() {
             <input
               type="checkbox"
               checked={checked}
-              onChange={(e) => setChecked(e.target.checked)}
+              onChange={e => setChecked(e.target.checked)}
             />
             我已离开母星至少50米
           </label>
@@ -375,9 +427,12 @@ function Preflight() {
         <>
           <h2>核对七种手环</h2>
           <div className="material-colors">
-            {COLORS.map((c) => (
+            {COLORS.map(c => (
               <span key={c.id}>
-                <span className="mini-band" style={{ backgroundColor: data.site.colors[c.id] }} />
+                <span
+                  className="mini-band"
+                  style={{backgroundColor: data.site.colors[c.id]}}
+                />
                 {c.name}
               </span>
             ))}
@@ -387,7 +442,7 @@ function Preflight() {
             <input
               type="checkbox"
               checked={checked}
-              onChange={(e) => setChecked(e.target.checked)}
+              onChange={e => setChecked(e.target.checked)}
             />
             七种手环已齐备
           </label>
@@ -418,7 +473,9 @@ function Preflight() {
         <>
           <h2>需要佩戴的手环</h2>
           <ArmsView arms={me.arms} />
-          <p>请按图示佩戴手环，其余手环收入口袋。同侧顺序不限，两侧可以交换。</p>
+          <p>
+            请按图示佩戴手环，其余手环收入口袋。同侧顺序不限，两侧可以交换。
+          </p>
           {canAct(data, 'preflight-ready') && (
             <Button
               className="primary full"
@@ -434,7 +491,12 @@ function Preflight() {
         <>
           <h2>准备已完成</h2>
           {match.releaseAt ? (
-            <Timer label="距离发码" clock="utc" deadline={match.releaseAt} large />
+            <Timer
+              label="距离发码"
+              clock="utc"
+              deadline={match.releaseAt}
+              large
+            />
           ) : (
             <p>等待裁判安排发码。</p>
           )}
@@ -443,7 +505,12 @@ function Preflight() {
         <>
           <h2>已穿戴就绪</h2>
           {match.startAt ? (
-            <Timer label="距离正式开赛" clock="utc" deadline={match.startAt} large />
+            <Timer
+              label="距离正式开赛"
+              clock="utc"
+              deadline={match.startAt}
+              large
+            />
           ) : (
             <p>等待裁判安排开赛。</p>
           )}
@@ -465,16 +532,20 @@ function Preflight() {
   );
 }
 function Respawn() {
-  const { data, operate, busy, go } = useApp();
+  const {data, operate, busy, go} = useApp();
   const me = data.player!;
   const [checked, setChecked] = useState(false);
-  if (!me.respawnDeadline || !['returning', 'preparing', 'issued'].includes(me.flight))
+  if (
+    !me.respawnDeadline ||
+    !['returning', 'preparing', 'issued'].includes(me.flight)
+  ) {
     return (
       <>
         <PageTitle title="重生" back="/player" />
         <LockedAction />
       </>
     );
+  }
   return (
     <>
       <PageTitle title="重生" back="/player" />
@@ -487,7 +558,9 @@ function Respawn() {
       ) : me.flight === 'returning' ? (
         <>
           <h2>返回母星，发送现场照片</h2>
-          <p>请正常步行返回母星，拍摄当前时间水印照片。复制本航次消息，到裁判QQ发送文字和照片。</p>
+          <p>
+            请正常步行返回母星，拍摄当前时间水印照片。复制本航次消息，到裁判QQ发送文字和照片。
+          </p>
           <Disclosure title="查看本人母星口令">
             <p className="secret-code numeric">{me.homeworld}</p>
           </Disclosure>
@@ -496,7 +569,7 @@ function Respawn() {
             <input
               type="checkbox"
               checked={checked}
-              onChange={(e) => setChecked(e.target.checked)}
+              onChange={e => setChecked(e.target.checked)}
             />
             我已在QQ发送本次现场照片
           </label>
@@ -514,12 +587,14 @@ function Respawn() {
       ) : me.flight === 'preparing' ? (
         <>
           <h2>离开母星至少50米</h2>
-          <p>继续保持全部手环未佩戴，正常步行离开母星。之后领取全新的两臂配置。</p>
+          <p>
+            继续保持全部手环未佩戴，正常步行离开母星。之后领取全新的两臂配置。
+          </p>
           <label className="check-label large">
             <input
               type="checkbox"
               checked={checked}
-              onChange={(e) => setChecked(e.target.checked)}
+              onChange={e => setChecked(e.target.checked)}
             />
             我已离开母星至少50米
           </label>
@@ -538,14 +613,18 @@ function Respawn() {
           <>
             <h2>需要佩戴的手环</h2>
             <ArmsView arms={me.arms} />
-            <p>请在安全位置按图示佩戴，其余手环收入衣袋。同侧顺序不限，两侧可以交换。</p>
+            <p>
+              请在安全位置按图示佩戴，其余手环收入衣袋。同侧顺序不限，两侧可以交换。
+            </p>
             {canAct(data, 'launch') && (
               <Button
                 className="primary full"
                 disabled={busy}
                 onClick={async () => {
                   const r = await operate('/action/launch');
-                  if (r?.status === 'complete') go('/player');
+                  if (r?.status === 'complete') {
+                    go('/player');
+                  }
                 }}
               >
                 完成出航
@@ -556,13 +635,17 @@ function Respawn() {
         )
       )}
       {me.attackLockedUntil > (data.match?.serverUtcMs ?? 0) && (
-        <Timer label="距离恢复目击攻击" clock="utc" deadline={me.attackLockedUntil} />
+        <Timer
+          label="距离恢复目击攻击"
+          clock="utc"
+          deadline={me.attackLockedUntil}
+        />
       )}
     </>
   );
 }
-function Actions({ sightingOnly = false }: { sightingOnly?: boolean }) {
-  const { data } = useApp();
+function Actions({sightingOnly = false}: {sightingOnly?: boolean}) {
+  const {data} = useApp();
   const sighting = canAct(data, 'sighting');
   return (
     <>
@@ -592,8 +675,8 @@ function Actions({ sightingOnly = false }: { sightingOnly?: boolean }) {
     </>
   );
 }
-function ResourceAction({ action }: { action: 'broadcast' | 'photon' }) {
-  const { data } = useApp();
+function ResourceAction({action}: {action: 'broadcast' | 'photon'}) {
+  const {data} = useApp();
   const me = data.player!;
   const available = canAct(data, action);
   const content = (
@@ -626,13 +709,16 @@ function ResourceAction({ action }: { action: 'broadcast' | 'photon' }) {
     </div>
   );
 }
-function CoordinateAction({ action }: { action: 'broadcast' | 'photon' }) {
-  const { data, operate, busy, pending } = useApp();
-  const [value, setValue] = useState(new URLSearchParams(location.search).get('code') ?? '');
+function CoordinateAction({action}: {action: 'broadcast' | 'photon'}) {
+  const {data, operate, busy, pending} = useApp();
+  const [value, setValue] = useState(
+    new URLSearchParams(location.search).get('code') ?? '',
+  );
   const [done, setDone] = useState(false);
   const title = action === 'broadcast' ? '发送广播' : '发射光粒';
   const duplicate =
-    action === 'broadcast' && data.events.some((e) => e.kind === 'broadcast' && e.code === value);
+    action === 'broadcast' &&
+    data.events.some(e => e.kind === 'broadcast' && e.code === value);
   return (
     <>
       <PageTitle title={title} back="/player/actions" />
@@ -651,11 +737,17 @@ function CoordinateAction({ action }: { action: 'broadcast' | 'photon' }) {
             <p>
               {action === 'broadcast' ? '剩余广播次数' : '可用光粒'}
               <strong className="numeric">
-                {action === 'broadcast' ? data.player!.broadcasts : data.player!.photons}
+                {action === 'broadcast'
+                  ? data.player!.broadcasts
+                  : data.player!.photons}
               </strong>
             </p>
           </div>
-          <CodeField value={value} onChange={setValue} label="本次提交的六位口令" />
+          <CodeField
+            value={value}
+            onChange={setValue}
+            label="本次提交的六位口令"
+          />
           <p className="notice-block">
             {action === 'broadcast'
               ? '广播将公开这组六位口令，并消耗1次广播次数。若它对应某个文明的母星，该文明会获得你的母星口令。'
@@ -670,8 +762,10 @@ function CoordinateAction({ action }: { action: 'broadcast' | 'photon' }) {
                   className="primary full"
                   disabled={busy || !!pending}
                   onClick={async () => {
-                    const r = await operate(`/action/${action}`, { code: value });
-                    if (r?.status === 'complete') setDone(true);
+                    const r = await operate(`/action/${action}`, {code: value});
+                    if (r?.status === 'complete') {
+                      setDone(true);
+                    }
                   }}
                 >
                   {action === 'broadcast' ? '确认广播' : '发射光粒'}
@@ -686,7 +780,7 @@ function CoordinateAction({ action }: { action: 'broadcast' | 'photon' }) {
   );
 }
 function Endgame() {
-  const { data } = useApp();
+  const {data} = useApp();
   const match = data.match!;
   return (
     <>
@@ -707,11 +801,15 @@ function Endgame() {
         </li>
         <li>
           <h2>正常步行进入终局圈</h2>
-          <p>请查看QQ群文件中的{data.site.endgameFile}，并使用手机高德地图前往。</p>
+          <p>
+            请查看QQ群文件中的{data.site.endgameFile}，并使用手机高德地图前往。
+          </p>
         </li>
         <li>
           <h2>98:00前到达并持续共享</h2>
-          <p>请在比赛时间98:00前进入终局圈，并持续共享位置，等待裁判核验资格。</p>
+          <p>
+            请在比赛时间98:00前进入终局圈，并持续共享位置，等待裁判核验资格。
+          </p>
         </li>
       </ol>
       <p className="notice-block">
@@ -721,15 +819,16 @@ function Endgame() {
   );
 }
 function Eliminated() {
-  const { data } = useApp();
+  const {data} = useApp();
   const me = data.player!;
-  if (me.flight !== 'eliminated')
+  if (me.flight !== 'eliminated') {
     return (
       <>
         <PageTitle title="淘汰后安排" back="/player" />
         <Empty title="你当前没有淘汰安排" />
       </>
     );
+  }
   return (
     <>
       <PageTitle title="淘汰后安排" back="/player" />
@@ -741,7 +840,9 @@ function Eliminated() {
       {me.eliminatedAt && (
         <p className="secondary">
           淘汰生效时间：
-          {new Date(me.eliminatedAt).toLocaleTimeString('zh-CN', { timeZone: data.site.timezone })}
+          {new Date(me.eliminatedAt).toLocaleTimeString('zh-CN', {
+            timeZone: data.site.timezone,
+          })}
         </p>
       )}
       {me.observerAllowed ? (
@@ -754,7 +855,10 @@ function Eliminated() {
           <Timer
             label="距离开放宇宙观测"
             clock="utc"
-            deadline={me.eliminatedAt + (data.parameters?.observerWaitSeconds ?? 180) * 1000}
+            deadline={
+              me.eliminatedAt +
+              (data.parameters?.observerWaitSeconds ?? 180) * 1000
+            }
             large
           />
         )
@@ -767,35 +871,56 @@ function Eliminated() {
   );
 }
 function Messages() {
-  const { data, route, markRead } = useApp();
+  const {data, route, markRead} = useApp();
   const [tab, setTab] = useState('personal');
   const detailId = route.split('/')[3];
-  const event = data.events.find((e) => e.id === detailId);
+  const event = data.events.find(e => e.id === detailId);
   useEffect(() => {
-    if (event) markRead(event.id);
-    else if (!detailId && tab === 'personal')
+    if (event) {
+      markRead(event.id);
+    } else if (!detailId && tab === 'personal') {
       data.events
-        .filter((item) => personalMessage(item, data.player?.id ?? data.session?.id))
-        .forEach((item) => markRead(item.id));
-  }, [event, detailId, tab, data.events, data.player?.id, data.session?.id, markRead]);
-  if (detailId)
+        .filter(item =>
+          personalMessage(item, data.player?.id ?? data.session?.id),
+        )
+        .forEach(item => markRead(item.id));
+    }
+  }, [
+    event,
+    detailId,
+    tab,
+    data.events,
+    data.player?.id,
+    data.session?.id,
+    markRead,
+  ]);
+  if (detailId) {
     return (
       <>
         <PageTitle title="消息详情" back="/player/messages" />
         {event ? (
           <>
-            <Status>{event.audience === 'personal' ? '本人消息' : '公开事件'}</Status>
+            <Status>
+              {event.audience === 'personal' ? '本人消息' : '公开事件'}
+            </Status>
             <h2>{event.title}</h2>
             <p className="message-body">{event.body}</p>
             {event.code && <p className="secret-code numeric">{event.code}</p>}
-            <p className="secondary">发生于比赛时间{formatTime(event.gameMs)}</p>
+            <p className="secondary">
+              发生于比赛时间{formatTime(event.gameMs)}
+            </p>
           </>
         ) : (
-          <Empty title="消息不存在或无查看权限" to="/player/messages" action="返回消息" />
+          <Empty
+            title="消息不存在或无查看权限"
+            to="/player/messages"
+            action="返回消息"
+          />
         )}
       </>
     );
-  const events = data.events.filter((e) =>
+  }
+  const events = data.events.filter(e =>
     tab === 'personal'
       ? personalMessage(e, data.player?.id ?? data.session?.id)
       : tab === 'broadcast'
@@ -811,9 +936,9 @@ function Messages() {
       </Link>
       <Tabs
         tabs={[
-          { id: 'personal', label: '本人消息' },
-          { id: 'public', label: '公开事件' },
-          { id: 'broadcast', label: '宇宙广播' },
+          {id: 'personal', label: '本人消息'},
+          {id: 'public', label: '公开事件'},
+          {id: 'broadcast', label: '宇宙广播'},
         ]}
         active={tab}
         onChange={setTab}
@@ -823,12 +948,12 @@ function Messages() {
   );
 }
 function Intel() {
-  const { data } = useApp();
+  const {data} = useApp();
   return (
     <>
       <PageTitle title="母星坐标情报箱" back="/player/messages" />
       {data.intel.length ? (
-        data.intel.map((intel) => (
+        data.intel.map(intel => (
           <Frame key={intel.id}>
             <Identity id={intel.civilization} nickname={intel.nickname} />
             <p className="secret-code numeric">{intel.code}</p>
@@ -837,7 +962,10 @@ function Intel() {
             </p>
             <CopyText text={intel.code} label="复制六位口令" />
             {canAct(data, 'broadcast') && (
-              <Link className="text-link" to={`/player/actions/broadcast?code=${intel.code}`}>
+              <Link
+                className="text-link"
+                to={`/player/actions/broadcast?code=${intel.code}`}
+              >
                 用于广播
                 <Icon name="arrow" size={18} />
               </Link>
@@ -851,7 +979,7 @@ function Intel() {
   );
 }
 function Me() {
-  const { data } = useApp();
+  const {data} = useApp();
   const me = data.player!;
   return (
     <>
@@ -906,13 +1034,13 @@ function Me() {
         </Link>
       )}
       {[
-        { to: '/player/homeworld', label: '本人母星' },
-        { to: '/player/records', label: '个人战绩' },
-        { to: '/rules', label: '比赛规则' },
-        { to: '/player/help', label: '联系裁判' },
-        { to: '/player/exception', label: '异常申报' },
-        { to: '/player/account', label: '账号与设置' },
-      ].map((item) => (
+        {to: '/player/homeworld', label: '本人母星'},
+        {to: '/player/records', label: '个人战绩'},
+        {to: '/rules', label: '比赛规则'},
+        {to: '/player/help', label: '联系裁判'},
+        {to: '/player/exception', label: '异常申报'},
+        {to: '/player/account', label: '账号与设置'},
+      ].map(item => (
         <Link className="row-link" to={item.to} key={item.to}>
           {item.label}
           <Icon name="arrow" size={18} />
@@ -923,13 +1051,15 @@ function Me() {
   );
 }
 function Bracelets() {
-  const { data } = useApp();
+  const {data} = useApp();
   const me = data.player!;
   return (
     <>
       <PageTitle
         title={
-          me.flight === 'outfitting' || me.flight === 'issued' ? '需要佩戴的手环' : '本航次手环'
+          me.flight === 'outfitting' || me.flight === 'issued'
+            ? '需要佩戴的手环'
+            : '本航次手环'
         }
         back="/player/me"
       />
@@ -942,7 +1072,11 @@ function Bracelets() {
           <p>同侧顺序不限，两侧可以交换。未佩戴的其他手环收入口袋。</p>
         </>
       ) : (
-        <Empty title="当前没有可用的手环配置" to="/player/records" action="查看历史记录">
+        <Empty
+          title="当前没有可用的手环配置"
+          to="/player/records"
+          action="查看历史记录"
+        >
           被击毁后请摘下全部比赛手环，历史配置不能继续使用。
         </Empty>
       )}
@@ -950,7 +1084,7 @@ function Bracelets() {
   );
 }
 function Records() {
-  const { data } = useApp();
+  const {data} = useApp();
   return (
     <>
       <PageTitle title="个人战绩" back="/player/me" />
@@ -963,7 +1097,7 @@ function Records() {
       </p>
       <Events
         events={data.events.filter(
-          (e) =>
+          e =>
             e.civilizationIds.includes(data.player!.id) &&
             ['sighting', 'respawn', 'notice'].includes(e.kind),
         )}
@@ -971,20 +1105,32 @@ function Records() {
     </>
   );
 }
-function Help({ exception = false }: { exception?: boolean }) {
-  const { data } = useApp();
+function Help({exception = false}: {exception?: boolean}) {
+  const {data} = useApp();
   const [kind, setKind] = useState('手环损坏');
   return (
     <>
-      <PageTitle title={exception ? '异常申报' : '联系裁判'} back="/player/me" />
+      <PageTitle
+        title={exception ? '异常申报' : '联系裁判'}
+        back="/player/me"
+      />
       <p>裁判联系方式</p>
-      <p className="contact-text">{data.site.judgeContact || '请查看活动QQ群的裁判联系方式。'}</p>
-      {data.site.qqGroup && <p className="secondary">比赛QQ群：{data.site.qqGroup}</p>}
+      <p className="contact-text">
+        {data.site.judgeContact || '请查看活动QQ群的裁判联系方式。'}
+      </p>
+      {data.site.qqGroup && (
+        <p className="secondary">比赛QQ群：{data.site.qqGroup}</p>
+      )}
       {exception ? (
         <>
           <Field label="需要处理的情况">
-            <select value={kind} onChange={(e) => setKind(e.target.value)}>
-              {['手环损坏', '网页无法提交', '攻击结果需要复核', '其他现场异常'].map((k) => (
+            <select value={kind} onChange={e => setKind(e.target.value)}>
+              {[
+                '手环损坏',
+                '网页无法提交',
+                '攻击结果需要复核',
+                '其他现场异常',
+              ].map(k => (
                 <option key={k}>{k}</option>
               ))}
             </select>
@@ -1009,7 +1155,17 @@ function Help({ exception = false }: { exception?: boolean }) {
   );
 }
 function Account() {
-  const { data, logout, names, setNames, reduced, setReduced, operate, busy, go } = useApp();
+  const {
+    data,
+    logout,
+    names,
+    setNames,
+    reduced,
+    setReduced,
+    operate,
+    busy,
+    go,
+  } = useApp();
   const [quit, setQuit] = useState(false);
   return (
     <>
@@ -1018,11 +1174,19 @@ function Account() {
       <Identity id={data.player!.id} nickname={data.player!.nickname} />
       <div className="preferences">
         <label className="check-label">
-          <input type="checkbox" checked={names} onChange={(e) => setNames(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={names}
+            onChange={e => setNames(e.target.checked)}
+          />
           显示颜色名称
         </label>
         <label className="check-label">
-          <input type="checkbox" checked={reduced} onChange={(e) => setReduced(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={reduced}
+            onChange={e => setReduced(e.target.checked)}
+          />
           减少动态效果
         </label>
       </div>
@@ -1034,13 +1198,17 @@ function Account() {
         <div className="danger-zone">
           {quit ? (
             <>
-              <p>确认退出后，你的文明将永久淘汰。请在安全位置摘下全部比赛手环，步行返回中控室。</p>
+              <p>
+                确认退出后，你的文明将永久淘汰。请在安全位置摘下全部比赛手环，步行返回中控室。
+              </p>
               <Button
                 className="danger full"
                 disabled={busy}
                 onClick={async () => {
                   const r = await operate('/action/withdraw');
-                  if (r?.status === 'complete') go('/player/eliminated');
+                  if (r?.status === 'complete') {
+                    go('/player/eliminated');
+                  }
                 }}
               >
                 确认退出比赛
@@ -1050,7 +1218,10 @@ function Account() {
               </button>
             </>
           ) : (
-            <button className="text-button danger" onClick={() => setQuit(true)}>
+            <button
+              className="text-button danger"
+              onClick={() => setQuit(true)}
+            >
               退出比赛
             </button>
           )}
@@ -1060,39 +1231,76 @@ function Account() {
   );
 }
 export function PlayerPages() {
-  const { route } = useApp();
-  if (route === '/player') return <Current />;
-  if (route === '/player/identity') return <IdentityPage />;
-  if (route === '/player/homeworld') return <Homeworld />;
-  if (route === '/player/preflight') return <Preflight />;
-  if (route === '/player/respawn') return <Respawn />;
-  if (route === '/player/actions' || route === '/player/actions/sighting')
+  const {route} = useApp();
+  if (route === '/player') {
+    return <Current />;
+  }
+  if (route === '/player/identity') {
+    return <IdentityPage />;
+  }
+  if (route === '/player/homeworld') {
+    return <Homeworld />;
+  }
+  if (route === '/player/preflight') {
+    return <Preflight />;
+  }
+  if (route === '/player/respawn') {
+    return <Respawn />;
+  }
+  if (route === '/player/actions' || route === '/player/actions/sighting') {
     return <Actions sightingOnly={route.endsWith('/sighting')} />;
-  if (route === '/player/actions/broadcast' || route === '/player/actions/photon')
-    return <CoordinateAction action={route.endsWith('/photon') ? 'photon' : 'broadcast'} />;
-  if (route === '/player/endgame') return <Endgame />;
-  if (route === '/player/eliminated') return <Eliminated />;
-  if (route.startsWith('/player/messages')) return <Messages />;
-  if (route === '/player/intel') return <Intel />;
-  if (route === '/player/me') return <Me />;
-  if (route === '/player/bracelets') return <Bracelets />;
-  if (route === '/player/records') return <Records />;
-  if (route === '/player/help' || route === '/player/exception')
+  }
+  if (
+    route === '/player/actions/broadcast' ||
+    route === '/player/actions/photon'
+  ) {
+    return (
+      <CoordinateAction
+        action={route.endsWith('/photon') ? 'photon' : 'broadcast'}
+      />
+    );
+  }
+  if (route === '/player/endgame') {
+    return <Endgame />;
+  }
+  if (route === '/player/eliminated') {
+    return <Eliminated />;
+  }
+  if (route.startsWith('/player/messages')) {
+    return <Messages />;
+  }
+  if (route === '/player/intel') {
+    return <Intel />;
+  }
+  if (route === '/player/me') {
+    return <Me />;
+  }
+  if (route === '/player/bracelets') {
+    return <Bracelets />;
+  }
+  if (route === '/player/records') {
+    return <Records />;
+  }
+  if (route === '/player/help' || route === '/player/exception') {
     return <Help exception={route.endsWith('/exception')} />;
-  if (route === '/player/account') return <Account />;
+  }
+  if (route === '/player/account') {
+    return <Account />;
+  }
   return <Empty title="页面不存在" />;
 }
 
 export function Rules() {
-  const { data } = useApp();
+  const {data} = useApp();
   const parameters = data.parameters ?? DEFAULT_PARAMETERS;
   useEffect(() => {
     const topic = new URLSearchParams(location.search).get('topic');
     const id =
-      location.hash.slice(1).replace(/^rule-/, 'rules-') || (topic === 'sighting' ? 'rules-1' : '');
+      location.hash.slice(1).replace(/^rule-/, 'rules-') ||
+      (topic === 'sighting' ? 'rules-1' : '');
     if (id) {
       const frame = requestAnimationFrame(() =>
-        document.getElementById(id)?.scrollIntoView({ block: 'start' }),
+        document.getElementById(id)?.scrollIntoView({block: 'start'}),
       );
       return () => cancelAnimationFrame(frame);
     }
@@ -1101,7 +1309,13 @@ export function Rules() {
     <>
       <PageTitle
         title="比赛规则"
-        back={data.session?.role === 'judge' ? '/judge' : data.session ? '/player/me' : '/'}
+        back={
+          data.session?.role === 'judge'
+            ? '/judge'
+            : data.session
+              ? '/player/me'
+              : '/'
+        }
       />
       <nav className="rules-directory">
         {[
@@ -1121,7 +1335,9 @@ export function Rules() {
       <div className="rules-article">
         <section id="rules-0">
           <h2>比赛流程</h2>
-          <p>领取首航配置后，在安全位置戴好手环并点击「穿戴就绪」，等待全场统一开赛。</p>
+          <p>
+            领取首航配置后，在安全位置戴好手环并点击「穿戴就绪」，等待全场统一开赛。
+          </p>
           <p>
             比赛使用有效比赛时间：0至65分钟为黑暗森林，65至90分钟为宇宙末日，90至98分钟转场。98分钟自动暂停进行终局资格核验，完成后恢复最后狩猎，通常进行至120分钟。完整结算后存活文明不超过一个时可以提前完赛。
           </p>
@@ -1132,8 +1348,10 @@ export function Rules() {
             在开赛后亲眼辨认目标两臂的当前完整颜色分组，再提交目击。七种颜色各最多使用一次。合法分组为两条与一条、两条与两条、三条与一条；同侧顺序不限，两侧可以交换。
           </p>
           <p>
-            第一次提交错误的手环颜色，禁止目击攻击{duration(parameters.firstLockSeconds)}；第二次有
-            {parameters.secondOutPercent}%的概率永久淘汰，有{100 - parameters.secondOutPercent}
+            第一次提交错误的手环颜色，禁止目击攻击
+            {duration(parameters.firstLockSeconds)}；第二次有
+            {parameters.secondOutPercent}%的概率永久淘汰，有
+            {100 - parameters.secondOutPercent}
             %的概率禁止目击攻击{duration(parameters.secondLockSeconds)}
             ；第三次永久淘汰。错误次数整场累计，重生不清零。暂时禁止目击攻击时仍可被其他人击毁。
           </p>
@@ -1185,7 +1403,8 @@ export function Rules() {
             秒后可以进入宇宙观测。
           </p>
           <p>
-            你可以观察宇宙、与其他四维文明交流，并向裁判提出高维干涉建议。{OBSERVER_AGREEMENT_COPY}
+            你可以观察宇宙、与其他四维文明交流，并向裁判提出高维干涉建议。
+            {OBSERVER_AGREEMENT_COPY}
             比赛结束后，本场参赛者可以查看完整复盘。
           </p>
         </section>

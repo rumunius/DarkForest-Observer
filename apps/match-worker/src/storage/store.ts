@@ -1,6 +1,6 @@
-import type { DomainPhase } from '../../../../packages/contracts/src/backend';
-import type { SiteConfig } from '@darkforest/contracts';
-export type Match = {
+import type {DomainPhase} from '../../../../packages/contracts/src/backend';
+import type {SiteConfig} from '@darkforest/contracts';
+export interface Match {
   recovery_state: string;
   id: string;
   phase: DomainPhase;
@@ -19,8 +19,8 @@ export type Match = {
   key_fingerprint: string;
   site_json: string;
   created_at: number;
-};
-export type Player = {
+}
+export interface Player {
   id: string;
   nickname: string | null;
   entry_status: string;
@@ -28,8 +28,8 @@ export type Player = {
   photons: number;
   broadcasts: number;
   observer_revoked: number;
-};
-export type FlightRow = {
+}
+export interface FlightRow {
   player_id: string;
   status: string;
   voyage: number;
@@ -38,8 +38,8 @@ export type FlightRow = {
   staged: number | null;
   ready: number | null;
   deadline: number | null;
-};
-export type Home = {
+}
+export interface Home {
   player_id: string;
   code: string;
   status: string;
@@ -48,8 +48,8 @@ export type Home = {
   verified_by: string | null;
   destroyed_game: number | null;
   source: string | null;
-};
-export type CodeRow = {
+}
+export interface CodeRow {
   id: string;
   player_id: string;
   voyage: number;
@@ -64,8 +64,8 @@ export type CodeRow = {
   retired_game: number | null;
   retired_reason: string | null;
   request_id: string;
-};
-export type Actor = {
+}
+export interface Actor {
   version: number;
   id: string;
   match_id: string;
@@ -74,8 +74,8 @@ export type Actor = {
   permissions: string;
   credential_hash: string;
   enabled: number;
-};
-export type Scheduled = {
+}
+export interface Scheduled {
   id: string;
   kind: string;
   clock: 'game' | 'utc';
@@ -88,8 +88,8 @@ export type Scheduled = {
   last_attempt_utc: number | null;
   last_error: string;
   last_error_utc: number | null;
-};
-export type Parameters = {
+}
+export interface Parameters {
   singerPercent: number;
   firstLockSeconds: number;
   secondLockSeconds: number;
@@ -98,7 +98,7 @@ export type Parameters = {
   observerWaitSeconds: number;
   sightingIntervalMs: number;
   sightingsPerMinute: number;
-};
+}
 export const DEFAULT_PARAMETERS: Parameters = {
   singerPercent: 5,
   firstLockSeconds: 300,
@@ -130,13 +130,23 @@ export const DEFAULT_SITE: SiteConfig = {
 };
 export class Store {
   constructor(public storage: DurableObjectStorage) {}
-  all<T extends Record<string, SqlStorageValue>>(query: string, ...values: SqlStorageValue[]): T[] {
-    return this.storage.sql.exec<T>(query, ...values).toArray();
+  /** Rows follow the selected SQL columns; every declared field must be a SQL value. */
+  all<
+    T extends {[K in keyof T]: SqlStorageValue} = Record<
+      string,
+      SqlStorageValue
+    >,
+  >(query: string, ...values: SqlStorageValue[]): T[] {
+    return this.storage.sql
+      .exec<T & Record<string, SqlStorageValue>>(query, ...values)
+      .toArray();
   }
-  one<T extends Record<string, SqlStorageValue>>(
-    query: string,
-    ...values: SqlStorageValue[]
-  ): T | undefined {
+  one<
+    T extends {[K in keyof T]: SqlStorageValue} = Record<
+      string,
+      SqlStorageValue
+    >,
+  >(query: string, ...values: SqlStorageValue[]): T | undefined {
     return this.all<T>(query, ...values)[0];
   }
   exec(query: string, ...values: SqlStorageValue[]): void {
@@ -147,23 +157,32 @@ export class Store {
   }
   match(): Match {
     const match = this.one<Match>('SELECT * FROM matches');
-    if (!match) throw new Fault(503, 'MATCH_NOT_INITIALIZED', '本场比赛尚未初始化。');
+    if (!match) {
+      throw new Fault(503, 'MATCH_NOT_INITIALIZED', '本场比赛尚未初始化。');
+    }
     return match;
   }
   player(id: string): Player {
     const player = this.one<Player>('SELECT * FROM players WHERE id=?', id);
-    if (!player) throw new Fault(404, 'PLAYER_NOT_FOUND', '文明不存在。');
+    if (!player) {
+      throw new Fault(404, 'PLAYER_NOT_FOUND', '文明不存在。');
+    }
     return player;
   }
   flight(id: string): FlightRow {
-    const flight = this.one<FlightRow>('SELECT * FROM flights WHERE player_id=?', id);
-    if (!flight) throw new Error('FLIGHT_MISSING');
+    const flight = this.one<FlightRow>(
+      'SELECT * FROM flights WHERE player_id=?',
+      id,
+    );
+    if (!flight) {
+      throw new Error('FLIGHT_MISSING');
+    }
     return flight;
   }
   roster(): string[] {
-    return this.all<{ player_id: string }>(
+    return this.all<{player_id: string}>(
       'SELECT player_id FROM roster_members ORDER BY player_id',
-    ).map((r) => r.player_id);
+    ).map(r => r.player_id);
   }
   home(id: string): Home | undefined {
     return this.one<Home>('SELECT * FROM homeworlds WHERE player_id=?', id);
@@ -178,12 +197,16 @@ export class Store {
     return {
       ...DEFAULT_PARAMETERS,
       ...JSON.parse(
-        this.one<{ value: string }>("SELECT value FROM settings WHERE key='parameters'")!.value,
+        this.one<{value: string}>(
+          "SELECT value FROM settings WHERE key='parameters'",
+        )!.value,
       ),
     };
   }
   bump(): void {
-    this.exec('UPDATE matches SET revision=revision+1,scheduler_revision=scheduler_revision+1');
+    this.exec(
+      'UPDATE matches SET revision=revision+1,scheduler_revision=scheduler_revision+1',
+    );
   }
 }
 export class Fault extends Error {
@@ -201,7 +224,9 @@ export function requireThat(
   message: string,
   status = 409,
 ): asserts condition {
-  if (!condition) throw new Fault(status, code, message);
+  if (!condition) {
+    throw new Fault(status, code, message);
+  }
 }
 export function permission(actor: Actor, name: string): void {
   requireThat(

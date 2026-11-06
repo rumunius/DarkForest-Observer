@@ -7,11 +7,16 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { Arms, DataSource, OperationResult, Snapshot } from '@darkforest/contracts';
-import { DEFAULT_SITE } from './config';
-import { ApiError } from './data/http';
-import { mergeRecords, type Collection } from './judge-records';
-import { personalMessage } from './data/messages';
+import type {
+  Arms,
+  DataSource,
+  OperationResult,
+  Snapshot,
+} from '@darkforest/contracts';
+import {DEFAULT_SITE} from './config';
+import {ApiError} from './data/http';
+import {mergeRecords, type Collection} from './judge_records';
+import {personalMessage} from './data/messages';
 
 const empty: Snapshot = {
   site: DEFAULT_SITE,
@@ -61,7 +66,9 @@ interface AppContext {
 const Context = createContext<AppContext | null>(null);
 export function useApp(): AppContext {
   const c = useContext(Context);
-  if (!c) throw new Error('Missing application context');
+  if (!c) {
+    throw new Error('Missing application context');
+  }
   return c;
 }
 const positions = new Map<string, number>();
@@ -69,22 +76,35 @@ const positions = new Map<string, number>();
 function restorePosition() {
   const id = location.hash.slice(1).replace(/^rule-/, 'rules-');
   const target = id && document.getElementById(id);
-  if (target) target.scrollIntoView({ block: 'start' });
-  else if (!id) window.scrollTo(0, positions.get(location.pathname) ?? 0);
+  if (target) {
+    target.scrollIntoView({block: 'start'});
+  } else if (!id) {
+    window.scrollTo(0, positions.get(location.pathname) ?? 0);
+  }
 }
 const pendingKey = 'darkforest.pending-operation';
-type PendingRecord = { id: string; account: string; match: string; path?: string };
+interface PendingRecord {
+  id: string;
+  account: string;
+  match: string;
+  path?: string;
+}
 function readPending(key = pendingKey): PendingRecord | null {
   try {
-    return JSON.parse(sessionStorage.getItem(key) ?? 'null') as PendingRecord | null;
+    return JSON.parse(
+      sessionStorage.getItem(key) ?? 'null',
+    ) as PendingRecord | null;
   } catch {
     return null;
   }
 }
 function savePending(value: PendingRecord | null, key = pendingKey) {
   try {
-    if (value) sessionStorage.setItem(key, JSON.stringify(value));
-    else sessionStorage.removeItem(key);
+    if (value) {
+      sessionStorage.setItem(key, JSON.stringify(value));
+    } else {
+      sessionStorage.removeItem(key);
+    }
   } catch {
     /* Memory state remains authoritative for this page. */
   }
@@ -100,7 +120,8 @@ export function AppProvider({
   children: ReactNode;
   epoch?: number;
 }) {
-  const currentPath = () => location.pathname.slice(base.length).replace(/\/$/, '') || '/';
+  const currentPath = () =>
+    location.pathname.slice(base.length).replace(/\/$/, '') || '/';
   const [route, setRoute] = useState(currentPath);
   const [data, setData] = useState<Snapshot>(empty);
   const [loading, setLoading] = useState(true);
@@ -109,7 +130,9 @@ export function AppProvider({
   const [result, setResult] = useState<OperationResult | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [names, setNames] = useState(false);
-  const [reduced, setReduced] = useState(matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const [reduced, setReduced] = useState(
+    matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
   const [draft, setDraft] = useState<Arms>([[], []]);
   const [selectedArm, setSelectedArm] = useState<number | null>(null);
   const [receivedAt, setReceivedAt] = useState(performance.now());
@@ -140,7 +163,9 @@ export function AppProvider({
     try {
       setReadIds(
         JSON.parse(
-          localStorage.getItem(accountKey) ?? sessionStorage.getItem(accountKey) ?? '[]',
+          localStorage.getItem(accountKey) ??
+            sessionStorage.getItem(accountKey) ??
+            '[]',
         ) as string[],
       );
     } catch {
@@ -149,8 +174,10 @@ export function AppProvider({
   }, [accountKey]);
   const markRead = useCallback(
     (id: string) => {
-      setReadIds((previous) => {
-        if (previous.includes(id)) return previous;
+      setReadIds(previous => {
+        if (previous.includes(id)) {
+          return previous;
+        }
         const next = [...previous, id];
         try {
           localStorage.setItem(accountKey, JSON.stringify(next));
@@ -168,7 +195,9 @@ export function AppProvider({
       const next = `${base}${path === '/' ? '/' : path}`;
       history[replace ? 'replaceState' : 'pushState']({}, '', next);
       setRoute(
-        new URL(next, location.origin).pathname.slice(base.length).replace(/\/$/, '') || '/',
+        new URL(next, location.origin).pathname
+          .slice(base.length)
+          .replace(/\/$/, '') || '/',
       );
       setError('');
       readError.current = false;
@@ -182,7 +211,9 @@ export function AppProvider({
     const path = routeRef.current;
     try {
       const next = await source.read(path);
-      if (request !== sequence.current || path !== routeRef.current) return;
+      if (request !== sequence.current || path !== routeRef.current) {
+        return;
+      }
       const previous = snapshotRef.current;
       if (
         previous.session?.id === next.session?.id &&
@@ -190,9 +221,13 @@ export function AppProvider({
         previous.match &&
         next.match &&
         previous.match.revision > next.match.revision
-      )
+      ) {
         return;
-      if (previous.session?.id !== next.session?.id || !next.player?.actions.includes('sighting')) {
+      }
+      if (
+        previous.session?.id !== next.session?.id ||
+        !next.player?.actions.includes('sighting')
+      ) {
         setDraft([[], []]);
         setSelectedArm(null);
       }
@@ -202,13 +237,26 @@ export function AppProvider({
         next.session &&
         next.eventCursor !== undefined
       ) {
-        const ids = new Set(next.events.map((event) => event.id));
-        next.events = [...next.events, ...previous.events.filter((event) => !ids.has(event.id))];
+        const ids = new Set(next.events.map(event => event.id));
+        next.events = [
+          ...next.events,
+          ...previous.events.filter(event => !ids.has(event.id)),
+        ];
         next.eventCursor = previous.eventCursor ?? null;
         if (next.judge && previous.judge && next.session.role === 'judge') {
           for (const kind of ['notices', 'audits', 'attacks'] as const) {
-            if (!next.session.permissions.includes(kind === 'audits' ? 'audit' : kind)) continue;
-            next.judge = mergeRecords(next.judge, kind, previous.judge[kind] ?? []);
+            if (
+              !next.session.permissions.includes(
+                kind === 'audits' ? 'audit' : kind,
+              )
+            ) {
+              continue;
+            }
+            next.judge = mergeRecords(
+              next.judge,
+              kind,
+              previous.judge[kind] ?? [],
+            );
             next.judge.cursors = {
               ...next.judge.cursors,
               [kind]: previous.judge.cursors?.[kind] ?? null,
@@ -230,18 +278,20 @@ export function AppProvider({
         next.session &&
         stored.account === next.session.id &&
         stored.match === next.session.matchId
-      )
+      ) {
         setPending(stored.id);
-      else {
+      } else {
         setPending(null);
         persistPending(null);
       }
     } catch (e) {
-      if (request !== sequence.current) return;
+      if (request !== sequence.current) {
+        return;
+      }
       if (e instanceof ApiError && [401, 403].includes(e.status)) {
         timelineKey.current = '';
-        snapshotRef.current = { ...empty, site: snapshotRef.current.site };
-        setData({ ...empty, site: snapshotRef.current.site });
+        snapshotRef.current = {...empty, site: snapshotRef.current.site};
+        setData({...empty, site: snapshotRef.current.site});
         setDraft([[], []]);
         setSelectedArm(null);
         setPending(null);
@@ -250,61 +300,80 @@ export function AppProvider({
       readError.current = true;
       setError(e instanceof Error ? e.message : '连接已中断，正在重新连接。');
     } finally {
-      if (request === sequence.current) setLoading(false);
+      if (request === sequence.current) {
+        setLoading(false);
+      }
     }
   }, [source, persistPending, storageKey]);
   const loadEarlierEvents = useCallback(async () => {
-    const current = snapshotRef.current,
-      cursor = current.eventCursor,
-      path = routeRef.current,
-      key = timelineKey.current;
-    if (!source.eventsPage || !cursor || historyLoading.current) return;
+    const current = snapshotRef.current;
+    const cursor = current.eventCursor;
+    const path = routeRef.current;
+    const key = timelineKey.current;
+    if (!source.eventsPage || !cursor || historyLoading.current) {
+      return;
+    }
     historyLoading.current = true;
     try {
       const page = await source.eventsPage(path, cursor);
-      if (key !== timelineKey.current || path !== routeRef.current) return;
+      if (key !== timelineKey.current || path !== routeRef.current) {
+        return;
+      }
       const latest = snapshotRef.current;
-      const ids = new Set(latest.events.map((event) => event.id));
+      const ids = new Set(latest.events.map(event => event.id));
       const next = {
         ...latest,
-        events: [...latest.events, ...page.items.filter((event) => !ids.has(event.id))],
+        events: [
+          ...latest.events,
+          ...page.items.filter(event => !ids.has(event.id)),
+        ],
         eventCursor: page.nextCursor,
       };
       snapshotRef.current = next;
       setData(next);
     } catch (error) {
-      if (key !== timelineKey.current) return;
+      if (key !== timelineKey.current) {
+        return;
+      }
       if (error instanceof ApiError && [401, 403].includes(error.status)) {
         timelineKey.current = '';
-        const next = { ...empty, site: snapshotRef.current.site };
+        const next = {...empty, site: snapshotRef.current.site};
         snapshotRef.current = next;
         setData(next);
       }
-      setError(error instanceof Error ? error.message : '暂时无法取得历史记录。');
+      setError(
+        error instanceof Error ? error.message : '暂时无法取得历史记录。',
+      );
     } finally {
       historyLoading.current = false;
     }
   }, [source]);
   const loadJudgeRecords = useCallback(
     async (kind: Collection) => {
-      const cursor = snapshotRef.current.judge?.cursors?.[kind],
-        key = timelineKey.current;
-      if (!cursor || !source.judgePage || historyLoading.current) return;
+      const cursor = snapshotRef.current.judge?.cursors?.[kind];
+      const key = timelineKey.current;
+      if (!cursor || !source.judgePage || historyLoading.current) {
+        return;
+      }
       historyLoading.current = true;
       try {
         const page = await source.judgePage(kind, cursor);
-        if (key !== timelineKey.current || !snapshotRef.current.judge) return;
-        const latest = snapshotRef.current,
-          judge = mergeRecords(latest.judge!, kind, page.items);
-        judge.cursors = { ...judge.cursors, [kind]: page.nextCursor };
-        const next = { ...latest, judge };
+        if (key !== timelineKey.current || !snapshotRef.current.judge) {
+          return;
+        }
+        const latest = snapshotRef.current;
+        const judge = mergeRecords(latest.judge!, kind, page.items);
+        judge.cursors = {...judge.cursors, [kind]: page.nextCursor};
+        const next = {...latest, judge};
         snapshotRef.current = next;
         setData(next);
       } catch (e) {
-        if (key !== timelineKey.current) return;
+        if (key !== timelineKey.current) {
+          return;
+        }
         if (e instanceof ApiError && [401, 403].includes(e.status)) {
           timelineKey.current = '';
-          const next = { ...empty, site: snapshotRef.current.site };
+          const next = {...empty, site: snapshotRef.current.site};
           snapshotRef.current = next;
           setData(next);
         }
@@ -317,13 +386,17 @@ export function AppProvider({
   );
   const recover = useCallback(async () => {
     const stored = pendingRecord.current ?? readPending(storageKey);
-    if (!stored || submitting.current) return;
+    if (!stored || submitting.current) {
+      return;
+    }
     const mine = generation.current;
     submitting.current = true;
     setBusy(true);
     try {
       const response = await source.result(stored.id);
-      if (mine !== generation.current) return;
+      if (mine !== generation.current) {
+        return;
+      }
       setResult(response);
       if (response.status === 'complete') {
         persistPending(null);
@@ -336,8 +409,12 @@ export function AppProvider({
         await refresh();
       }
     } catch (e) {
-      if (mine !== generation.current) return;
-      setError(e instanceof Error ? e.message : '暂时无法取得操作结果，请稍后查询。');
+      if (mine !== generation.current) {
+        return;
+      }
+      setError(
+        e instanceof Error ? e.message : '暂时无法取得操作结果，请稍后查询。',
+      );
     } finally {
       if (mine === generation.current) {
         submitting.current = false;
@@ -347,7 +424,11 @@ export function AppProvider({
   }, [source, refresh, persistPending, storageKey]);
   const operate = useCallback(
     async (path: string, payload: Record<string, unknown> = {}) => {
-      if (submitting.current || pendingRecord.current || readPending(storageKey)) {
+      if (
+        submitting.current ||
+        pendingRecord.current ||
+        readPending(storageKey)
+      ) {
         setError('正在确认上一次操作结果。');
         return;
       }
@@ -356,7 +437,9 @@ export function AppProvider({
         return;
       }
       const session = snapshotRef.current.session;
-      if (!session) return;
+      if (!session) {
+        return;
+      }
       const id = crypto.randomUUID();
       const mine = generation.current;
       submitting.current = true;
@@ -364,11 +447,13 @@ export function AppProvider({
       setError('');
       readError.current = false;
       setResult(null);
-      persistPending({ id, account: session.id, match: session.matchId, path });
+      persistPending({id, account: session.id, match: session.matchId, path});
       setPending(id);
       try {
-        const response = await source.submit({ path, payload, requestId: id });
-        if (mine !== generation.current) return;
+        const response = await source.submit({path, payload, requestId: id});
+        if (mine !== generation.current) {
+          return;
+        }
         setResult(response);
         if (response.status === 'complete') {
           persistPending(null);
@@ -378,14 +463,20 @@ export function AppProvider({
         }
         return response;
       } catch (e) {
-        if (mine !== generation.current) return;
+        if (mine !== generation.current) {
+          return;
+        }
         const definitive = e instanceof ApiError && e.definitive;
         if (definitive) {
           persistPending(null);
           setPending(null);
           await refresh();
         }
-        setError(e instanceof Error ? e.message : '操作结果尚未取得，正在确认上一次操作结果。');
+        setError(
+          e instanceof Error
+            ? e.message
+            : '操作结果尚未取得，正在确认上一次操作结果。',
+        );
       } finally {
         if (mine === generation.current) {
           submitting.current = false;
@@ -401,7 +492,7 @@ export function AppProvider({
       generation.current++;
       timelineKey.current = '';
       sequence.current++;
-      setData({ ...empty, site: data.site });
+      setData({...empty, site: data.site});
       setDraft([[], []]);
       setPending(null);
       persistPending(null);
@@ -422,7 +513,9 @@ export function AppProvider({
     setResult(null);
     setPending(null);
     setBusy(false);
-    if (previousEpoch.current !== epoch) persistPending(null);
+    if (previousEpoch.current !== epoch) {
+      persistPending(null);
+    }
     previousEpoch.current = epoch;
     void refresh();
   }, [epoch, refresh, persistPending]);
@@ -435,8 +528,12 @@ export function AppProvider({
         ? 5000
         : 2000;
     const poll = async () => {
-      if (!document.hidden && navigator.onLine) await refresh();
-      if (!stopped) timer = window.setTimeout(() => void poll(), interval);
+      if (!document.hidden && navigator.onLine) {
+        await refresh();
+      }
+      if (!stopped) {
+        timer = window.setTimeout(() => void poll(), interval);
+      }
     };
     void poll();
     return () => {
@@ -457,7 +554,9 @@ export function AppProvider({
     };
     const resume = () => {
       setOnline(navigator.onLine);
-      if (!document.hidden && navigator.onLine) void refresh();
+      if (!document.hidden && navigator.onLine) {
+        void refresh();
+      }
     };
     addEventListener('popstate', pop);
     addEventListener('online', resume);
@@ -506,7 +605,9 @@ export function AppProvider({
         receivedAt,
         online,
         unread: data.events.filter(
-          (e) => personalMessage(e, data.player?.id ?? data.session?.id) && !readIds.includes(e.id),
+          e =>
+            personalMessage(e, data.player?.id ?? data.session?.id) &&
+            !readIds.includes(e.id),
         ).length,
         markRead,
       }}
@@ -516,15 +617,17 @@ export function AppProvider({
   );
 }
 export function useClock() {
-  const { data, receivedAt } = useApp();
+  const {data, receivedAt} = useApp();
   const [, tick] = useState(0);
   useEffect(() => {
-    const timer = setInterval(() => tick((n) => n + 1), 1000);
+    const timer = setInterval(() => tick(n => n + 1), 1000);
     return () => clearInterval(timer);
   }, []);
   const elapsed = Math.max(0, performance.now() - receivedAt);
   return {
     utc: (data.match?.serverUtcMs ?? Date.now()) + elapsed,
-    game: (data.match?.gameMs ?? 0) + (data.match?.running && !data.match.paused ? elapsed : 0),
+    game:
+      (data.match?.gameMs ?? 0) +
+      (data.match?.running && !data.match.paused ? elapsed : 0),
   };
 }

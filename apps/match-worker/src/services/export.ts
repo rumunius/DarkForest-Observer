@@ -1,10 +1,10 @@
-import { permission, requireThat, type Actor } from '../storage/store';
-import type { Engine } from './engine';
-import { encrypt } from '../security/crypto';
-import { events } from '../projections/snapshot';
-import { results } from './life';
-import { SCHEMA_VERSION } from '../storage/schema';
-import { createCheckpoint } from './recovery';
+import {permission, requireThat, type Actor} from '../storage/store';
+import type {Engine} from './engine';
+import {encrypt} from '../security/crypto';
+import {events} from '../projections/snapshot';
+import {results} from './life';
+import {SCHEMA_VERSION} from '../storage/schema';
+import {createCheckpoint} from './recovery';
 export const BACKUP_TABLES = [
   'schema_meta',
   'matches',
@@ -55,32 +55,43 @@ export async function exportData(
   actor: Actor,
   kind: string,
   keys: Awaited<ReturnType<Engine['keys']>>,
-  options: { omitSessionData?: boolean } = {},
-): Promise<{ fileName: string; text: string }> {
+  options: {omitSessionData?: boolean} = {},
+): Promise<{fileName: string; text: string}> {
   permission(
     actor,
-    kind === 'backup' || kind === 'checkpoint' ? 'system' : kind === 'audit' ? 'audit' : 'results',
+    kind === 'backup' || kind === 'checkpoint'
+      ? 'system'
+      : kind === 'audit'
+        ? 'audit'
+        : 'results',
   );
-  const now = e.now(),
-    match = e.db.match();
-  if (kind === 'checkpoint')
+  const now = e.now();
+  const match = e.db.match();
+  if (kind === 'checkpoint') {
     return {
       fileName: `${match.id}-${now}-恢复检查点.json`,
       text: JSON.stringify(await createCheckpoint(e), null, 2),
     };
+  }
   if (kind === 'backup') {
     requireThat(
-      match.phase === 'setup' || match.phase === 'ended' || match.paused_at !== null,
+      match.phase === 'setup' ||
+        match.phase === 'ended' ||
+        match.paused_at !== null,
       'PAUSE_REQUIRED',
       '请先暂停比赛。',
     );
     const snapshot = e.db.tx(() =>
       Object.fromEntries(
         BACKUP_TABLES.filter(
-          (table) =>
+          table =>
             !options.omitSessionData ||
-            !['sessions', 'credential_deliveries', 'control_operations'].includes(table),
-        ).map((table) => [table, e.db.all(`SELECT * FROM ${table}`)]),
+            ![
+              'sessions',
+              'credential_deliveries',
+              'control_operations',
+            ].includes(table),
+        ).map(table => [table, e.db.all(`SELECT * FROM ${table}`)]),
       ),
     );
     const bookmark = await e.db.storage.getCurrentBookmark();
@@ -97,13 +108,15 @@ export async function exportData(
         `backup|${match.id}|${now}`,
       ),
     };
-    e.audit(actor.id, 'export_backup', match.id, '导出加密备份', { revision: match.revision });
+    e.audit(actor.id, 'export_backup', match.id, '导出加密备份', {
+      revision: match.revision,
+    });
     return {
       fileName: `${match.id}-${now}-加密备份.json`,
       text: JSON.stringify(envelope, null, 2),
     };
   }
-  if (kind === 'audit')
+  if (kind === 'audit') {
     return {
       fileName: '裁判操作记录.json',
       text: JSON.stringify(
@@ -114,6 +127,7 @@ export async function exportData(
         2,
       ),
     };
+  }
   requireThat(
     kind === 'report' && match.phase === 'ended',
     'RESULTS_NOT_READY',
@@ -122,18 +136,20 @@ export async function exportData(
   const report = results(e, keys)!;
   return {
     fileName:
-      e.db.one<{ kind: string }>('SELECT kind FROM match_identity')?.kind === 'trial'
+      e.db.one<{kind: string}>('SELECT kind FROM match_identity')?.kind ===
+      'trial'
         ? '试玩战报.json'
         : '正式战报.json',
     text: JSON.stringify(
       {
         matchId: match.id,
         matchKind:
-          e.db.one<{ kind: string }>('SELECT kind FROM match_identity')?.kind ?? 'official',
+          e.db.one<{kind: string}>('SELECT kind FROM match_identity')?.kind ??
+          'official',
         version: report.version,
         reason: report.reason,
         champions: report.champions,
-        standings: report.standings.map((p) => ({
+        standings: report.standings.map(p => ({
           id: p.id,
           nickname: p.nickname,
           rank: p.rank,
@@ -143,10 +159,12 @@ export async function exportData(
           eliminationReason: p.eliminationReason,
         })),
         events: events(e, actor, false, Number.MAX_SAFE_INTEGER, 100000)
-          .filter((event) => event.audience === 'public')
-          .map(({ actor: eventActor, ...event }) => ({
+          .filter(event => event.audience === 'public')
+          .map(({actor: eventActor, ...event}) => ({
             ...event,
-            ...(event.kind === 'broadcast' && eventActor ? { actor: eventActor } : {}),
+            ...(event.kind === 'broadcast' && eventActor
+              ? {actor: eventActor}
+              : {}),
           })),
       },
       null,

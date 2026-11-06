@@ -15,12 +15,23 @@ import type {
   PlatformAccount,
   PlatformOperation,
 } from '@darkforest/contracts';
-import { PlatformClient, saveDownload, type PlatformReview } from './data/platform';
-import { Button, ConfirmDialog, Feedback, Field, Icon, type FeedbackMessage } from './ui';
-import { App } from './app';
-import { HttpSource } from './data/http';
-import { HumanData, OPERATION_NAMES, PHASE_NAMES } from './platform-copy';
-import { accountCsv, readAccountCsv } from './data/csv';
+import {
+  PlatformClient,
+  saveDownload,
+  type PlatformReview,
+} from './data/platform';
+import {
+  Button,
+  ConfirmDialog,
+  Feedback,
+  Field,
+  Icon,
+  type FeedbackMessage,
+} from './ui';
+import {App} from './app';
+import {HttpSource} from './data/http';
+import {HumanData, OPERATION_NAMES, PHASE_NAMES} from './platform_copy';
+import {accountCsv, readAccountCsv} from './data/csv';
 
 const states: Record<string, string> = {
   draft: '草稿',
@@ -49,10 +60,10 @@ const roles: Record<string, string> = {
   admin: '平台管理员',
   archivist: '资料管理员',
 };
-function Label({ children }: { children: ReactNode }) {
+function Label({children}: {children: ReactNode}) {
   return <span className="platform-label">{children}</span>;
 }
-function Header({ title, children }: { title: string; children?: ReactNode }) {
+function Header({title, children}: {title: string; children?: ReactNode}) {
   return (
     <header className="platform-heading">
       <div>
@@ -71,34 +82,48 @@ function platformFeedbackMessages(
   clear: () => void,
 ): FeedbackMessage[] {
   const pending = client.session && client.pending();
-  if (!error && !notice && !pending) return [];
+  if (!error && !notice && !pending) {
+    return [];
+  }
   return [
     {
       tone: error ? 'error' : busy || pending ? 'pending' : 'result',
-      ...(busy ? {} : { onClose: clear }),
+      ...(busy ? {} : {onClose: clear}),
       content: (
         <>
-          <p>{error || notice || '正在确认上一次操作结果。取得处理结果后再提交新的操作。'}</p>
+          <p>
+            {error ||
+              notice ||
+              '正在确认上一次操作结果。取得处理结果后再提交新的操作。'}
+          </p>
           {pending && !busy && (
-            <Button onClick={() => void run(() => client.resolvePending())}>查询原操作结果</Button>
+            <Button onClick={() => void run(() => client.resolvePending())}>
+              查询原操作结果
+            </Button>
           )}
         </>
       ),
     },
   ];
 }
-function Delivery({ value }: { value: Record<string, unknown> | null }) {
-  if (!value) return null;
+function Delivery({value}: {value: Record<string, unknown> | null}) {
+  if (!value) {
+    return null;
+  }
   return (
     <section className="platform-delivery">
       <h2>本次交付</h2>
-      <p>请单人复制或打印交付；长期口令只在领取时显示。邀请7天有效，交付原文24小时后清除。</p>
+      <p>
+        请单人复制或打印交付；长期口令只在领取时显示。邀请7天有效，交付原文24小时后清除。
+      </p>
       {typeof value.invitation === 'string' && (
         <>
           <code className="credential-text">{`${location.origin}/claim#${value.invitation}`}</code>
           <Button
             onClick={() =>
-              void navigator.clipboard.writeText(`${location.origin}/claim#${value.invitation}`)
+              void navigator.clipboard.writeText(
+                `${location.origin}/claim#${value.invitation}`,
+              )
             }
           >
             复制领取链接
@@ -110,7 +135,9 @@ function Delivery({ value }: { value: Record<string, unknown> | null }) {
       )}
       <HumanData
         value={Object.fromEntries(
-          Object.entries(value).filter(([k]) => !['invitation', 'credential'].includes(k)),
+          Object.entries(value).filter(
+            ([k]) => !['invitation', 'credential'].includes(k),
+          ),
         )}
       />
     </section>
@@ -118,11 +145,14 @@ function Delivery({ value }: { value: Record<string, unknown> | null }) {
 }
 export function PlatformApp() {
   const route = location.pathname;
-  const requestedAudience = new URLSearchParams(location.search).get('audience');
+  const requestedAudience = new URLSearchParams(location.search).get(
+    'audience',
+  );
   const [audience, setAudience] = useState<'player' | 'staff'>(
     route.startsWith('/manage') || requestedAudience === 'staff'
       ? 'staff'
-      : requestedAudience !== 'player' && sessionStorage.getItem('df.portal.audience') === 'staff'
+      : requestedAudience !== 'player' &&
+          sessionStorage.getItem('df.portal.audience') === 'staff'
         ? 'staff'
         : 'player',
   );
@@ -130,19 +160,21 @@ export function PlatformApp() {
   useEffect(() => {
     sessionStorage.setItem('df.portal.audience', audience);
   }, [audience]);
-  const [ready, setReady] = useState(false),
-    [error, setError] = useState(''),
-    [notice, setNotice] = useState(''),
-    [busy, setBusy] = useState(false),
-    [tick, setTick] = useState(0),
-    [delivery, setDelivery] = useState<Record<string, unknown> | null>(null),
-    [review, setReview] = useState<PlatformReview | null>(null);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [tick, setTick] = useState(0);
+  const [delivery, setDelivery] = useState<Record<string, unknown> | null>(
+    null,
+  );
+  const [review, setReview] = useState<PlatformReview | null>(null);
   const running = useRef(false);
   const refresh = useCallback(async () => {
     try {
       await client.load();
       setReady(true);
-      setTick((t) => t + 1);
+      setTick(t => t + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : '读取失败。');
       setReady(true);
@@ -152,12 +184,16 @@ export function PlatformApp() {
     void refresh();
   }, [refresh]);
   useEffect(() => {
-    if (!client.session) return;
-    const timer = setInterval(() => setTick((t) => t + 1), 5000);
+    if (!client.session) {
+      return;
+    }
+    const timer = setInterval(() => setTick(t => t + 1), 5000);
     return () => clearInterval(timer);
   }, [client, ready]);
   const run = async (work: () => Promise<unknown>) => {
-    if (running.current) return;
+    if (running.current) {
+      return;
+    }
     running.current = true;
     setBusy(true);
     setError('');
@@ -169,21 +205,25 @@ export function PlatformApp() {
         setNotice('');
         return;
       }
-      if (result?.invitation || result?.credential) setDelivery(result);
-      await client.completeOperation(result, () => setNotice('操作正在处理中，请稍候。'));
+      if (result?.invitation || result?.credential) {
+        setDelivery(result);
+      }
+      await client.completeOperation(result, () =>
+        setNotice('操作正在处理中，请稍候。'),
+      );
       setNotice('操作已完成。');
     } catch (e) {
       setNotice('');
       setError(e instanceof Error ? e.message : '操作结果未知，请查询原操作。');
     } finally {
-      setTick((t) => t + 1);
+      setTick(t => t + 1);
       running.current = false;
       setBusy(false);
     }
   };
-  const session = client.session,
-    manage = session?.roles.some((r) => r === 'owner' || r === 'admin'),
-    archive = session?.roles.some((r) => r === 'owner' || r === 'archivist');
+  const session = client.session;
+  const manage = session?.roles.some(r => r === 'owner' || r === 'admin');
+  const archive = session?.roles.some(r => r === 'owner' || r === 'archivist');
   return (
     <div className="platform-shell">
       <a className="skip-link" href="#platform-main">
@@ -196,7 +236,10 @@ export function PlatformApp() {
         <nav aria-label="赛事中心导航">
           {session && (
             <>
-              <a href="/matches" aria-current={route === '/matches' ? 'page' : undefined}>
+              <a
+                href="/matches"
+                aria-current={route === '/matches' ? 'page' : undefined}
+              >
                 我的比赛
               </a>
               <a href="/account">账号与安全</a>
@@ -210,7 +253,9 @@ export function PlatformApp() {
             </>
           )}
           {archive && <a href="/manage/data">历史与数据</a>}
-          {session?.roles.includes('owner') && <a href="/manage/security">平台权限</a>}
+          {session?.roles.includes('owner') && (
+            <a href="/manage/security">平台权限</a>
+          )}
         </nav>
         <div className="platform-identity">
           {session ? (
@@ -218,7 +263,9 @@ export function PlatformApp() {
               <strong>{session.account.name}</strong>
               <small>
                 {audience === 'staff' ? '工作人员账号' : '玩家账号'}
-                {session.roles.length ? `，${session.roles.map((r) => roles[r]).join('、')}` : ''}
+                {session.roles.length
+                  ? `，${session.roles.map(r => roles[r]).join('、')}`
+                  : ''}
               </small>
               <button
                 className="text-button"
@@ -239,10 +286,17 @@ export function PlatformApp() {
       </aside>
       <main id="platform-main" className="platform-main">
         <Feedback
-          messages={platformFeedbackMessages(client, run, error, notice, busy, () => {
-            setError('');
-            setNotice('');
-          })}
+          messages={platformFeedbackMessages(
+            client,
+            run,
+            error,
+            notice,
+            busy,
+            () => {
+              setError('');
+              setNotice('');
+            },
+          )}
         />
         {review && (
           <section className="platform-detail">
@@ -272,7 +326,11 @@ export function PlatformApp() {
             </div>
           </section>
         )}
-        <fieldset className="platform-action-scope" disabled={busy} aria-busy={busy}>
+        <fieldset
+          className="platform-action-scope"
+          disabled={busy}
+          aria-busy={busy}
+        >
           {!ready ? (
             <p role="status">正在连接赛事中心</p>
           ) : route === '/claim' ? (
@@ -281,7 +339,7 @@ export function PlatformApp() {
             <Login
               client={client}
               audience={audience}
-              setAudience={(v) => {
+              setAudience={v => {
                 sessionStorage.setItem('df.portal.audience', v);
                 setAudience(v);
               }}
@@ -296,10 +354,16 @@ export function PlatformApp() {
           ) : route === '/manage/matches/new' && manage ? (
             <NewMatch client={client} run={run} />
           ) : route.startsWith('/manage/matches/') && manage ? (
-            <ManageMatch client={client} id={route.split('/')[3]!} tick={tick} run={run} />
+            <ManageMatch
+              client={client}
+              id={route.split('/')[3]!}
+              tick={tick}
+              run={run}
+            />
           ) : route === '/manage/data' && archive ? (
             <DataCenter client={client} tick={tick} run={run} />
-          ) : route === '/manage/security' && session.roles.includes('owner') ? (
+          ) : route === '/manage/security' &&
+            session.roles.includes('owner') ? (
             <RoleManager client={client} tick={tick} run={run} />
           ) : route === '/manage' && manage ? (
             <Operations client={client} tick={tick} run={run} />
@@ -328,15 +392,15 @@ function Login({
   run: Run;
   busy: boolean;
 }) {
-  const [credential, setCredential] = useState(''),
-    [code, setCode] = useState('');
+  const [credential, setCredential] = useState('');
+  const [code, setCode] = useState('');
   return (
     <>
       <Header title="进入赛事中心" />
       <p className="platform-intro">一个长期账号，查看属于你的每一场比赛。</p>
       <form
         className="form-stack platform-form"
-        onSubmit={(e) => {
+        onSubmit={e => {
           e.preventDefault();
           void run(async () => {
             await client.login(credential, code);
@@ -348,7 +412,7 @@ function Login({
         <Field label="账号类别">
           <select
             value={audience}
-            onChange={(e) => setAudience(e.target.value as 'staff' | 'player')}
+            onChange={e => setAudience(e.target.value as 'staff' | 'player')}
           >
             <option value="player">玩家</option>
             <option value="staff">工作人员</option>
@@ -360,7 +424,7 @@ function Login({
             required
             autoComplete="current-password"
             value={credential}
-            onChange={(e) => setCredential(e.target.value)}
+            onChange={e => setCredential(e.target.value)}
           />
         </Field>
         {audience === 'staff' && (
@@ -368,18 +432,30 @@ function Login({
             <input
               autoComplete="one-time-code"
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={e => setCode(e.target.value)}
             />
           </Field>
         )}
-        <Button type="submit" className="primary" disabled={busy || !credential}>
+        <Button
+          type="submit"
+          className="primary"
+          disabled={busy || !credential}
+        >
           {busy ? '正在登录' : '登录'}
         </Button>
       </form>
     </>
   );
 }
-function Claim({ client, run, busy }: { client: PlatformClient; run: Run; busy: boolean }) {
+function Claim({
+  client,
+  run,
+  busy,
+}: {
+  client: PlatformClient;
+  run: Run;
+  busy: boolean;
+}) {
   const [invitation, setInvitation] = useState(() => location.hash.slice(1));
   useEffect(() => {
     history.replaceState(null, '', location.pathname);
@@ -387,13 +463,15 @@ function Claim({ client, run, busy }: { client: PlatformClient; run: Run; busy: 
   return (
     <>
       <Header title="领取长期账号" />
-      <p>请确认这是工作人员单独交付给你的邀请。领取后立即保存生成的长期口令，再回到登录页。</p>
+      <p>
+        请确认这是工作人员单独交付给你的邀请。领取后立即保存生成的长期口令，再回到登录页。
+      </p>
       <form
         className="form-stack platform-form"
-        onSubmit={(e) => {
+        onSubmit={e => {
           e.preventDefault();
           void run(async () => {
-            const result = await client.request('/auth/claim', { invitation });
+            const result = await client.request('/auth/claim', {invitation});
             setInvitation('');
             return result;
           });
@@ -404,7 +482,7 @@ function Claim({ client, run, busy }: { client: PlatformClient; run: Run; busy: 
             type="password"
             required
             value={invitation}
-            onChange={(e) => setInvitation(e.target.value)}
+            onChange={e => setInvitation(e.target.value)}
             autoComplete="off"
           />
         </Field>
@@ -417,29 +495,33 @@ function Claim({ client, run, busy }: { client: PlatformClient; run: Run; busy: 
   );
 }
 function useRows<T>(client: PlatformClient, path: string, tick: number) {
-  const [data, setData] = useState<T | null>(null),
-    [error, setError] = useState('');
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState('');
   useEffect(() => {
     let active = true;
     void client
       .request<T>(path)
-      .then((value) => {
+      .then(value => {
         if (active) {
           setData(value);
           setError('');
         }
       })
-      .catch((e) => {
-        if (active) setError(e instanceof Error ? e.message : '读取失败。');
+      .catch(e => {
+        if (active) {
+          setError(e instanceof Error ? e.message : '读取失败。');
+        }
       });
     return () => {
       active = false;
     };
   }, [client, path, tick]);
-  return { data, error };
+  return {data, error};
 }
 function matchEnded(entry: MatchEntry) {
-  if (entry.phase) return entry.phase === 'ended';
+  if (entry.phase) {
+    return entry.phase === 'ended';
+  }
   try {
     return JSON.parse(entry.summary).phase === 'ended';
   } catch {
@@ -458,12 +540,15 @@ function AcceptInvitation({
   accepted: boolean;
 }) {
   const [state, setState] = useState<'idle' | 'pending' | 'done'>('idle');
-  if (state === 'done')
+  if (state === 'done') {
     return (
       <span role="status">
-        {client.audience === 'player' ? '已加入比赛' : '已接受邀请，等待安排裁判岗位'}
+        {client.audience === 'player'
+          ? '已加入比赛'
+          : '已接受邀请，等待安排裁判岗位'}
       </span>
     );
+  }
   return (
     <Button
       disabled={state === 'pending'}
@@ -471,9 +556,12 @@ function AcceptInvitation({
         void run(async () => {
           setState('pending');
           try {
-            const result = await client.mutate<{ operationId: string }>(
+            const result = await client.mutate<{operationId: string}>(
               `/matches/${id}/members/accept`,
-              { consent: true, reason: '本人接受活动说明与数据保留期限，并加入本场比赛' },
+              {
+                consent: true,
+                reason: '本人接受活动说明与数据保留期限，并加入本场比赛',
+              },
             );
             await client.waitOperation(result.operationId);
             setState('done');
@@ -485,7 +573,11 @@ function AcceptInvitation({
         });
       }}
     >
-      {state === 'pending' ? '正在加入比赛' : accepted ? '加入比赛' : '接受邀请'}
+      {state === 'pending'
+        ? '正在加入比赛'
+        : accepted
+          ? '加入比赛'
+          : '接受邀请'}
     </Button>
   );
 }
@@ -500,7 +592,7 @@ function Matches({
   run: Run;
   manage: boolean;
 }) {
-  const { data, error } = useRows<MatchEntry[]>(
+  const {data, error} = useRows<MatchEntry[]>(
     client,
     manage ? '/platform/matches' : '/me/matches',
     tick,
@@ -516,7 +608,7 @@ function Matches({
         )}
       </Header>
       <Field label="比赛类型">
-        <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+        <select value={filter} onChange={e => setFilter(e.target.value)}>
           <option value="all">全部类型</option>
           <option value="official">正式比赛</option>
           <option value="trial">试玩</option>
@@ -525,19 +617,21 @@ function Matches({
       {error && <p role="alert">{error}</p>}
       <div className="platform-match-list">
         {data
-          ?.filter((d) => filter === 'all' || d.kind === filter)
-          .map((d) => (
+          ?.filter(d => filter === 'all' || d.kind === filter)
+          .map(d => (
             <article key={d.id} className="platform-match-row">
               <div>
                 <Label>{d.kind === 'trial' ? '试玩' : '正式比赛'}</Label>
                 <span className="secondary">{states[d.state] ?? d.state}</span>
                 <h2>{d.name}</h2>
                 <small>
-                  {new Date(d.created_utc).toLocaleDateString('zh-CN')}，完整复盘保留{' '}
-                  {d.retention_days} 天
+                  {new Date(d.created_utc).toLocaleDateString('zh-CN')}
+                  ，完整复盘保留 {d.retention_days} 天
                 </small>
                 {d.synced_utc && (
-                  <small>更新于 {new Date(d.synced_utc).toLocaleString('zh-CN')}</small>
+                  <small>
+                    更新于 {new Date(d.synced_utc).toLocaleString('zh-CN')}
+                  </small>
                 )}
               </div>
               <div className="platform-row-actions">
@@ -545,13 +639,17 @@ function Matches({
                   <a href={`/manage/matches/${d.id}`}>管理比赛</a>
                 ) : (
                   <>
-                    {d.membership?.state === 'bound' && d.state === 'available' && (
-                      <a href={`/m/${d.id}/${client.audience === 'staff' ? 'judge' : 'player'}`}>
-                        进入比赛
-                      </a>
-                    )}
+                    {d.membership?.state === 'bound' &&
+                      d.state === 'available' && (
+                        <a
+                          href={`/m/${d.id}/${client.audience === 'staff' ? 'judge' : 'player'}`}
+                        >
+                          进入比赛
+                        </a>
+                      )}
                     {(d.membership?.state === 'invited' ||
-                      (d.membership?.state === 'accepted' && client.audience === 'player')) && (
+                      (d.membership?.state === 'accepted' &&
+                        client.audience === 'player')) && (
                       <>
                         <AcceptInvitation
                           key={`${d.id}:${d.membership.state}`}
@@ -568,35 +666,42 @@ function Matches({
                         {d.state === 'draft' ? '，等待发布比赛' : ''}
                       </span>
                     )}
-                    {d.membership?.state === 'accepted' && client.audience === 'staff' && (
-                      <span>已接受邀请，等待安排裁判岗位</span>
-                    )}
+                    {d.membership?.state === 'accepted' &&
+                      client.audience === 'staff' && (
+                        <span>已接受邀请，等待安排裁判岗位</span>
+                      )}
                   </>
                 )}
                 {matchEnded(d) && (
-                  <a href={`/m/${d.id}/history?audience=${client.audience}`}>赛后资料与版本</a>
+                  <a href={`/m/${d.id}/history?audience=${client.audience}`}>
+                    赛后资料与版本
+                  </a>
                 )}
               </div>
             </article>
           ))}
       </div>
       {data?.length === 0 && (
-        <section className="platform-detail">暂无可访问比赛。请联系主办方取得本场邀请。</section>
+        <section className="platform-detail">
+          暂无可访问比赛。请联系主办方取得本场邀请。
+        </section>
       )}
     </>
   );
 }
-function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
-  const [name, setName] = useState(''),
-    [kind, setKind] = useState('official'),
-    [description, setDescription] = useState(''),
-    [days, setDays] = useState(44),
-    [auditDays, setAuditDays] = useState(365),
-    [confirmed, setConfirmed] = useState(false),
-    [stage, setStage] = useState(0),
-    [copyFrom, setCopyFrom] = useState(new URLSearchParams(location.search).get('copy') ?? '');
+function NewMatch({client, run}: {client: PlatformClient; run: Run}) {
+  const [name, setName] = useState('');
+  const [kind, setKind] = useState('official');
+  const [description, setDescription] = useState('');
+  const [days, setDays] = useState(44);
+  const [auditDays, setAuditDays] = useState(365);
+  const [confirmed, setConfirmed] = useState(false);
+  const [stage, setStage] = useState(0);
+  const [copyFrom, setCopyFrom] = useState(
+    new URLSearchParams(location.search).get('copy') ?? '',
+  );
   const [created, setCreated] = useState<string | null>(null);
-  const { data } = useRows<MatchEntry[]>(client, '/platform/matches', 0);
+  const {data} = useRows<MatchEntry[]>(client, '/platform/matches', 0);
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (stage === 0) {
@@ -604,21 +709,24 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
       return;
     }
     void run(async () => {
-      const result = await client.mutate<{ matchId: string }>('/platform/matches/create', {
-        name,
-        kind,
-        description,
-        retentionDays: days,
-        auditDays,
-        retentionConfirmed: confirmed,
-        copyFrom: copyFrom || undefined,
-        reason: '网站新建独立场次',
-      });
+      const result = await client.mutate<{matchId: string}>(
+        '/platform/matches/create',
+        {
+          name,
+          kind,
+          description,
+          retentionDays: days,
+          auditDays,
+          retentionConfirmed: confirmed,
+          copyFrom: copyFrom || undefined,
+          reason: '网站新建独立场次',
+        },
+      );
       setCreated(result.matchId);
       return result;
     });
   };
-  if (created)
+  if (created) {
     return (
       <>
         <Header title="比赛草稿已受理" />
@@ -629,11 +737,14 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
         <a href="/manage">查看创建任务处理结果</a>
       </>
     );
+  }
   return (
     <>
       <Header title="新建比赛" />
       <ol className="platform-steps">
-        <li aria-current={stage === 0 ? 'step' : undefined}>填写基本信息与期限</li>
+        <li aria-current={stage === 0 ? 'step' : undefined}>
+          填写基本信息与期限
+        </li>
         <li aria-current={stage === 1 ? 'step' : undefined}>核对并创建草稿</li>
       </ol>
       <form className="form-stack platform-form" onSubmit={submit}>
@@ -642,7 +753,7 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
             <Field label="比赛名称">
               <input
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={e => setName(e.target.value)}
                 required
                 maxLength={100}
               />
@@ -650,7 +761,7 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
             <Field label="类型">
               <select
                 value={kind}
-                onChange={(e) => {
+                onChange={e => {
                   setKind(e.target.value);
                   setDays(e.target.value === 'trial' ? 14 : 44);
                 }}
@@ -660,11 +771,14 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
               </select>
             </Field>
             <Field label="活动说明来源">
-              <select value={copyFrom} onChange={(e) => setCopyFrom(e.target.value)}>
+              <select
+                value={copyFrom}
+                onChange={e => setCopyFrom(e.target.value)}
+              >
                 <option value="">从空白开始</option>
                 {data
-                  ?.filter((d) => d.state !== 'imported_archive')
-                  .map((d) => (
+                  ?.filter(d => d.state !== 'imported_archive')
+                  .map(d => (
                     <option key={d.id} value={d.id}>
                       {d.name}（活动说明、七色色值和比赛参数）
                     </option>
@@ -674,7 +788,7 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
             <Field label="活动说明">
               <textarea
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={e => setDescription(e.target.value)}
                 maxLength={2000}
               />
             </Field>
@@ -684,7 +798,7 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
                 min={1}
                 max={3650}
                 value={days}
-                onChange={(e) => setDays(Number(e.target.value))}
+                onChange={e => setDays(Number(e.target.value))}
               />
             </Field>
             <Field label="战报与必要审计保留天数">
@@ -693,14 +807,14 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
                 min={days}
                 max={3650}
                 value={auditDays}
-                onChange={(e) => setAuditDays(Number(e.target.value))}
+                onChange={e => setAuditDays(Number(e.target.value))}
               />
             </Field>
             <label className="check-label">
               <input
                 type="checkbox"
                 checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
+                onChange={e => setConfirmed(e.target.checked)}
               />
               确认主办方采用上述期限，并向参与者展示
             </label>
@@ -709,8 +823,8 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
           <section className="platform-detail">
             <h2>{name}</h2>
             <p>
-              {kind === 'trial' ? '试玩' : '正式比赛'}，完整复盘 {days} 天，战报与审计 {auditDays}{' '}
-              天
+              {kind === 'trial' ? '试玩' : '正式比赛'}，完整复盘 {days}{' '}
+              天，战报与审计 {auditDays} 天
             </p>
             <p>
               创建后进入草稿；在管理页面邀请玩家并任命总裁判，再发布准备入口。玩家接受邀请后自动获得本场文明，通讯与事件裁判可按需增设。复制时采用活动说明、七色色值和比赛参数。
@@ -718,41 +832,66 @@ function NewMatch({ client, run }: { client: PlatformClient; run: Run }) {
             <Button onClick={() => setStage(0)}>返回修改</Button>
           </section>
         )}
-        <Button type="submit" className="primary" disabled={!name || !confirmed}>
+        <Button
+          type="submit"
+          className="primary"
+          disabled={!name || !confirmed}
+        >
           {stage === 0 ? '预览创建' : '确认创建独立草稿'}
         </Button>
       </form>
     </>
   );
 }
-function Accounts({ client, tick, run }: { client: PlatformClient; tick: number; run: Run }) {
-  const { data, error } = useRows<PlatformAccount[]>(client, '/platform/accounts', tick),
-    [name, setName] = useState(''),
-    [kind, setKind] = useState('player'),
-    [search, setSearch] = useState(''),
-    [selected, setSelected] = useState<PlatformAccount | null>(null),
-    [reason, setReason] = useState(''),
-    [csv, setCsv] = useState(''),
-    [report, setReport] = useState<unknown>(null),
-    [batch, setBatch] = useState(() => crypto.randomUUID());
+function Accounts({
+  client,
+  tick,
+  run,
+}: {
+  client: PlatformClient;
+  tick: number;
+  run: Run;
+}) {
+  const {data, error} = useRows<PlatformAccount[]>(
+    client,
+    '/platform/accounts',
+    tick,
+  );
+  const [name, setName] = useState('');
+  const [kind, setKind] = useState('player');
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<PlatformAccount | null>(null);
+  const [reason, setReason] = useState('');
+  const [csv, setCsv] = useState('');
+  const [report, setReport] = useState<unknown>(null);
+  const [batch, setBatch] = useState(() => crypto.randomUUID());
   const rows = () => accountCsv(csv);
   return (
     <>
       <Header title="长期账号池" />
       <form
         className="form-stack platform-form"
-        onSubmit={(e) => {
+        onSubmit={e => {
           e.preventDefault();
           void run(() =>
-            client.mutate('/platform/accounts/create', { name, kind, reason: '预注册长期账号' }),
+            client.mutate('/platform/accounts/create', {
+              name,
+              kind,
+              reason: '预注册长期账号',
+            }),
           );
         }}
       >
         <Field label="显示名称">
-          <input required value={name} onChange={(e) => setName(e.target.value)} maxLength={100} />
+          <input
+            required
+            value={name}
+            onChange={e => setName(e.target.value)}
+            maxLength={100}
+          />
         </Field>
         <Field label="账号类别">
-          <select value={kind} onChange={(e) => setKind(e.target.value)}>
+          <select value={kind} onChange={e => setKind(e.target.value)}>
             <option value="player">玩家</option>
             <option value="staff">工作人员</option>
           </select>
@@ -764,12 +903,15 @@ function Accounts({ client, tick, run }: { client: PlatformClient; tick: number;
       <details>
         <summary>CSV批量导入（每批最多100行）</summary>
         <p>
-          请按模板填写姓名、账号类别和账号编号。类别一列用 player 表示玩家，用 staff
-          表示工作人员。新账号留空编号；更新已有账号时填写原编号。
+          请按模板填写姓名、账号类别和账号编号。类别一列用 player 表示玩家，用
+          staff 表示工作人员。新账号留空编号；更新已有账号时填写原编号。
         </p>
         <Button
           onClick={() =>
-            saveDownload('账号导入模板.csv', 'name,kind,accountId\r\n示例玩家,player,\r\n')
+            saveDownload(
+              '账号导入模板.csv',
+              'name,kind,accountId\r\n示例玩家,player,\r\n',
+            )
           }
         >
           下载模板
@@ -778,11 +920,13 @@ function Accounts({ client, tick, run }: { client: PlatformClient; tick: number;
           type="file"
           accept=".csv,text/csv"
           aria-label="选择账号CSV"
-          onChange={(e) => {
+          onChange={e => {
             const file = e.target.files?.[0];
             setCsv('');
             setReport(null);
-            if (!file) return;
+            if (!file) {
+              return;
+            }
             void run(async () => {
               setCsv(await readAccountCsv(file));
               setBatch(crypto.randomUUID());
@@ -825,18 +969,23 @@ function Accounts({ client, tick, run }: { client: PlatformClient; tick: number;
         )}
       </details>
       <Field label="筛选账号">
-        <input value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input value={search} onChange={e => setSearch(e.target.value)} />
       </Field>
       {error && <p role="alert">{error}</p>}
       <div className="platform-account-list">
         {data
-          ?.filter((a) => `${a.name} ${a.tags} ${a.id}`.includes(search))
-          .map((a) => (
-            <button key={a.id} className="platform-account-row" onClick={() => setSelected(a)}>
+          ?.filter(a => `${a.name} ${a.tags} ${a.id}`.includes(search))
+          .map(a => (
+            <button
+              key={a.id}
+              className="platform-account-row"
+              onClick={() => setSelected(a)}
+            >
               <span>
                 <strong>{a.name}</strong>
                 <small>
-                  {a.kind === 'staff' ? '工作人员' : '玩家'}，{accountStates[a.status]}
+                  {a.kind === 'staff' ? '工作人员' : '玩家'}，
+                  {accountStates[a.status]}
                 </small>
               </span>
               <Icon name="arrow" size={18} />
@@ -850,7 +999,10 @@ function Accounts({ client, tick, run }: { client: PlatformClient; tick: number;
             {selected.id}，版本 {selected.version}
           </p>
           <Field label="核验依据与操作原因">
-            <textarea value={reason} onChange={(e) => setReason(e.target.value)} />
+            <textarea
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+            />
           </Field>
           <div className="platform-row-actions">
             <Button
@@ -859,7 +1011,11 @@ function Accounts({ client, tick, run }: { client: PlatformClient; tick: number;
                 void run(() =>
                   client.mutate(
                     `/platform/accounts/${selected.status === 'pending' ? 'invite' : 'reset'}`,
-                    { accountId: selected.id, expected_version: selected.version, reason },
+                    {
+                      accountId: selected.id,
+                      expected_version: selected.version,
+                      reason,
+                    },
                     true,
                   ),
                 )
@@ -875,7 +1031,8 @@ function Accounts({ client, tick, run }: { client: PlatformClient; tick: number;
                     '/platform/accounts/status',
                     {
                       accountId: selected.id,
-                      status: selected.status === 'disabled' ? 'active' : 'disabled',
+                      status:
+                        selected.status === 'disabled' ? 'active' : 'disabled',
                       expected_version: selected.version,
                       reason,
                     },
@@ -906,39 +1063,51 @@ function ManageMatch({
   tick: number;
   run: Run;
 }) {
-  const { data, error } = useRows<{
+  const {data, error} = useRows<{
     match: MatchEntry;
     current: {
       members: MatchMember[];
-      assignments: { seat_id: string; epoch: number; ended_utc: number | null }[];
-      seatVersions?: { id: string; version: number }[];
+      assignments: Array<{
+        seat_id: string;
+        epoch: number;
+        ended_utc: number | null;
+      }>;
+      seatVersions?: Array<{id: string; version: number}>;
       phase: string;
       revision: number;
       players: number;
     };
   }>(client, `/matches/${id}/manage`, tick);
-  const platformAdmin = client.session?.roles.some((r) => ['owner', 'admin'].includes(r)) ?? false;
-  const { data: accounts } = useRows<PlatformAccount[]>(
-      client,
-      platformAdmin ? '/platform/accounts' : `/matches/${id}/eligible`,
-      tick,
-    ),
-    [inviteAccount, setInviteAccount] = useState(''),
-    [judgeAccount, setJudgeAccount] = useState(''),
-    [seat, setSeat] = useState('J01'),
-    [reason, setReason] = useState(''),
-    [removal, setRemoval] = useState<{ member: MatchMember; revision: number } | null>(null),
-    [preview, setPreview] = useState<{
-      previewToken: string;
-      payload: Record<string, unknown>;
-      details: unknown;
-    } | null>(null);
-  if (!data) return <p role="status">{error || '正在读取本场最新状态'}</p>;
-  const d = data.match,
-    epoch =
-      data.current.seatVersions?.find((s) => s.id === seat)?.version ??
-      data.current.assignments.find((a) => a.seat_id === seat && a.ended_utc === null)?.epoch ??
-      0;
+  const platformAdmin =
+    client.session?.roles.some(r => ['owner', 'admin'].includes(r)) ?? false;
+  const {data: accounts} = useRows<PlatformAccount[]>(
+    client,
+    platformAdmin ? '/platform/accounts' : `/matches/${id}/eligible`,
+    tick,
+  );
+  const [inviteAccount, setInviteAccount] = useState('');
+  const [judgeAccount, setJudgeAccount] = useState('');
+  const [seat, setSeat] = useState('J01');
+  const [reason, setReason] = useState('');
+  const [removal, setRemoval] = useState<{
+    member: MatchMember;
+    revision: number;
+  } | null>(null);
+  const [preview, setPreview] = useState<{
+    previewToken: string;
+    payload: Record<string, unknown>;
+    details: unknown;
+  } | null>(null);
+  if (!data) {
+    return <p role="status">{error || '正在读取本场最新状态'}</p>;
+  }
+  const d = data.match;
+  const epoch =
+    data.current.seatVersions?.find(s => s.id === seat)?.version ??
+    data.current.assignments.find(
+      a => a.seat_id === seat && a.ended_utc === null,
+    )?.epoch ??
+    0;
   const assignment = {
     accountId: judgeAccount,
     seat,
@@ -959,11 +1128,21 @@ function ManageMatch({
         {PHASE_NAMES[data.current.phase] ?? '正在读取比赛阶段'}。
       </p>
       <div className="platform-row-actions">
-        {data.current.members.find((m) => m.account_id === client.session?.account.id)?.state ===
-          'invited' && <AcceptInvitation client={client} id={id} run={run} accepted={false} />}
+        {data.current.members.find(
+          m => m.account_id === client.session?.account.id,
+        )?.state === 'invited' && (
+          <AcceptInvitation
+            client={client}
+            id={id}
+            run={run}
+            accepted={false}
+          />
+        )}
         {d.state === 'available' &&
           data.current.members.some(
-            (m) => m.account_id === client.session?.account.id && m.state === 'bound',
+            m =>
+              m.account_id === client.session?.account.id &&
+              m.state === 'bound',
           ) && <a href={`/m/${id}/judge`}>进入本人裁判工作台</a>}
         {data.current.phase === 'ended' && (
           <a href={`/m/${id}/history?audience=staff`}>查看赛后资料</a>
@@ -973,20 +1152,27 @@ function ManageMatch({
       <section className="platform-detail">
         <h2>邀请账号</h2>
         <Field label="从长期池选择">
-          <select value={inviteAccount} onChange={(e) => setInviteAccount(e.target.value)}>
+          <select
+            value={inviteAccount}
+            onChange={e => setInviteAccount(e.target.value)}
+          >
             <option value="">请选择</option>
             {accounts
-              ?.filter((a) => a.status !== 'disabled')
-              .map((a) => (
+              ?.filter(a => a.status !== 'disabled')
+              .map(a => (
                 <option key={a.id} value={a.id}>
-                  {a.name}，{a.kind === 'staff' ? '工作人员' : '玩家'}，{a.id.slice(0, 8)}
+                  {a.name}，{a.kind === 'staff' ? '工作人员' : '玩家'}，
+                  {a.id.slice(0, 8)}
                 </option>
               ))}
           </select>
         </Field>
         {!platformAdmin && (
           <Field label="新成员长期账号编号">
-            <input value={inviteAccount} onChange={(e) => setInviteAccount(e.target.value)} />
+            <input
+              value={inviteAccount}
+              onChange={e => setInviteAccount(e.target.value)}
+            />
           </Field>
         )}
         <Button
@@ -1002,14 +1188,16 @@ function ManageMatch({
         >
           邀请到本场
         </Button>
-        <p>对方需用自己的账号接受邀请。玩家接受时自动确认本场文明；总裁判在场内选择正式名单。</p>
+        <p>
+          对方需用自己的账号接受邀请。玩家接受时自动确认本场文明；总裁判在场内选择正式名单。
+        </p>
       </section>
       <section className="platform-detail">
         <h2>裁判设置</h2>
         <Field label="裁判账号">
           <select
             value={judgeAccount}
-            onChange={(e) => {
+            onChange={e => {
               setJudgeAccount(e.target.value);
               setPreview(null);
             }}
@@ -1017,14 +1205,16 @@ function ManageMatch({
             <option value="">请选择已接受邀请的工作人员</option>
             {accounts
               ?.filter(
-                (a) =>
+                a =>
                   a.kind === 'staff' &&
                   a.status === 'active' &&
                   data.current.members.some(
-                    (m) => m.account_id === a.id && (m.state === 'accepted' || m.state === 'bound'),
+                    m =>
+                      m.account_id === a.id &&
+                      (m.state === 'accepted' || m.state === 'bound'),
                   ),
               )
-              .map((a) => (
+              .map(a => (
                 <option key={a.id} value={a.id}>
                   {a.name}，{a.id.slice(0, 8)}
                 </option>
@@ -1034,7 +1224,7 @@ function ManageMatch({
         <Field label="裁判岗位">
           <select
             value={seat}
-            onChange={(e) => {
+            onChange={e => {
               setSeat(e.target.value);
               setPreview(null);
             }}
@@ -1047,7 +1237,7 @@ function ManageMatch({
         <Field label="操作原因">
           <input
             value={reason}
-            onChange={(e) => {
+            onChange={e => {
               setReason(e.target.value);
               setPreview(null);
             }}
@@ -1057,7 +1247,7 @@ function ManageMatch({
           disabled={!judgeAccount || !reason.trim()}
           onClick={() =>
             void run(async () => {
-              const result = await client.request<{ previewToken: string }>(
+              const result = await client.request<{previewToken: string}>(
                 platformAdmin ? '/platform/preview' : `/matches/${id}/preview`,
                 {
                   path: `/matches/${id}/staff/assign`,
@@ -1097,7 +1287,7 @@ function ManageMatch({
       </section>
       <section className="platform-detail">
         <h2>本场成员</h2>
-        {data.current.members.map((m) => (
+        {data.current.members.map(m => (
           <div key={m.account_id} className="platform-member-row">
             <p>
               <strong>{m.name}</strong>，{m.local_id ?? '尚未确认本场身份'}，
@@ -1118,7 +1308,9 @@ function ManageMatch({
                 className="icon-button"
                 aria-label={`移除成员 ${m.name}`}
                 title={`移除成员 ${m.name}`}
-                onClick={() => setRemoval({ member: m, revision: data.current.revision })}
+                onClick={() =>
+                  setRemoval({member: m, revision: data.current.revision})
+                }
               >
                 <Icon name="close" size={20} />
               </button>
@@ -1132,7 +1324,7 @@ function ManageMatch({
           confirmLabel="确认移除"
           onCancel={() => setRemoval(null)}
           onConfirm={() => {
-            const { member, revision } = removal;
+            const {member, revision} = removal;
             setRemoval(null);
             void run(() =>
               client.mutate(`/matches/${id}/members/remove`, {
@@ -1170,14 +1362,26 @@ function ManageMatch({
     </>
   );
 }
-function Operations({ client, tick, run }: { client: PlatformClient; tick: number; run: Run }) {
-  const { data, error } = useRows<PlatformOperation[]>(client, '/platform/operations', tick);
+function Operations({
+  client,
+  tick,
+  run,
+}: {
+  client: PlatformClient;
+  tick: number;
+  run: Run;
+}) {
+  const {data, error} = useRows<PlatformOperation[]>(
+    client,
+    '/platform/operations',
+    tick,
+  );
   return (
     <>
       <Header title="管理待办" />
       <Button onClick={() => void run(async () => {})}>刷新任务</Button>
       {error && <p role="alert">{error}</p>}
-      {data?.map((op) => (
+      {data?.map(op => (
         <article key={op.id} className="platform-match-row">
           <div>
             <Label>{states[op.status]}</Label>
@@ -1195,7 +1399,10 @@ function Operations({ client, tick, run }: { client: PlatformClient; tick: numbe
                 void run(() =>
                   client.mutate(
                     '/platform/operations/retry',
-                    { operationId: op.id, reason: '已核对失败步骤，按原编号继续' },
+                    {
+                      operationId: op.id,
+                      reason: '已核对失败步骤，按原编号继续',
+                    },
                     true,
                   ),
                 )
@@ -1219,28 +1426,27 @@ function Security({
   run: Run;
   refresh: () => Promise<void>;
 }) {
-  const [credential, setCredential] = useState(''),
-    [code, setCode] = useState(''),
-    [setup, setSetup] = useState<{ secret: string } | null>(null),
-    [recovery, setRecovery] = useState<string[]>([]);
-  const { data: sessions } = useRows<{ created_utc: number; expires: number; revoked: number }[]>(
-    client,
-    '/me/sessions',
-    0,
-  );
+  const [credential, setCredential] = useState('');
+  const [code, setCode] = useState('');
+  const [setup, setSetup] = useState<{secret: string} | null>(null);
+  const [recovery, setRecovery] = useState<string[]>([]);
+  const {data: sessions} = useRows<
+    Array<{created_utc: number; expires: number; revoked: number}>
+  >(client, '/me/sessions', 0);
   return (
     <>
       <Header title="账号与安全" />
       <p>
-        {client.session?.account.name}，{client.audience === 'staff' ? '工作人员' : '玩家'}
+        {client.session?.account.name}，
+        {client.audience === 'staff' ? '工作人员' : '玩家'}
       </p>
       {client.session?.secondFactorEnabled && !client.session.secondFactor && (
         <form
           className="form-stack platform-form"
-          onSubmit={(e) => {
+          onSubmit={e => {
             e.preventDefault();
             void run(async () => {
-              await client.request('/auth/reauth', { credential, code });
+              await client.request('/auth/reauth', {credential, code});
               setCredential('');
               setCode('');
               await refresh();
@@ -1253,14 +1459,14 @@ function Security({
               type="password"
               autoComplete="current-password"
               value={credential}
-              onChange={(e) => setCredential(e.target.value)}
+              onChange={e => setCredential(e.target.value)}
             />
           </Field>
           <Field label="第二因素验证码或恢复码">
             <input
               autoComplete="one-time-code"
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={e => setCode(e.target.value)}
             />
           </Field>
           <Button type="submit" disabled={!credential || !code}>
@@ -1290,17 +1496,16 @@ function Security({
                 <input
                   autoComplete="one-time-code"
                   value={code}
-                  onChange={(e) => setCode(e.target.value)}
+                  onChange={e => setCode(e.target.value)}
                 />
               </Field>
               <Button
                 disabled={!code}
                 onClick={() =>
                   void run(async () => {
-                    const result = await client.request<{ recoveryCodes: string[] }>(
-                      '/me/security/confirm',
-                      { code },
-                    );
+                    const result = await client.request<{
+                      recoveryCodes: string[];
+                    }>('/me/security/confirm', {code});
                     setRecovery(result.recoveryCodes);
                     setSetup(null);
                     await refresh();
@@ -1341,7 +1546,9 @@ function Security({
         {sessions?.map((s, i) => (
           <p key={i}>
             {new Date(s.created_utc).toLocaleString('zh-CN')}，
-            {s.revoked ? '已退出登录' : new Date(s.expires).toLocaleString('zh-CN') + ' 到期'}
+            {s.revoked
+              ? '已退出登录'
+              : new Date(s.expires).toLocaleString('zh-CN') + ' 到期'}
           </p>
         ))}
         <Button
@@ -1358,48 +1565,66 @@ function Security({
     </>
   );
 }
-function DataCenter({ client, tick, run }: { client: PlatformClient; tick: number; run: Run }) {
-  const { data: matches } = useRows<MatchEntry[]>(client, '/platform/matches', tick),
-    { data } = useRows<{ holds: { match_id: string }[]; ledger: unknown[] }>(
-      client,
-      '/platform/data',
-      tick,
-    ),
-    [selected, setSelected] = useState(''),
-    [reason, setReason] = useState(''),
-    [preview, setPreview] = useState<{
-      path: string;
-      body: Record<string, unknown>;
-      token: string;
-      details: unknown;
-    } | null>(null);
-  const d = matches?.find((m) => m.id === selected);
-  const held = data?.holds.some((hold) => hold.match_id === selected);
+function DataCenter({
+  client,
+  tick,
+  run,
+}: {
+  client: PlatformClient;
+  tick: number;
+  run: Run;
+}) {
+  const {data: matches} = useRows<MatchEntry[]>(
+    client,
+    '/platform/matches',
+    tick,
+  );
+  const {data} = useRows<{holds: Array<{match_id: string}>; ledger: unknown[]}>(
+    client,
+    '/platform/data',
+    tick,
+  );
+  const [selected, setSelected] = useState('');
+  const [reason, setReason] = useState('');
+  const [preview, setPreview] = useState<{
+    path: string;
+    body: Record<string, unknown>;
+    token: string;
+    details: unknown;
+  } | null>(null);
+  const d = matches?.find(m => m.id === selected);
+  const held = data?.holds.some(hold => hold.match_id === selected);
   const planCleanup = async () => {
-    const body = { matchId: selected, expected_version: d?.version, reason },
-      path = '/platform/data/purge',
-      result = await client.request<{ previewToken: string }>('/platform/preview', {
+    const body = {matchId: selected, expected_version: d?.version, reason};
+    const path = '/platform/data/purge';
+    const result = await client.request<{previewToken: string}>(
+      '/platform/preview',
+      {
         path,
         payload: body,
-      });
-    setPreview({ path, body, token: result.previewToken, details: result });
+      },
+    );
+    setPreview({path, body, token: result.previewToken, details: result});
   };
   return (
     <>
       <Header title="历史与数据" />
-      <p>比赛结束后可下载赛后资料。请将需要留存的文件保存到主办方自己的设备或文件夹。</p>
+      <p>
+        比赛结束后可下载赛后资料。请将需要留存的文件保存到主办方自己的设备或文件夹。
+      </p>
       <Field label="选择比赛">
         <select
           value={selected}
-          onChange={(e) => {
+          onChange={e => {
             setSelected(e.target.value);
             setPreview(null);
           }}
         >
           <option value="">请选择</option>
-          {matches?.map((d) => (
+          {matches?.map(d => (
             <option key={d.id} value={d.id}>
-              {d.name}，{d.kind === 'trial' ? '试玩' : '正式比赛'}，{states[d.state]}
+              {d.name}，{d.kind === 'trial' ? '试玩' : '正式比赛'}，
+              {states[d.state]}
             </option>
           ))}
         </select>
@@ -1407,16 +1632,24 @@ function DataCenter({ client, tick, run }: { client: PlatformClient; tick: numbe
       <Field label="操作原因与核验依据">
         <textarea
           value={reason}
-          onChange={(e) => {
+          onChange={e => {
             setReason(e.target.value);
             setPreview(null);
           }}
         />
       </Field>
       <div className="platform-row-actions">
-        {d && <a href={`/m/${d.id}/history?audience=staff`}>查看与下载赛后资料</a>}
+        {d && (
+          <a href={`/m/${d.id}/history?audience=staff`}>查看与下载赛后资料</a>
+        )}
         <Button
-          disabled={!d || !reason || !!held || d.state === 'purge_pending' || d.state === 'purged'}
+          disabled={
+            !d ||
+            !reason ||
+            !!held ||
+            d.state === 'purge_pending' ||
+            d.state === 'purged'
+          }
           onClick={() => void run(planCleanup)}
         >
           预览到期清理
@@ -1431,7 +1664,9 @@ function DataCenter({ client, tick, run }: { client: PlatformClient; tick: numbe
                   matchId: selected,
                   expected_version: d?.version,
                   reason,
-                  ...(held ? { release: true } : { reviewUtc: Date.now() + 30 * 86400000 }),
+                  ...(held
+                    ? {release: true}
+                    : {reviewUtc: Date.now() + 30 * 86400000}),
                 },
                 true,
               ),
@@ -1467,24 +1702,40 @@ function DataCenter({ client, tick, run }: { client: PlatformClient; tick: numbe
     </>
   );
 }
-function RoleManager({ client, tick, run }: { client: PlatformClient; tick: number; run: Run }) {
-  const { data } = useRows<unknown>(client, '/platform/security', tick),
-    { data: accounts } = useRows<PlatformAccount[]>(client, '/platform/accounts', tick),
-    { data: matches } = useRows<MatchEntry[]>(client, '/platform/matches', tick),
-    [id, setId] = useState(''),
-    [role, setRole] = useState('admin'),
-    [scope, setScope] = useState(''),
-    [reason, setReason] = useState('');
-  const a = accounts?.find((a) => a.id === id);
+function RoleManager({
+  client,
+  tick,
+  run,
+}: {
+  client: PlatformClient;
+  tick: number;
+  run: Run;
+}) {
+  const {data} = useRows<unknown>(client, '/platform/security', tick);
+  const {data: accounts} = useRows<PlatformAccount[]>(
+    client,
+    '/platform/accounts',
+    tick,
+  );
+  const {data: matches} = useRows<MatchEntry[]>(
+    client,
+    '/platform/matches',
+    tick,
+  );
+  const [id, setId] = useState('');
+  const [role, setRole] = useState('admin');
+  const [scope, setScope] = useState('');
+  const [reason, setReason] = useState('');
+  const a = accounts?.find(a => a.id === id);
   return (
     <>
       <Header title="平台权限与所有权" />
       <Field label="已激活工作人员">
-        <select value={id} onChange={(e) => setId(e.target.value)}>
+        <select value={id} onChange={e => setId(e.target.value)}>
           <option value="">请选择</option>
           {accounts
-            ?.filter((a) => a.kind === 'staff' && a.status === 'active')
-            .map((a) => (
+            ?.filter(a => a.kind === 'staff' && a.status === 'active')
+            .map(a => (
               <option key={a.id} value={a.id}>
                 {a.name}
               </option>
@@ -1492,7 +1743,7 @@ function RoleManager({ client, tick, run }: { client: PlatformClient; tick: numb
         </select>
       </Field>
       <Field label="平台角色">
-        <select value={role} onChange={(e) => setRole(e.target.value)}>
+        <select value={role} onChange={e => setRole(e.target.value)}>
           {Object.entries(roles).map(([v, label]) => (
             <option key={v} value={v}>
               {label}
@@ -1502,9 +1753,9 @@ function RoleManager({ client, tick, run }: { client: PlatformClient; tick: numb
       </Field>
       {role === 'archivist' && (
         <Field label="允许管理哪场比赛的资料（30天有效）">
-          <select value={scope} onChange={(e) => setScope(e.target.value)}>
+          <select value={scope} onChange={e => setScope(e.target.value)}>
             <option value="">请选择比赛</option>
-            {matches?.map((m) => (
+            {matches?.map(m => (
               <option value={m.id} key={m.id}>
                 {m.name}
               </option>
@@ -1513,13 +1764,15 @@ function RoleManager({ client, tick, run }: { client: PlatformClient; tick: numb
         </Field>
       )}
       <Field label="原因">
-        <input value={reason} onChange={(e) => setReason(e.target.value)} />
+        <input value={reason} onChange={e => setReason(e.target.value)} />
       </Field>
       <div className="platform-row-actions">
-        {[true, false].map((enabled) => (
+        {[true, false].map(enabled => (
           <Button
             key={String(enabled)}
-            disabled={!a || !reason || (enabled && role === 'archivist' && !scope)}
+            disabled={
+              !a || !reason || (enabled && role === 'archivist' && !scope)
+            }
             onClick={() =>
               void run(() =>
                 client.mutate(
@@ -1530,7 +1783,9 @@ function RoleManager({ client, tick, run }: { client: PlatformClient; tick: numb
                     enabled,
                     expected_version: a?.version,
                     reason,
-                    ...(enabled && role === 'archivist' ? { matchId: scope } : {}),
+                    ...(enabled && role === 'archivist'
+                      ? {matchId: scope}
+                      : {}),
                   },
                   true,
                 ),
@@ -1548,55 +1803,76 @@ function RoleManager({ client, tick, run }: { client: PlatformClient; tick: numb
     </>
   );
 }
-export function MatchApp({ id }: { id: string }) {
-  const requestedAudience = new URLSearchParams(location.search).get('audience');
-  const internal = location.pathname.slice(`/m/${id}`.length) || '/',
-    audience: 'staff' | 'player' =
-      internal.startsWith('/judge') ||
-      internal === '/manage' ||
-      internal === '/display' ||
-      requestedAudience === 'staff' ||
-      requestedAudience === 'judge' ||
-      (!internal.startsWith('/player') &&
-        requestedAudience !== 'player' &&
-        sessionStorage.getItem('df.portal.audience') === 'staff')
-        ? 'staff'
-        : 'player';
-  const source = useMemo(() => new HttpSource(id, audience), [id, audience]),
-    client = useMemo(() => new PlatformClient(audience), [audience]),
-    [entry, setEntry] = useState<MatchEntry | null>(null),
-    [error, setError] = useState('');
+export function MatchApp({id}: {id: string}) {
+  const requestedAudience = new URLSearchParams(location.search).get(
+    'audience',
+  );
+  const internal = location.pathname.slice(`/m/${id}`.length) || '/';
+  const audience: 'staff' | 'player' =
+    internal.startsWith('/judge') ||
+    internal === '/manage' ||
+    internal === '/display' ||
+    requestedAudience === 'staff' ||
+    requestedAudience === 'judge' ||
+    (!internal.startsWith('/player') &&
+      requestedAudience !== 'player' &&
+      sessionStorage.getItem('df.portal.audience') === 'staff')
+      ? 'staff'
+      : 'player';
+  const source = useMemo(() => new HttpSource(id, audience), [id, audience]);
+  const client = useMemo(() => new PlatformClient(audience), [audience]);
+  const [entry, setEntry] = useState<MatchEntry | null>(null);
+  const [error, setError] = useState('');
   useEffect(() => {
     sessionStorage.setItem('df.portal.audience', audience);
     let active = true;
     void (async () => {
       const session = await client.load();
-      if (!active) return;
+      if (!active) {
+        return;
+      }
       if (!session) {
         location.replace(`/?audience=${audience}`);
         return;
       }
       const rows = await client.request<MatchEntry[]>('/me/matches');
-      let current = rows.find((d) => d.id === id);
-      if (!current && session.roles.some((role) => role === 'owner' || role === 'admin'))
-        current = (await client.request<MatchEntry[]>('/platform/matches')).find(
-          (d) => d.id === id,
-        );
-      if (!active) return;
+      let current = rows.find(d => d.id === id);
+      if (
+        !current &&
+        session.roles.some(role => role === 'owner' || role === 'admin')
+      ) {
+        current = (
+          await client.request<MatchEntry[]>('/platform/matches')
+        ).find(d => d.id === id);
+      }
+      if (!active) {
+        return;
+      }
       if (internal !== '/manage' && internal !== '/history') {
-        if (current?.membership?.state !== 'bound' || current.state !== 'available') {
+        if (
+          current?.membership?.state !== 'bound' ||
+          current.state !== 'available'
+        ) {
           location.replace(`/matches?audience=${audience}`);
           return;
         }
         if (internal === '/' || internal === '/login') {
-          location.replace(`/m/${id}/${audience === 'staff' ? 'judge' : 'player'}`);
+          location.replace(
+            `/m/${id}/${audience === 'staff' ? 'judge' : 'player'}`,
+          );
           return;
         }
       }
-      if (!current) throw new Error('当前账号不能查看这场比赛。请返回我的比赛选择场次。');
+      if (!current) {
+        throw new Error('当前账号不能查看这场比赛。请返回我的比赛选择场次。');
+      }
       setEntry(current);
-    })().catch((e) => {
-      if (active) setError(e instanceof Error ? e.message : '暂时无法读取比赛，请刷新重试。');
+    })().catch(e => {
+      if (active) {
+        setError(
+          e instanceof Error ? e.message : '暂时无法读取比赛，请刷新重试。',
+        );
+      }
     });
     return () => {
       active = false;
@@ -1608,7 +1884,7 @@ export function MatchApp({ id }: { id: string }) {
       alert('请先在本场查询原操作结果，取得确定结论后再切换比赛。');
     }
   };
-  if (!entry)
+  if (!entry) {
     return (
       <main className="platform-history">
         {error ? (
@@ -1621,8 +1897,12 @@ export function MatchApp({ id }: { id: string }) {
         )}
       </main>
     );
-  if (internal !== '/history' && internal !== '/manage')
-    return <App source={source} base={`/m/${id}`} matchContext={{ entry, audience }} />;
+  }
+  if (internal !== '/history' && internal !== '/manage') {
+    return (
+      <App source={source} base={`/m/${id}`} matchContext={{entry, audience}} />
+    );
+  }
   return (
     <div className="platform-shell">
       <aside className="platform-sidebar">
@@ -1631,11 +1911,15 @@ export function MatchApp({ id }: { id: string }) {
           <a href={`/matches?audience=${audience}`} onClick={leave}>
             我的比赛
           </a>
-          {entry.membership?.state === 'bound' && entry.state === 'available' && (
-            <a href={`/m/${id}/${audience === 'staff' ? 'judge' : 'player'}`} onClick={leave}>
-              返回本场比赛
-            </a>
-          )}
+          {entry.membership?.state === 'bound' &&
+            entry.state === 'available' && (
+              <a
+                href={`/m/${id}/${audience === 'staff' ? 'judge' : 'player'}`}
+                onClick={leave}
+              >
+                返回本场比赛
+              </a>
+            )}
           <a href={`/account?audience=${audience}`} onClick={leave}>
             账号与安全
           </a>
@@ -1651,34 +1935,38 @@ export function MatchApp({ id }: { id: string }) {
     </div>
   );
 }
-function MatchManagement({ client, id }: { client: PlatformClient; id: string }) {
-  const [tick, setTick] = useState(0),
-    [error, setError] = useState(''),
-    [notice, setNotice] = useState(''),
-    [ready, setReady] = useState(false),
-    [busy, setBusy] = useState(false);
+function MatchManagement({client, id}: {client: PlatformClient; id: string}) {
+  const [tick, setTick] = useState(0);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState(false);
   const running = useRef(false);
   useEffect(() => {
     void client
       .load()
       .then(() => setReady(true))
-      .catch((e) => setError(e.message));
+      .catch(e => setError(e.message));
   }, [client]);
-  const run: Run = async (work) => {
-    if (running.current) return;
+  const run: Run = async work => {
+    if (running.current) {
+      return;
+    }
     running.current = true;
     setBusy(true);
     setError('');
     setNotice('正在提交操作，请稍候。');
     try {
       const result = await work();
-      await client.completeOperation(result, () => setNotice('操作正在处理中，请稍候。'));
+      await client.completeOperation(result, () =>
+        setNotice('操作正在处理中，请稍候。'),
+      );
       setNotice('操作已完成。');
     } catch (e) {
       setNotice('');
       setError(e instanceof Error ? e.message : '操作未完成，请查询原操作。');
     } finally {
-      setTick((t) => t + 1);
+      setTick(t => t + 1);
       running.current = false;
       setBusy(false);
     }
@@ -1686,15 +1974,26 @@ function MatchManagement({ client, id }: { client: PlatformClient; id: string })
   return (
     <main className="platform-history">
       <Feedback
-        messages={platformFeedbackMessages(client, run, error, notice, busy, () => {
-          setError('');
-          setNotice('');
-        })}
+        messages={platformFeedbackMessages(
+          client,
+          run,
+          error,
+          notice,
+          busy,
+          () => {
+            setError('');
+            setNotice('');
+          },
+        )}
       />
-      <fieldset className="platform-action-scope" disabled={busy} aria-busy={busy}>
+      <fieldset
+        className="platform-action-scope"
+        disabled={busy}
+        aria-busy={busy}
+      >
         {ready ? (
           <>
-            <Button onClick={() => setTick((t) => t + 1)}>刷新本场成员</Button>
+            <Button onClick={() => setTick(t => t + 1)}>刷新本场成员</Button>
             <ManageMatch client={client} id={id} tick={tick} run={run} />
           </>
         ) : (
@@ -1711,22 +2010,32 @@ const downloadLabels: Record<MatchDownload, string> = {
   backup: '下载加密备份',
 };
 
-function History({ client, id }: { client: PlatformClient; id: string }) {
-  const [history, setHistory] = useState<MatchHistory | null>(null),
-    [error, setError] = useState(''),
-    [busy, setBusy] = useState(false),
-    [record, setRecord] = useState<{ label: string; data: unknown } | null>(null);
+function History({client, id}: {client: PlatformClient; id: string}) {
+  const [history, setHistory] = useState<MatchHistory | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [record, setRecord] = useState<{label: string; data: unknown} | null>(
+    null,
+  );
   const path = `/matches/${id}/history`;
   useEffect(() => {
     let active = true;
     void client
       .load()
       .then(() => client.request<MatchHistory>(path))
-      .then((value) => {
-        if (active) setHistory(value);
+      .then(value => {
+        if (active) {
+          setHistory(value);
+        }
       })
-      .catch((e) => {
-        if (active) setError(e instanceof Error ? e.message : '暂时无法读取赛后资料，请刷新重试。');
+      .catch(e => {
+        if (active) {
+          setError(
+            e instanceof Error
+              ? e.message
+              : '暂时无法读取赛后资料，请刷新重试。',
+          );
+        }
       });
     return () => {
       active = false;
@@ -1739,7 +2048,9 @@ function History({ client, id }: { client: PlatformClient; id: string }) {
       await work();
     } catch (e) {
       setError(
-        e instanceof Error && e.name !== 'AbortError' ? e.message : '操作未完成，请稍后重试。',
+        e instanceof Error && e.name !== 'AbortError'
+          ? e.message
+          : '操作未完成，请稍后重试。',
       );
     } finally {
       setBusy(false);
@@ -1747,11 +2058,13 @@ function History({ client, id }: { client: PlatformClient; id: string }) {
   }
   function view(label: string, subpath: string) {
     setRecord(null);
-    return run(async () => setRecord({ label, data: await client.request(`${path}/${subpath}`) }));
+    return run(async () =>
+      setRecord({label, data: await client.request(`${path}/${subpath}`)}),
+    );
   }
   function download(kind: MatchDownload, version?: number) {
     return run(async () => {
-      const file = await client.request<{ fileName: string; text: string }>(
+      const file = await client.request<{fileName: string; text: string}>(
         `${path}/download/${kind}${version === undefined ? '' : `?version=${version}`}`,
       );
       saveDownload(file.fileName, file.text);
@@ -1767,12 +2080,14 @@ function History({ client, id }: { client: PlatformClient; id: string }) {
       )}
       {!history && !error && <p role="status">正在读取赛后资料。</p>}
       {history && history.phase !== 'ended' && (
-        <section className="platform-detail">比赛结束后可以在这里查看战报。</section>
+        <section className="platform-detail">
+          比赛结束后可以在这里查看战报。
+        </section>
       )}
       {history?.phase === 'ended' && history.versions.length === 0 && (
         <section className="platform-detail">目前没有可查看的战报。</section>
       )}
-      {history?.versions.map((row) => (
+      {history?.versions.map(row => (
         <article key={row.version} className="platform-match-row">
           <div>
             <h2>第{row.version}版战报</h2>
@@ -1782,12 +2097,20 @@ function History({ client, id }: { client: PlatformClient; id: string }) {
           <div className="platform-row-actions">
             <Button
               disabled={busy}
-              onClick={() => void view(`第${row.version}版战报`, `report?version=${row.version}`)}
+              onClick={() =>
+                void view(
+                  `第${row.version}版战报`,
+                  `report?version=${row.version}`,
+                )
+              }
             >
               查看战报
             </Button>
             {history.downloads.includes('report') && (
-              <Button disabled={busy} onClick={() => void download('report', row.version)}>
+              <Button
+                disabled={busy}
+                onClick={() => void download('report', row.version)}
+              >
                 下载战报
               </Button>
             )}
@@ -1799,18 +2122,26 @@ function History({ client, id }: { client: PlatformClient; id: string }) {
           查看完整复盘
         </Button>
       )}
-      {history?.phase === 'ended' && history.versions.length > 0 && !history.replayAvailable && (
-        <p>本场目前只提供战报，不再提供完整复盘。</p>
-      )}
+      {history?.phase === 'ended' &&
+        history.versions.length > 0 &&
+        !history.replayAvailable && (
+          <p>本场目前只提供战报，不再提供完整复盘。</p>
+        )}
       {!!history?.downloads.length && (
         <section className="platform-detail">
           <h2>主办方留存资料</h2>
-          <p>文件下载后由主办方自行保管。请把包含比赛秘密的资料放在仅授权人员可访问的位置。</p>
+          <p>
+            文件下载后由主办方自行保管。请把包含比赛秘密的资料放在仅授权人员可访问的位置。
+          </p>
           <div className="platform-row-actions">
             {history.downloads
-              .filter((kind) => kind !== 'report')
-              .map((kind) => (
-                <Button key={kind} disabled={busy} onClick={() => void download(kind)}>
+              .filter(kind => kind !== 'report')
+              .map(kind => (
+                <Button
+                  key={kind}
+                  disabled={busy}
+                  onClick={() => void download(kind)}
+                >
                   {downloadLabels[kind]}
                 </Button>
               ))}

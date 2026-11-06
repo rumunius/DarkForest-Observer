@@ -51,9 +51,13 @@ export function migrate(storage: DurableObjectStorage): void {
       'CREATE TABLE IF NOT EXISTS schema_meta (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)',
     );
     const version = sql
-      .exec<{ version: number }>('SELECT COALESCE(MAX(version),0) AS version FROM schema_meta')
+      .exec<{version: number}>(
+        'SELECT COALESCE(MAX(version),0) AS version FROM schema_meta',
+      )
       .one().version;
-    if (version > SCHEMA_VERSION) throw new Error('SCHEMA_NEWER_THAN_CODE');
+    if (version > SCHEMA_VERSION) {
+      throw new Error('SCHEMA_NEWER_THAN_CODE');
+    }
     if (version === 0) {
       sql.exec(migration1);
       sql.exec('INSERT INTO schema_meta VALUES (?, ?)', 1, Date.now());
@@ -65,8 +69,12 @@ export function migrate(storage: DurableObjectStorage): void {
       sql.exec(
         "UPDATE matches SET participant_count=MAX(2,(SELECT COUNT(*) FROM players WHERE entry_status='registered'))",
       );
-      sql.exec('CREATE TABLE roster_members (player_id TEXT PRIMARY KEY REFERENCES players(id))');
-      sql.exec("INSERT INTO roster_members SELECT id FROM players WHERE entry_status='registered'");
+      sql.exec(
+        'CREATE TABLE roster_members (player_id TEXT PRIMARY KEY REFERENCES players(id))',
+      );
+      sql.exec(
+        "INSERT INTO roster_members SELECT id FROM players WHERE entry_status='registered'",
+      );
       sql.exec('INSERT INTO schema_meta VALUES(2,?)', Date.now());
     }
     if (version < 3) {
@@ -81,13 +89,21 @@ export function migrate(storage: DurableObjectStorage): void {
       sql.exec('INSERT INTO schema_meta VALUES(4,?)', Date.now());
     }
     if (version < 5) {
-      sql.exec("ALTER TABLE matches ADD COLUMN recovery_state TEXT NOT NULL DEFAULT ''");
-      sql.exec('ALTER TABLE accounts ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
-      sql.exec("ALTER TABLE result_reports ADD COLUMN correction_reason TEXT NOT NULL DEFAULT ''");
+      sql.exec(
+        "ALTER TABLE matches ADD COLUMN recovery_state TEXT NOT NULL DEFAULT ''",
+      );
+      sql.exec(
+        'ALTER TABLE accounts ADD COLUMN version INTEGER NOT NULL DEFAULT 1',
+      );
+      sql.exec(
+        "ALTER TABLE result_reports ADD COLUMN correction_reason TEXT NOT NULL DEFAULT ''",
+      );
       sql.exec('ALTER TABLE result_reports ADD COLUMN snapshot_json TEXT');
       sql.exec('ALTER TABLE notice_queue ADD COLUMN ordering_seq INTEGER');
       sql.exec('UPDATE notice_queue SET ordering_seq=rowid');
-      sql.exec('CREATE UNIQUE INDEX notice_order ON notice_queue(ordering_seq)');
+      sql.exec(
+        'CREATE UNIQUE INDEX notice_order ON notice_queue(ordering_seq)',
+      );
       sql.exec(
         'CREATE TABLE recovery_log(id TEXT PRIMARY KEY, state TEXT NOT NULL, created_utc INTEGER NOT NULL, detail TEXT NOT NULL)',
       );
@@ -97,19 +113,31 @@ export function migrate(storage: DurableObjectStorage): void {
       sql.exec('INSERT INTO schema_meta VALUES(5,?)', Date.now());
     }
     if (version < 6) {
-      sql.exec('ALTER TABLE scheduled_events ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0');
-      sql.exec('ALTER TABLE scheduled_events ADD COLUMN last_attempt_utc INTEGER');
-      sql.exec("ALTER TABLE scheduled_events ADD COLUMN last_error TEXT NOT NULL DEFAULT ''");
-      sql.exec('ALTER TABLE scheduled_events ADD COLUMN last_error_utc INTEGER');
+      sql.exec(
+        'ALTER TABLE scheduled_events ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0',
+      );
+      sql.exec(
+        'ALTER TABLE scheduled_events ADD COLUMN last_attempt_utc INTEGER',
+      );
+      sql.exec(
+        "ALTER TABLE scheduled_events ADD COLUMN last_error TEXT NOT NULL DEFAULT ''",
+      );
+      sql.exec(
+        'ALTER TABLE scheduled_events ADD COLUMN last_error_utc INTEGER',
+      );
       sql.exec('ALTER TABLE notice_queue ADD COLUMN copied_by TEXT');
       sql.exec('ALTER TABLE notice_queue ADD COLUMN copied_utc INTEGER');
       sql.exec('ALTER TABLE notice_queue ADD COLUMN sent_by TEXT');
       sql.exec('ALTER TABLE notice_queue ADD COLUMN sent_utc INTEGER');
-      sql.exec('ALTER TABLE notice_queue ADD COLUMN priority INTEGER NOT NULL DEFAULT 0');
+      sql.exec(
+        'ALTER TABLE notice_queue ADD COLUMN priority INTEGER NOT NULL DEFAULT 0',
+      );
       sql.exec(
         "UPDATE notice_queue SET priority=CASE title WHEN '永久淘汰' THEN 100 WHEN '飞船被击毁' THEN 90 WHEN '母星毁灭' THEN 80 ELSE 0 END",
       );
-      sql.exec('CREATE INDEX notice_pending ON notice_queue(status,priority,ordering_seq)');
+      sql.exec(
+        'CREATE INDEX notice_pending ON notice_queue(status,priority,ordering_seq)',
+      );
       sql.exec('ALTER TABLE audit_logs ADD COLUMN game_ms INTEGER');
       sql.exec('ALTER TABLE previews ADD COLUMN impact TEXT');
       sql.exec(
@@ -140,7 +168,9 @@ export function migrate(storage: DurableObjectStorage): void {
       sql.exec(
         'CREATE TABLE IF NOT EXISTS judge_command_log(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,actor TEXT NOT NULL REFERENCES accounts(id),request_id TEXT NOT NULL,status TEXT NOT NULL,path TEXT NOT NULL,created_utc INTEGER NOT NULL,game_ms INTEGER NOT NULL,detail TEXT NOT NULL,ciphertext TEXT)',
       );
-      sql.exec('CREATE INDEX IF NOT EXISTS command_log_order ON judge_command_log(actor,seq)');
+      sql.exec(
+        'CREATE INDEX IF NOT EXISTS command_log_order ON judge_command_log(actor,seq)',
+      );
       sql.exec('INSERT INTO schema_meta VALUES(7,?)', Date.now());
     }
     if (version < 8) {
@@ -159,7 +189,11 @@ export function migrate(storage: DurableObjectStorage): void {
       sql.exec('INSERT INTO schema_meta VALUES(8,?)', Date.now());
     }
     sql.exec('DROP TABLE IF EXISTS archive_parts');
-    if (sql.exec<{ foreign_keys: number }>('PRAGMA foreign_keys').one().foreign_keys !== 1)
+    if (
+      sql.exec<{foreign_keys: number}>('PRAGMA foreign_keys').one()
+        .foreign_keys !== 1
+    ) {
       throw new Error('FOREIGN_KEYS_DISABLED');
+    }
   });
 }

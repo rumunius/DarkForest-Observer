@@ -64,7 +64,11 @@ export interface MatchMember {
 export type MatchDownload = 'report' | 'replay' | 'audit' | 'backup';
 export interface MatchHistory {
   phase: string;
-  versions: { version: number; created_utc: number; correction_reason: string }[];
+  versions: Array<{
+    version: number;
+    created_utc: number;
+    correction_reason: string;
+  }>;
   replayAvailable: boolean;
   downloads: MatchDownload[];
 }

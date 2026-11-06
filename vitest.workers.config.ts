@@ -1,9 +1,9 @@
-import { defineConfig } from 'vitest/config';
-import { cloudflareTest } from '@cloudflare/vitest-plugin';
+import {defineConfig} from 'vitest/config';
+import {cloudflareTest} from '@cloudflare/vitest-plugin';
 export default defineConfig({
   plugins: [
     cloudflareTest({
-      wrangler: { configPath: './apps/match-worker/wrangler.jsonc' },
+      wrangler: {configPath: './apps/match-worker/wrangler.jsonc'},
       miniflare: {
         bindings: {
           MATCH_ID: 'integration',

@@ -1,5 +1,19 @@
 {
   "singleQuote": true,
   "trailingComma": "all",
-  "printWidth": 100
+  "printWidth": 100,
+  "overrides": [
+    {
+      "files": ["*.{js,mjs,cjs,ts,tsx,mts,cts}"],
+      "options": {
+        "tabWidth": 2,
+        "useTabs": false,
+        "semi": true,
+        "printWidth": 80,
+        "bracketSpacing": false,
+        "arrowParens": "avoid",
+        "endOfLine": "lf"
+      }
+    }
+  ]
 }

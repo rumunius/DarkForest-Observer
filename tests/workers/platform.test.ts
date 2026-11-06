@@ -1,16 +1,16 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { env } from 'cloudflare:workers';
-import { reset, runInDurableObject } from 'cloudflare:test';
-import type { BackendEnv, RpcInput } from '../../apps/match-worker/src/rpc/types';
-import type { PlatformSession } from '@darkforest/contracts';
-import { Store } from '../../apps/match-worker/src/storage/store';
-import { Engine } from '../../apps/match-worker/src/services/engine';
-import { archiveReport, finish } from '../../apps/match-worker/src/services/life';
-import { gateway } from '../../apps/web/functions/_lib/gateway';
-import { digest } from '../../apps/match-worker/src/security/crypto';
-import { stableJson } from '../../packages/contracts/src/backend';
-import { totp } from '../../apps/match-worker/src/platform/security';
-import { DarkForestPlatform } from '../../apps/match-worker/src/platform/platform';
+import {beforeEach, describe, expect, it} from 'vitest';
+import {env} from 'cloudflare:workers';
+import {reset, runInDurableObject} from 'cloudflare:test';
+import type {BackendEnv, RpcInput} from '../../apps/match-worker/src/rpc/types';
+import type {PlatformSession} from '@darkforest/contracts';
+import {Store} from '../../apps/match-worker/src/storage/store';
+import {Engine} from '../../apps/match-worker/src/services/engine';
+import {archiveReport, finish} from '../../apps/match-worker/src/services/life';
+import {gateway} from '../../apps/web/functions/_lib/gateway';
+import {digest} from '../../apps/match-worker/src/security/crypto';
+import {stableJson} from '../../packages/contracts/src/backend';
+import {totp} from '../../apps/match-worker/src/platform/security';
+import {DarkForestPlatform} from '../../apps/match-worker/src/platform/platform';
 import {
   createCheckpoint,
   openCheckpoint,
@@ -19,11 +19,15 @@ import {
 
 const bindings = env as unknown as BackendEnv;
 const platform = () => bindings.PLATFORM_DO!.getByName('platform:primary');
-type Login = { token: string; session: PlatformSession; credential: string };
+interface Login {
+  token: string;
+  session: PlatformSession;
+  credential: string;
+}
 let owner: Login;
 async function ageSession(login = owner, age = 3600000) {
-  const hash = await digest(login.token),
-    created = Date.now() - age;
+  const hash = await digest(login.token);
+  const created = Date.now() - age;
   await runInDurableObject(platform(), (_instance, state) =>
     new Store(state.storage).exec(
       'UPDATE platform_sessions SET created_utc=?,expires=?,reauth_utc=0 WHERE token_hash=?',
@@ -39,19 +43,19 @@ async function call(path: string, body?: unknown, login = owner) {
     path,
     edgeUtc: Date.now(),
     clientKey: 'platform-test',
-    ...(body === undefined ? {} : { body }),
-    ...(login ? { token: login.token, csrf: login.session.csrfToken } : {}),
+    ...(body === undefined ? {} : {body}),
+    ...(login ? {token: login.token, csrf: login.session.csrfToken} : {}),
   };
   const reply = await platform().call(input);
-  return { ...reply, body: JSON.parse(reply.body) };
+  return {...reply, body: JSON.parse(reply.body)};
 }
 async function activate(invitation: string, kind = 'staff'): Promise<Login> {
-  const claim = await call('/auth/claim', { invitation });
+  const claim = await call('/auth/claim', {invitation});
   expect(claim.status, JSON.stringify(claim.body)).toBe(200);
   const credential = claim.body.credential as string;
-  const login = await call('/auth/exchange', { credential, audience: kind });
+  const login = await call('/auth/exchange', {credential, audience: kind});
   expect(login.status, JSON.stringify(login.body)).toBe(200);
-  return { token: login.sessionToken!, session: login.body, credential };
+  return {token: login.sessionToken!, session: login.body, credential};
 }
 async function account(name: string, kind = 'staff') {
   const create = await call('/platform/accounts/create', {
@@ -64,11 +68,15 @@ async function account(name: string, kind = 'staff') {
   return activate(create.body.invitation, kind);
 }
 async function drain() {
-  await runInDurableObject(platform(), (instance) => instance.alarm());
+  await runInDurableObject(platform(), instance => instance.alarm());
 }
-async function match(name: string, kind = 'official', request_id = crypto.randomUUID()) {
+async function match(
+  name: string,
+  kind = 'official',
+  requestId = crypto.randomUUID(),
+) {
   const reply = await call('/platform/matches/create', {
-    request_id,
+    request_id: requestId,
     name,
     kind,
     retentionConfirmed: true,
@@ -76,7 +84,7 @@ async function match(name: string, kind = 'official', request_id = crypto.random
   });
   expect(reply.status, JSON.stringify(reply.body)).toBe(202);
   await drain();
-  const op = await call(`/platform/operations/${request_id}`);
+  const op = await call(`/platform/operations/${requestId}`);
   expect(op.body.status, JSON.stringify(op.body)).toBe('succeeded');
   return reply.body.matchId as string;
 }
@@ -90,7 +98,11 @@ async function invite(id: string, login: Login) {
   await drain();
   const accept = await call(
     `/matches/${id}/members/accept`,
-    { request_id: crypto.randomUUID(), consent: true, reason: '本人接受比赛与数据期限' },
+    {
+      request_id: crypto.randomUUID(),
+      consent: true,
+      reason: '本人接受比赛与数据期限',
+    },
     login,
   );
   expect(accept.status, JSON.stringify(accept.body)).toBe(202);
@@ -99,7 +111,12 @@ async function invite(id: string, login: Login) {
 async function bind(id: string, login: Login) {
   await invite(id, login);
 }
-async function assign(id: string, login: Login, seat: string, expectedVersion = 0) {
+async function assign(
+  id: string,
+  login: Login,
+  seat: string,
+  expectedVersion = 0,
+) {
   const body = {
     accountId: login.session.account.id,
     seat,
@@ -129,19 +146,20 @@ async function publish(id: string) {
     reason: '发布测试比赛',
   });
   await drain();
-  expect((await call(`/platform/operations/${reply.body.operationId}`)).body.status).toBe(
-    'succeeded',
-  );
+  expect(
+    (await call(`/platform/operations/${reply.body.operationId}`)).body.status,
+  ).toBe('succeeded');
 }
 async function removeMember(
   id: string,
   target: Login,
   actor = owner,
-  request_id = crypto.randomUUID(),
+  requestId = crypto.randomUUID(),
 ) {
-  const current = (await call(`/matches/${id}/manage`, undefined, actor)).body.current;
+  const current = (await call(`/matches/${id}/manage`, undefined, actor)).body
+    .current;
   const body = {
-    request_id,
+    request_id: requestId,
     accountId: target.session.account.id,
     expectedRevision: current.revision,
     reason: '发布前移除成员并回收编号',
@@ -149,16 +167,18 @@ async function removeMember(
   const reply = await call(`/matches/${id}/members/remove`, body, actor);
   expect(reply.status, JSON.stringify(reply.body)).toBe(202);
   await drain();
-  const op = await call(`/me/operations/${request_id}`, undefined, actor);
-  return { op: op.body, body };
+  const op = await call(`/me/operations/${requestId}`, undefined, actor);
+  return {op: op.body, body};
 }
 async function running() {
   const id = await match('正式场A');
-  const p1 = await account('玩家一', 'player'),
-    p2 = await account('玩家二', 'player'),
-    j2 = await account('通讯裁判'),
-    j3 = await account('事件裁判');
-  for (const p of [p1, p2]) await bind(id, p);
+  const p1 = await account('玩家一', 'player');
+  const p2 = await account('玩家二', 'player');
+  const j2 = await account('通讯裁判');
+  const j3 = await account('事件裁判');
+  for (const p of [p1, p2]) {
+    await bind(id, p);
+  }
   for (const [login, seat] of [
     [owner, 'J01'],
     [j2, 'J02'],
@@ -168,24 +188,26 @@ async function running() {
     await assign(id, login, seat);
   }
   await publish(id);
-  return { id, p1, p2, j2, j3 };
+  return {id, p1, p2, j2, j3};
 }
 beforeEach(async () => {
   await reset();
   owner = undefined as unknown as Login;
   const installed = JSON.parse(
-    await platform().bootstrap('integration-platform-maintenance-secret', { name: '平台所有者' }),
+    await platform().bootstrap('integration-platform-maintenance-secret', {
+      name: '平台所有者',
+    }),
   );
   owner = await activate(installed.invitation);
 });
 describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待）', () => {
   it('草稿可移除未接受、已接受及已绑定成员，释放中间编号且不串用身份数据', async () => {
-    const id = await match('移除成员草稿'),
-      pending = await account('尚未接受', 'player'),
-      accepted = await account('已接受工作人员'),
-      first = await account('首位玩家', 'player'),
-      middle = await account('中间玩家', 'player'),
-      last = await account('末位玩家', 'player');
+    const id = await match('移除成员草稿');
+    const pending = await account('尚未接受', 'player');
+    const accepted = await account('已接受工作人员');
+    const first = await account('首位玩家', 'player');
+    const middle = await account('中间玩家', 'player');
+    const last = await account('末位玩家', 'player');
     await call(`/matches/${id}/members/invite`, {
       request_id: crypto.randomUUID(),
       accountId: pending.session.account.id,
@@ -193,7 +215,9 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     });
     await drain();
     await invite(id, accepted);
-    for (const player of [first, middle, last]) await bind(id, player);
+    for (const player of [first, middle, last]) {
+      await bind(id, player);
+    }
     const other = await match('同账号另一场');
     await bind(other, middle);
     for (const target of [pending, accepted]) {
@@ -210,17 +234,28 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       );
       await drain();
       expect(
-        (await call(`/me/operations/${accept.body.operationId}`, undefined, target)).body.status,
+        (
+          await call(
+            `/me/operations/${accept.body.operationId}`,
+            undefined,
+            target,
+          )
+        ).body.status,
       ).toBe('failed');
     }
-    await runInDurableObject(bindings.MATCH_DO.getByName(`match:${id}`), (_instance, state) => {
-      const db = new Store(state.storage);
-      db.exec("UPDATE players SET nickname='旧昵称',tech=1,photons=1,broadcasts=2 WHERE id='C02'");
-      db.exec("INSERT INTO roster_members VALUES('C02')");
-      db.exec(
-        "INSERT INTO homeworlds(player_id,code,status,version) VALUES('C02','123456','pending',1)",
-      );
-    });
+    await runInDurableObject(
+      bindings.MATCH_DO.getByName(`match:${id}`),
+      (_instance, state) => {
+        const db = new Store(state.storage);
+        db.exec(
+          "UPDATE players SET nickname='旧昵称',tech=1,photons=1,broadcasts=2 WHERE id='C02'",
+        );
+        db.exec("INSERT INTO roster_members VALUES('C02')");
+        db.exec(
+          "INSERT INTO homeworlds(player_id,code,status,version) VALUES('C02','123456','pending',1)",
+        );
+      },
+    );
     const removed = await removeMember(id, middle);
     expect(removed.op.status, JSON.stringify(removed.op)).toBe('succeeded');
     // Identical retries return the original receipt, including after the slot is reused.
@@ -230,46 +265,58 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     const retry = await call(`/matches/${id}/members/remove`, removed.body);
     expect(retry.body.status).toBe('succeeded');
     const current = (await call(`/matches/${id}/manage`)).body.current;
-    expect(current.members.map((m: { local_id: string }) => m.local_id).sort()).toEqual([
-      'C01',
-      'C02',
-      'C03',
-    ]);
     expect(
-      current.members.find((m: { account_id: string }) => m.account_id === next.session.account.id)
-        .local_id,
+      current.members.map((m: {local_id: string}) => m.local_id).sort(),
+    ).toEqual(['C01', 'C02', 'C03']);
+    expect(
+      current.members.find(
+        (m: {account_id: string}) => m.account_id === next.session.account.id,
+      ).local_id,
     ).toBe('C02');
     expect(
-      (await call('/me/matches', undefined, middle)).body.map((m: { id: string }) => m.id),
+      (await call('/me/matches', undefined, middle)).body.map(
+        (m: {id: string}) => m.id,
+      ),
     ).toEqual([other]);
-    await runInDurableObject(bindings.MATCH_DO.getByName(`match:${id}`), (_instance, state) => {
-      const db = new Store(state.storage);
-      expect(db.player('C02')).toMatchObject({
-        nickname: null,
-        tech: 0,
-        photons: 0,
-        broadcasts: 0,
-      });
-      expect(db.home('C02')).toBeUndefined();
-      expect(db.roster()).toEqual([]);
-      expect(db.flight('C02')).toMatchObject({ status: 'prelaunch', voyage: 0 });
-    });
+    await runInDurableObject(
+      bindings.MATCH_DO.getByName(`match:${id}`),
+      (_instance, state) => {
+        const db = new Store(state.storage);
+        expect(db.player('C02')).toMatchObject({
+          nickname: null,
+          tech: 0,
+          photons: 0,
+          broadcasts: 0,
+        });
+        expect(db.home('C02')).toBeUndefined();
+        expect(db.roster()).toEqual([]);
+        expect(db.flight('C02')).toMatchObject({
+          status: 'prelaunch',
+          voyage: 0,
+        });
+      },
+    );
     await bind(id, middle);
     expect(
-      (await call('/me/matches', undefined, middle)).body.find((m: { id: string }) => m.id === id)
-        .membership.local_id,
+      (await call('/me/matches', undefined, middle)).body.find(
+        (m: {id: string}) => m.id === id,
+      ).membership.local_id,
     ).toBe('C04');
     await invite(id, owner);
     await assign(id, owner, 'J01');
     await publish(id);
-    expect((await call(`/matches/${id}/snapshot?route=/player`, undefined, middle)).status).toBe(
-      200,
-    );
-    expect((await call(`/matches/${id}/snapshot?route=/player`, undefined, next)).status).toBe(200);
+    expect(
+      (await call(`/matches/${id}/snapshot?route=/player`, undefined, middle))
+        .status,
+    ).toBe(200);
+    expect(
+      (await call(`/matches/${id}/snapshot?route=/player`, undefined, next))
+        .status,
+    ).toBe(200);
   });
   it('已任职裁判可在发布前移除，岗位结束且同岗位能够重新任命', async () => {
-    const id = await match('移除裁判草稿'),
-      judge = await account('待移除裁判');
+    const id = await match('移除裁判草稿');
+    const judge = await account('待移除裁判');
     await invite(id, judge);
     await assign(id, judge, 'J01');
     expect((await removeMember(id, judge)).op.status).toBe('succeeded');
@@ -278,10 +325,12 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     expect(current.assignments[0].ended_utc).toBeTypeOf('number');
     await invite(id, owner);
     await assign(id, owner, 'J01', 2);
-    expect((await call(`/matches/${id}/manage`)).body.current.members[0].local_id).toBe('J01');
+    expect(
+      (await call(`/matches/${id}/manage`)).body.current.members[0].local_id,
+    ).toBe('J01');
   });
   it('总裁判可移除成员，普通玩家不能移除；已发布、冻结和过时版本均拒绝移除', async () => {
-    const { id, p1, p2, j2 } = await running();
+    const {id, p1, p2, j2} = await running();
     const forbidden = await call(
       `/matches/${id}/members/remove`,
       {
@@ -308,12 +357,13 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       ).status,
     ).toBe(403);
     expect((await removeMember(id, p1)).op.status).toBe('failed');
-    const draft = await match('总裁判管理草稿'),
-      head = await account('本场总裁判');
+    const draft = await match('总裁判管理草稿');
+    const head = await account('本场总裁判');
     await invite(draft, head);
     await assign(draft, head, 'J01');
     await bind(draft, p1);
-    const stale = (await call(`/matches/${draft}/manage`)).body.current.revision;
+    const stale = (await call(`/matches/${draft}/manage`)).body.current
+      .revision;
     await bind(draft, p2);
     const conflict = await call(`/matches/${draft}/members/remove`, {
       request_id: crypto.randomUUID(),
@@ -322,17 +372,21 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       reason: '过时页面移除',
     });
     await drain();
-    expect((await call(`/me/operations/${conflict.body.operationId}`)).body.status).toBe('failed');
+    expect(
+      (await call(`/me/operations/${conflict.body.operationId}`)).body.status,
+    ).toBe('failed');
     expect((await removeMember(draft, p1, head)).op.status).toBe('succeeded');
-    await runInDurableObject(bindings.MATCH_DO.getByName(`match:${draft}`), (_instance, state) =>
-      new Store(state.storage).exec(
-        "INSERT INTO settings(key,value) VALUES('parameters_frozen','1')",
-      ),
+    await runInDurableObject(
+      bindings.MATCH_DO.getByName(`match:${draft}`),
+      (_instance, state) =>
+        new Store(state.storage).exec(
+          "INSERT INTO settings(key,value) VALUES('parameters_frozen','1')",
+        ),
     );
     expect((await removeMember(draft, p2, head)).op.status).toBe('failed');
     expect(
       (await call(`/matches/${draft}/manage`)).body.current.members.some(
-        (m: { account_id: string }) => m.account_id === p2.session.account.id,
+        (m: {account_id: string}) => m.account_id === p2.session.account.id,
       ),
     ).toBe(true);
   });
@@ -346,19 +400,24 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       kind: 'staff',
       reason: '核对长期登录下的邀请交付',
     });
-    const invitation = await call(`/platform/invitations/${created.body.invitationId}`);
+    const invitation = await call(
+      `/platform/invitations/${created.body.invitationId}`,
+    );
     expect(invitation.status, JSON.stringify(invitation.body)).toBe(200);
     expect(invitation.body.invitation).toBe(created.body.invitation);
-    const path = '/platform/accounts/status',
-      payload = {
-        accountId: target.session.account.id,
-        status: 'disabled',
-        expected_version: target.session.account.version,
-        reason: '核对取消近期认证后的管理操作',
-      };
-    const missing = await call(path, { ...payload, request_id: crypto.randomUUID() });
+    const path = '/platform/accounts/status';
+    const payload = {
+      accountId: target.session.account.id,
+      status: 'disabled',
+      expected_version: target.session.account.version,
+      reason: '核对取消近期认证后的管理操作',
+    };
+    const missing = await call(path, {
+      ...payload,
+      request_id: crypto.randomUUID(),
+    });
     expect(missing.body.code).toBe('PREVIEW_REQUIRED');
-    const preview = await call('/platform/preview', { path, payload });
+    const preview = await call('/platform/preview', {path, payload});
     expect(preview.status, JSON.stringify(preview.body)).toBe(200);
     await runInDurableObject(platform(), (_instance, state) =>
       new Store(state.storage).exec(
@@ -373,7 +432,7 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       preview_token: preview.body.previewToken,
     });
     expect(expired.body.code).toBe('PREVIEW_REQUIRED');
-    const fresh = await call('/platform/preview', { path, payload });
+    const fresh = await call('/platform/preview', {path, payload});
     const result = await call(path, {
       ...payload,
       request_id: crypto.randomUUID(),
@@ -381,7 +440,9 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     });
     expect(result.status, JSON.stringify(result.body)).toBe(202);
     await drain();
-    expect((await call(`/me/operations/${result.body.operationId}`)).body.status).toBe('succeeded');
+    expect(
+      (await call(`/me/operations/${result.body.operationId}`)).body.status,
+    ).toBe('succeeded');
     expect((await call('/auth/session', undefined, target)).status).toBe(401);
   });
   it('登录会话超过12小时仍需重新登录', async () => {
@@ -394,9 +455,11 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     expect(result.body.code).toBe('UNAUTHENTICATED');
   });
   it('安装一次、邀请只领取一次，数据库只保存摘要', async () => {
-    await runInDurableObject(platform(), async (instance) => {
+    await runInDurableObject(platform(), async instance => {
       await expect(
-        instance.bootstrap('integration-platform-maintenance-secret', { name: '第二所有者' }),
+        instance.bootstrap('integration-platform-maintenance-secret', {
+          name: '第二所有者',
+        }),
       ).rejects.toThrow();
     });
     const created = await call('/platform/accounts/create', {
@@ -406,17 +469,22 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       reason: '测试单次领取',
     });
     await activate(created.body.invitation, 'player');
-    expect((await call('/auth/claim', { invitation: created.body.invitation })).status).toBe(401);
+    expect(
+      (await call('/auth/claim', {invitation: created.body.invitation})).status,
+    ).toBe(401);
     await runInDurableObject(platform(), (_instance, state) => {
       const db = new Store(state.storage);
       expect(
-        db.one('SELECT id FROM invitations WHERE token_hash=?', created.body.invitation),
+        db.one(
+          'SELECT id FROM invitations WHERE token_hash=?',
+          created.body.invitation,
+        ),
       ).toBeUndefined();
     });
   });
   it('A/B创建幂等，空草稿和试玩独立，未知ID不会登记新比赛', async () => {
-    const id = await match('正式场A', 'official', 'create-A'),
-      b = await match('试玩B', 'trial');
+    const id = await match('正式场A', 'official', 'create-A');
+    const b = await match('试玩B', 'trial');
     expect(b).not.toBe(id);
     const replay = await call('/platform/matches/create', {
       request_id: 'create-A',
@@ -441,17 +509,23 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     expect((await call('/matches/unknown/snapshot')).status).toBe(404);
   });
   it('同一长期玩家在两场绑定独立文明；候选不占名单，不获得别场权限', async () => {
-    const a = await match('A'),
-      b = await match('B'),
-      player = await account('同一玩家', 'player');
+    const a = await match('A');
+    const b = await match('B');
+    const player = await account('同一玩家', 'player');
     await bind(a, player);
     const aInfo = (await call(`/matches/${a}/manage`)).body.current;
     expect(aInfo.players).toBe(0);
     expect(aInfo.members[0].local_id).toBe('C01');
-    expect((await call(`/matches/${b}/snapshot`, undefined, player)).status).toBe(403);
-    expect((await call('/platform/accounts', undefined, player)).status).toBe(403);
+    expect(
+      (await call(`/matches/${b}/snapshot`, undefined, player)).status,
+    ).toBe(403);
+    expect((await call('/platform/accounts', undefined, player)).status).toBe(
+      403,
+    );
     await bind(b, player);
-    expect((await call(`/matches/${b}/manage`)).body.current.members[0].local_id).toBe('C01');
+    expect(
+      (await call(`/matches/${b}/manage`)).body.current.members[0].local_id,
+    ).toBe('C01');
     expect((await call('/me/matches', undefined, player)).body).toHaveLength(2);
   });
   it('发布需要总裁判；已发布玩家请求仍走本场状态，平台管理员不隐式执裁', async () => {
@@ -461,11 +535,16 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       reason: '测试发布门槛',
     });
     await drain();
-    expect((await call(`/platform/operations/${reply.body.operationId}`)).body.status).toBe(
-      'failed',
+    expect(
+      (await call(`/platform/operations/${reply.body.operationId}`)).body
+        .status,
+    ).toBe('failed');
+    const {id, p1} = await running();
+    const snapshot = await call(
+      `/matches/${id}/snapshot?route=/player`,
+      undefined,
+      p1,
     );
-    const { id, p1 } = await running();
-    const snapshot = await call(`/matches/${id}/snapshot?route=/player`, undefined, p1);
     expect(snapshot.status, JSON.stringify(snapshot.body)).toBe(200);
     expect(snapshot.body.session.id).toBe('C01');
     expect(snapshot.body.session.matchId).toBe(id);
@@ -476,12 +555,15 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
         admin.session.account.id,
       );
     });
-    expect((await call(`/matches/${id}/snapshot?route=/judge`, undefined, admin)).status).toBe(403);
+    expect(
+      (await call(`/matches/${id}/snapshot?route=/judge`, undefined, admin))
+        .status,
+    ).toBe(403);
   });
   it('玩家接受邀请即原子绑定文明，重复接受不新增文明；只有总裁判也可发布', async () => {
-    const id = await match('单裁判比赛'),
-      p1 = await account('接受邀请玩家一', 'player'),
-      p2 = await account('接受邀请玩家二', 'player');
+    const id = await match('单裁判比赛');
+    const p1 = await account('接受邀请玩家一', 'player');
+    const p2 = await account('接受邀请玩家二', 'player');
     const invitation = await call(`/matches/${id}/members/invite`, {
       request_id: crypto.randomUUID(),
       accountId: p1.session.account.id,
@@ -489,7 +571,9 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     });
     expect(invitation.status).toBe(202);
     await drain();
-    expect((await call('/me/matches', undefined, p1)).body[0].membership.state).toBe('invited');
+    expect(
+      (await call('/me/matches', undefined, p1)).body[0].membership.state,
+    ).toBe('invited');
     const rejected = await call(
       `/matches/${id}/members/accept`,
       {
@@ -501,9 +585,12 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     );
     await drain();
     expect(
-      (await call(`/me/operations/${rejected.body.operationId}`, undefined, p1)).body.status,
+      (await call(`/me/operations/${rejected.body.operationId}`, undefined, p1))
+        .body.status,
     ).toBe('failed');
-    expect((await call('/me/matches', undefined, p1)).body[0].membership.state).toBe('invited');
+    expect(
+      (await call('/me/matches', undefined, p1)).body[0].membership.state,
+    ).toBe('invited');
     for (let attempt = 0; attempt < 2; attempt++) {
       const accepted = await call(
         `/matches/${id}/members/accept`,
@@ -516,12 +603,18 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       );
       await drain();
       expect(
-        (await call(`/me/operations/${accepted.body.operationId}`, undefined, p1)).body.status,
+        (
+          await call(
+            `/me/operations/${accepted.body.operationId}`,
+            undefined,
+            p1,
+          )
+        ).body.status,
       ).toBe('succeeded');
     }
     expect((await call('/me/matches', undefined, p1)).body[0]).toMatchObject({
       phase: 'setup',
-      membership: { state: 'bound', local_id: 'C01' },
+      membership: {state: 'bound', local_id: 'C01'},
     });
     await bind(id, p2);
     await invite(id, owner);
@@ -529,16 +622,24 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     await publish(id);
     const current = (await call(`/matches/${id}/manage`)).body.current;
     expect(
-      current.members.filter((member: { kind: string }) => member.kind === 'player'),
+      current.members.filter(
+        (member: {kind: string}) => member.kind === 'player',
+      ),
     ).toHaveLength(2);
     expect(current.assignments).toHaveLength(1);
-    expect((await call(`/matches/${id}/snapshot?route=/player`, undefined, p1)).status).toBe(200);
+    expect(
+      (await call(`/matches/${id}/snapshot?route=/player`, undefined, p1))
+        .status,
+    ).toBe(200);
   });
   it('生产环境所有者与新所有者均可不启用第二因素', async () => {
     const successor = await account('自愿安全设置的新所有者');
     const productionCall = (path: string, body?: unknown) =>
       runInDurableObject(platform(), async (_instance, state) => {
-        const service = new DarkForestPlatform(state, { ...bindings, APP_ENV: 'preview' });
+        const service = new DarkForestPlatform(state, {
+          ...bindings,
+          APP_ENV: 'preview',
+        });
         const reply = await service.call({
           path,
           method: body ? 'POST' : 'GET',
@@ -548,7 +649,7 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
           edgeUtc: Date.now(),
           clientKey: 'production-2fa-test',
         });
-        return { ...reply, body: JSON.parse(reply.body) };
+        return {...reply, body: JSON.parse(reply.body)};
       });
     expect((await productionCall('/platform/accounts')).status).toBe(200);
     const payload = {
@@ -571,18 +672,25 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     expect(result.status, JSON.stringify(result.body)).toBe(200);
   });
   it('总裁判交接原子撤旧启新，原人不能继续使用旧会话', async () => {
-    const { id } = await running(),
-      next = await account('新总裁判');
+    const {id} = await running();
+    const next = await account('新总裁判');
     await invite(id, next);
     await ageSession();
     await assign(id, next, 'J01', 1);
-    expect((await call(`/matches/${id}/snapshot?route=/judge`, undefined, owner)).status).toBe(403);
-    const fresh = await call(`/matches/${id}/snapshot?route=/judge`, undefined, next);
+    expect(
+      (await call(`/matches/${id}/snapshot?route=/judge`, undefined, owner))
+        .status,
+    ).toBe(403);
+    const fresh = await call(
+      `/matches/${id}/snapshot?route=/judge`,
+      undefined,
+      next,
+    );
     expect(fresh.status, JSON.stringify(fresh.body)).toBe(200);
     const current = (await call(`/matches/${id}/manage`)).body.current;
     expect(
       current.assignments.filter(
-        (a: { seat_id: string; ended_utc: number | null }) =>
+        (a: {seat_id: string; ended_utc: number | null}) =>
           a.seat_id === 'J01' && a.ended_utc === null,
       ),
     ).toHaveLength(1);
@@ -603,34 +711,45 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     expect(preview.status, JSON.stringify(preview.body)).toBe(200);
   });
   it('全局停用拒绝旧会话，逐场收据完成，不淘汰文明', async () => {
-    const { id, p1 } = await running(),
-      accountId = p1.session.account.id,
-      account = (await call('/platform/accounts')).body.find(
-        (a: { id: string }) => a.id === accountId,
-      );
+    const {id, p1} = await running();
+    const accountId = p1.session.account.id;
+    const account = (await call('/platform/accounts')).body.find(
+      (a: {id: string}) => a.id === accountId,
+    );
     const payload = {
-        accountId,
-        status: 'disabled',
-        expected_version: account.version,
-        reason: '本人核验后停用账号',
-      },
-      preview = await call('/platform/preview', { path: '/platform/accounts/status', payload });
+      accountId,
+      status: 'disabled',
+      expected_version: account.version,
+      reason: '本人核验后停用账号',
+    };
+    const preview = await call('/platform/preview', {
+      path: '/platform/accounts/status',
+      payload,
+    });
     const result = await call('/platform/accounts/status', {
       ...payload,
       request_id: 'disable-player',
       preview_token: preview.body.previewToken,
     });
     expect(result.status).toBe(202);
-    expect((await call(`/matches/${id}/snapshot?route=/player`, undefined, p1)).status).toBe(401);
+    expect(
+      (await call(`/matches/${id}/snapshot?route=/player`, undefined, p1))
+        .status,
+    ).toBe(401);
     await drain();
-    expect((await call('/platform/operations/disable-player')).body.status).toBe('succeeded');
-    await runInDurableObject(bindings.MATCH_DO.getByName(`match:${id}`), (_instance, state) => {
-      expect(new Store(state.storage).flight('C01').status).toBe('prelaunch');
-    });
+    expect(
+      (await call('/platform/operations/disable-player')).body.status,
+    ).toBe('succeeded');
+    await runInDurableObject(
+      bindings.MATCH_DO.getByName(`match:${id}`),
+      (_instance, state) => {
+        expect(new Store(state.storage).flight('C01').status).toBe('prelaunch');
+      },
+    );
   });
   it('首次冻结后不能绑定新选手；不靠推荐入口修改场次', async () => {
-    const a = await match('A'),
-      player = await account('晚到玩家', 'player');
+    const a = await match('A');
+    const player = await account('晚到玩家', 'player');
     const invitation = await call(`/matches/${a}/members/invite`, {
       request_id: crypto.randomUUID(),
       accountId: player.session.account.id,
@@ -638,28 +757,32 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     });
     expect(invitation.status).toBe(202);
     await drain();
-    await runInDurableObject(bindings.MATCH_DO.getByName(`match:${a}`), (_instance, state) => {
-      new Store(state.storage).exec(
-        "INSERT INTO settings(key,value) VALUES('parameters_frozen','true')",
-      );
-    });
+    await runInDurableObject(
+      bindings.MATCH_DO.getByName(`match:${a}`),
+      (_instance, state) => {
+        new Store(state.storage).exec(
+          "INSERT INTO settings(key,value) VALUES('parameters_frozen','true')",
+        );
+      },
+    );
     const reply = await call(
       `/matches/${a}/members/accept`,
-      { request_id: 'late-bind', consent: true, reason: '尝试冻结后接受并绑定' },
+      {request_id: 'late-bind', consent: true, reason: '尝试冻结后接受并绑定'},
       player,
     );
     await drain();
-    expect((await call(`/platform/operations/${reply.body.operationId}`)).body.status).toBe(
-      'failed',
-    );
+    expect(
+      (await call(`/platform/operations/${reply.body.operationId}`)).body
+        .status,
+    ).toBe('failed');
   });
   it('无需对象存储即可查看战报版本；只有主办方可以下载赛后资料', async () => {
-    const { id, p1 } = await running();
+    const {id, p1} = await running();
     await runInDurableObject(
       bindings.MATCH_DO.getByName(`match:${id}`),
       async (_instance, state) => {
-        const db = new Store(state.storage),
-          e = new Engine(db, { ...bindings, MATCH_ID: id });
+        const db = new Store(state.storage);
+        const e = new Engine(db, {...bindings, MATCH_ID: id});
         await e.keys();
         db.exec("INSERT INTO roster_members VALUES('C01')");
         db.exec("INSERT INTO roster_members VALUES('C02')");
@@ -675,13 +798,22 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     const history = `/matches/${id}/history`;
     const playerView = await call(history, undefined, p1);
     expect(playerView.status, JSON.stringify(playerView.body)).toBe(200);
-    expect(playerView.body.versions.map((row: { version: number }) => row.version)).toEqual([2, 1]);
+    expect(
+      playerView.body.versions.map((row: {version: number}) => row.version),
+    ).toEqual([2, 1]);
     expect(playerView.body.replayAvailable).toBe(true);
     expect(playerView.body.downloads).toEqual([]);
     expect((await call(`${history}/replay`, undefined, p1)).status).toBe(200);
-    expect((await call(`${history}/download/replay`, undefined, p1)).status).toBe(403);
+    expect(
+      (await call(`${history}/download/replay`, undefined, p1)).status,
+    ).toBe(403);
     await ageSession();
-    expect((await call(history)).body.downloads).toEqual(['report', 'audit', 'replay', 'backup']);
+    expect((await call(history)).body.downloads).toEqual([
+      'report',
+      'audit',
+      'replay',
+      'backup',
+    ]);
     const report = await call(`${history}/download/report?version=1`);
     expect(report.status, JSON.stringify(report.body)).toBe(200);
     expect(report.body.fileName).toContain('第1版');
@@ -705,21 +837,27 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
         id,
       ),
     );
-    expect((await call(`${history}/report?version=1`, undefined, candidate)).status).toBe(403);
-    expect((await call(`${history}/download/audit`, undefined, candidate)).status).toBe(403);
+    expect(
+      (await call(`${history}/report?version=1`, undefined, candidate)).status,
+    ).toBe(403);
+    expect(
+      (await call(`${history}/download/audit`, undefined, candidate)).status,
+    ).toBe(403);
   });
   it('旧比赛接入保留对象与发行事实，旧口令只能领取一次长期账号', async () => {
     const legacy = bindings.MATCH_DO.getByName('match:integration');
     const accounts = await Promise.all(
       [
-        { id: 'C01', role: 'player', name: '同名' },
-        { id: 'C02', role: 'player', name: '同名' },
-        { id: 'J01', role: 'judge', name: '总裁判', duty: 'head' },
-        { id: 'J02', role: 'judge', name: '通讯裁判', duty: 'communications' },
-        { id: 'J03', role: 'judge', name: '事件裁判', duty: 'events' },
-      ].map(async (a) => ({
+        {id: 'C01', role: 'player', name: '同名'},
+        {id: 'C02', role: 'player', name: '同名'},
+        {id: 'J01', role: 'judge', name: '总裁判', duty: 'head'},
+        {id: 'J02', role: 'judge', name: '通讯裁判', duty: 'communications'},
+        {id: 'J03', role: 'judge', name: '事件裁判', duty: 'events'},
+      ].map(async a => ({
         ...a,
-        credential_hash: await digest(`legacy-credential-${a.id}-long-enough-for-test`),
+        credential_hash: await digest(
+          `legacy-credential-${a.id}-long-enough-for-test`,
+        ),
       })),
     );
     expect(
@@ -751,24 +889,37 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       }),
     );
     expect(reply.receipt.accounts).toBe(5);
-    const one = await activate('legacy-credential-C01-long-enough-for-test', 'player'),
-      two = await activate('legacy-credential-C02-long-enough-for-test', 'player');
+    const one = await activate(
+      'legacy-credential-C01-long-enough-for-test',
+      'player',
+    );
+    const two = await activate(
+      'legacy-credential-C02-long-enough-for-test',
+      'player',
+    );
     expect(one.session.account.id).not.toBe(two.session.account.id);
-    const snapshot = await call('/matches/integration/snapshot?route=/player', undefined, one);
+    const snapshot = await call(
+      '/matches/integration/snapshot?route=/player',
+      undefined,
+      one,
+    );
     expect(snapshot.status, JSON.stringify(snapshot.body)).toBe(200);
     expect(snapshot.body.session.id).toBe('C01');
     expect(
-      (await call('/auth/claim', { invitation: 'legacy-credential-C01-long-enough-for-test' }))
-        .status,
+      (
+        await call('/auth/claim', {
+          invitation: 'legacy-credential-C01-long-enough-for-test',
+        })
+      ).status,
     ).toBe(401);
   });
   it('申诉保留与7天清理等待生效，清理后保留战报并禁止读取完整复盘或启动旧恢复', async () => {
-    const { id, p1 } = await running();
+    const {id, p1} = await running();
     await runInDurableObject(
       bindings.MATCH_DO.getByName(`match:${id}`),
       async (_instance, state) => {
-        const db = new Store(state.storage),
-          e = new Engine(db, { ...bindings, MATCH_ID: id });
+        const db = new Store(state.storage);
+        const e = new Engine(db, {...bindings, MATCH_ID: id});
         await e.keys();
         db.exec("INSERT INTO roster_members VALUES('C01')");
         db.exec("INSERT INTO roster_members VALUES('C02')");
@@ -781,9 +932,16 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       },
     );
     const mutation = async (path: string, extra: Record<string, unknown>) => {
-      const d = (await call('/platform/matches')).body.find((m: { id: string }) => m.id === id),
-        payload = { matchId: id, expected_version: d.version, reason: '清理边界核对', ...extra };
-      const preview = await call('/platform/preview', { path, payload });
+      const d = (await call('/platform/matches')).body.find(
+        (m: {id: string}) => m.id === id,
+      );
+      const payload = {
+        matchId: id,
+        expected_version: d.version,
+        reason: '清理边界核对',
+        ...extra,
+      };
+      const preview = await call('/platform/preview', {path, payload});
       return call(path, {
         ...payload,
         request_id: crypto.randomUUID(),
@@ -792,23 +950,36 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     };
     const history = `/matches/${id}/history`;
     expect((await call(`${history}/download/replay`)).status).toBe(200);
-    const reportBeforeCleanup = (await call(`${history}/report?version=1`, undefined, p1)).body
-      .report;
+    const reportBeforeCleanup = (
+      await call(`${history}/report?version=1`, undefined, p1)
+    ).body.report;
     expect((await mutation('/platform/data/purge', {})).status).toBe(409);
-    await runInDurableObject(bindings.MATCH_DO.getByName(`match:${id}`), (_instance, state) =>
-      new Store(state.storage).exec('UPDATE matches SET ended_utc=?', Date.now() - 50 * 86400000),
+    await runInDurableObject(
+      bindings.MATCH_DO.getByName(`match:${id}`),
+      (_instance, state) =>
+        new Store(state.storage).exec(
+          'UPDATE matches SET ended_utc=?',
+          Date.now() - 50 * 86400000,
+        ),
     );
     expect(
-      (await mutation('/platform/data/hold', { reviewUtc: Date.now() + 86400000 })).status,
+      (
+        await mutation('/platform/data/hold', {
+          reviewUtc: Date.now() + 86400000,
+        })
+      ).status,
     ).toBe(200);
     expect((await mutation('/platform/data/purge', {})).status).toBe(409);
-    expect((await mutation('/platform/data/hold', { release: true })).status).toBe(200);
+    expect(
+      (await mutation('/platform/data/hold', {release: true})).status,
+    ).toBe(200);
     const purge = await mutation('/platform/data/purge', {});
     expect(purge.status).toBe(202);
     await drain();
-    expect((await call(`/platform/operations/${purge.body.operationId}`)).body.status).toBe(
-      'pending',
-    );
+    expect(
+      (await call(`/platform/operations/${purge.body.operationId}`)).body
+        .status,
+    ).toBe('pending');
     // Advance only the persistent queue's due marker; no wall-clock wait or real-time schedule runs.
     await runInDurableObject(platform(), (_instance, state) =>
       new Store(state.storage).exec(
@@ -817,60 +988,79 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       ),
     );
     await drain();
-    const completed = await call(`/platform/operations/${purge.body.operationId}`);
-    expect(completed.body.status, JSON.stringify(completed.body)).toBe('succeeded');
-    expect((await call(`/matches/${id}/snapshot?route=/results`, undefined, p1)).status).toBe(410);
+    const completed = await call(
+      `/platform/operations/${purge.body.operationId}`,
+    );
+    expect(completed.body.status, JSON.stringify(completed.body)).toBe(
+      'succeeded',
+    );
+    expect(
+      (await call(`/matches/${id}/snapshot?route=/results`, undefined, p1))
+        .status,
+    ).toBe(410);
     expect((await call(`${history}/replay`, undefined, p1)).status).toBe(410);
     expect((await call(`${history}/download/backup`)).status).toBe(410);
-    expect((await call(`${history}/report?version=1`, undefined, p1)).status).toBe(200);
-    expect((await call(`${history}/report?version=1`, undefined, p1)).body.report).toEqual(
-      reportBeforeCleanup,
-    );
+    expect(
+      (await call(`${history}/report?version=1`, undefined, p1)).status,
+    ).toBe(200);
+    expect(
+      (await call(`${history}/report?version=1`, undefined, p1)).body.report,
+    ).toEqual(reportBeforeCleanup);
     expect((await call(`${history}/download/audit`)).status).toBe(200);
     // Simulate the match database losing its cleanup marker after a rollback. The
     // platform database still denies a launch and any sensitive download.
-    await runInDurableObject(bindings.MATCH_DO.getByName(`match:${id}`), (_instance, state) => {
-      const db = new Store(state.storage);
-      db.exec('UPDATE match_identity SET erasure_generation=0');
-      db.exec('UPDATE matches SET ended_utc=?', Date.now());
-    });
+    await runInDurableObject(
+      bindings.MATCH_DO.getByName(`match:${id}`),
+      (_instance, state) => {
+        const db = new Store(state.storage);
+        db.exec('UPDATE match_identity SET erasure_generation=0');
+        db.exec('UPDATE matches SET ended_utc=?', Date.now());
+      },
+    );
     expect((await call(`${history}/download/replay`)).status).toBe(410);
-    await runInDurableObject(platform(), async (instance) => {
+    await runInDurableObject(platform(), async instance => {
       await expect(
         instance.maintenance('integration-platform-maintenance-secret', {
           operation: 'recovery',
           operationId: 'launch-after-cleanup',
           matchId: id,
           reason: '验证清理记录拦住旧检查点',
-          payload: { operation: 'launch', payload: {} },
+          payload: {operation: 'launch', payload: {}},
         }),
       ).rejects.toThrow('本场完整信息已清理');
     });
   });
   it('恢复启动前必须有本地材料回读收据，凭据撤销不随本场检查点回退', async () => {
-    const { id, p1 } = await running();
+    const {id, p1} = await running();
     const target = await runInDurableObject(
       bindings.MATCH_DO.getByName(`match:${id}`),
       async (_instance, state) => {
-        const e = new Engine(new Store(state.storage), { ...bindings, MATCH_ID: id });
+        const e = new Engine(new Store(state.storage), {
+          ...bindings,
+          MATCH_ID: id,
+        });
         return createCheckpoint(e);
       },
     );
-    const base = { operationId: 'recovery-gate', matchId: id, reason: '受控恢复流程检查' },
-      carry = JSON.parse(
-        await platform().maintenance('integration-platform-maintenance-secret', {
-          ...base,
-          operation: 'recovery',
-          payload: { operation: 'prepare', payload: { target, reason: base.reason } },
-        }),
-      );
-    await runInDurableObject(platform(), async (instance) => {
+    const base = {
+      operationId: 'recovery-gate',
+      matchId: id,
+      reason: '受控恢复流程检查',
+    };
+    const carry = JSON.parse(
+      await platform().maintenance('integration-platform-maintenance-secret', {
+        ...base,
+        operation: 'recovery',
+        payload: {operation: 'prepare', payload: {target, reason: base.reason}},
+      }),
+    );
+    await runInDurableObject(platform(), async instance => {
       await expect(
         instance.maintenance('integration-platform-maintenance-secret', {
           ...base,
           operation: 'recovery',
           confirm: `恢复比赛 ${id}`,
-          payload: { operation: 'launch', payload: carry },
+          payload: {operation: 'launch', payload: carry},
         }),
       ).rejects.toThrow('必须保存');
     });
@@ -883,17 +1073,20 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       }),
     );
     expect(saved.saved).toBe(true);
-    const accountId = p1.session.account.id,
-      account = (await call('/platform/accounts')).body.find(
-        (a: { id: string }) => a.id === accountId,
-      );
+    const accountId = p1.session.account.id;
+    const account = (await call('/platform/accounts')).body.find(
+      (a: {id: string}) => a.id === accountId,
+    );
     const payload = {
-        accountId,
-        status: 'disabled',
-        expected_version: account.version,
-        reason: '保全材料生成后停用账号',
-      },
-      preview = await call('/platform/preview', { path: '/platform/accounts/status', payload });
+      accountId,
+      status: 'disabled',
+      expected_version: account.version,
+      reason: '保全材料生成后停用账号',
+    };
+    const preview = await call('/platform/preview', {
+      path: '/platform/accounts/status',
+      payload,
+    });
     expect(
       (
         await call('/platform/accounts/status', {
@@ -907,7 +1100,10 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     await runInDurableObject(
       bindings.MATCH_DO.getByName(`match:${id}`),
       async (_instance, state) => {
-        const e = new Engine(new Store(state.storage), { ...bindings, MATCH_ID: id });
+        const e = new Engine(new Store(state.storage), {
+          ...bindings,
+          MATCH_ID: id,
+        });
         restoreCheckpointTables(e, (await openCheckpoint(e, target)).tables);
       },
     );
@@ -915,18 +1111,27 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       await platform().maintenance('integration-platform-maintenance-secret', {
         ...base,
         operation: 'recovery',
-        payload: { operation: 'complete', payload: carry },
+        payload: {operation: 'complete', payload: carry},
       }),
     );
     expect(recovered.id).toBe(carry.id);
-    expect((await call(`/matches/${id}/snapshot?route=/player`, undefined, p1)).status).toBe(401);
-    await runInDurableObject(bindings.MATCH_DO.getByName(`match:${id}`), (_instance, state) => {
-      const db = new Store(state.storage);
-      expect(
-        db.one('SELECT disabled FROM authorization_fences WHERE account_id=?', accountId),
-      ).toEqual({ disabled: 1 });
-      expect(db.match().recovery_state).toMatch(/^review:/);
-    });
+    expect(
+      (await call(`/matches/${id}/snapshot?route=/player`, undefined, p1))
+        .status,
+    ).toBe(401);
+    await runInDurableObject(
+      bindings.MATCH_DO.getByName(`match:${id}`),
+      (_instance, state) => {
+        const db = new Store(state.storage);
+        expect(
+          db.one(
+            'SELECT disabled FROM authorization_fences WHERE account_id=?',
+            accountId,
+          ),
+        ).toEqual({disabled: 1});
+        expect(db.match().recovery_state).toMatch(/^review:/);
+      },
+    );
   });
   it('网关隔离玩家与工作人员Cookie，拒绝跨站写入与无场次旧写接口', async () => {
     const gatewayEnv = {
@@ -939,8 +1144,11 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     const response = await gateway(
       new Request('https://game.test/api/auth/exchange', {
         method: 'POST',
-        headers: { Origin: 'https://game.test', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential: owner.credential, audience: 'staff' }),
+        headers: {
+          Origin: 'https://game.test',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({credential: owner.credential, audience: 'staff'}),
       }),
       gatewayEnv,
     );
@@ -950,7 +1158,10 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     const rejected = await gateway(
       new Request('https://game.test/api/platform/matches/create', {
         method: 'POST',
-        headers: { Origin: 'https://evil.test', 'Content-Type': 'application/json' },
+        headers: {
+          Origin: 'https://evil.test',
+          'Content-Type': 'application/json',
+        },
         body: '{}',
       }),
       gatewayEnv,
@@ -961,7 +1172,10 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
         await gateway(
           new Request('https://game.test/api/action/sighting', {
             method: 'POST',
-            headers: { Origin: 'https://game.test', 'Content-Type': 'application/json' },
+            headers: {
+              Origin: 'https://game.test',
+              'Content-Type': 'application/json',
+            },
             body: '{}',
           }),
           gatewayEnv,
@@ -970,18 +1184,21 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     ).toBe(409);
   });
   it('档案管理员只发现获授权比赛，无法预览他场清理或全局账号操作', async () => {
-    const a = await match('授权场'),
-      b = await match('未授权场'),
-      archivist = await account('档案工作人员');
+    const a = await match('授权场');
+    const b = await match('未授权场');
+    const archivist = await account('档案工作人员');
     const payload = {
-        accountId: archivist.session.account.id,
-        role: 'archivist',
-        matchId: a,
-        enabled: true,
-        expected_version: archivist.session.account.version,
-        reason: '授予单场档案管理权限',
-      },
-      preview = await call('/platform/preview', { path: '/platform/roles/update', payload });
+      accountId: archivist.session.account.id,
+      role: 'archivist',
+      matchId: a,
+      enabled: true,
+      expected_version: archivist.session.account.version,
+      reason: '授予单场档案管理权限',
+    };
+    const preview = await call('/platform/preview', {
+      path: '/platform/roles/update',
+      payload,
+    });
     const grant = await call('/platform/roles/update', {
       ...payload,
       request_id: 'scoped-archive-role',
@@ -989,13 +1206,15 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     });
     expect(grant.status, JSON.stringify(grant.body)).toBe(200);
     expect(
-      (await call('/platform/matches', undefined, archivist)).body.map((m: { id: string }) => m.id),
+      (await call('/platform/matches', undefined, archivist)).body.map(
+        (m: {id: string}) => m.id,
+      ),
     ).toEqual([a]);
     expect(
       (
         await call(
           '/platform/preview',
-          { path: '/platform/data/purge', payload: { matchId: b } },
+          {path: '/platform/data/purge', payload: {matchId: b}},
           archivist,
         )
       ).status,
@@ -1004,7 +1223,10 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
       (
         await call(
           '/platform/preview',
-          { path: '/platform/accounts/status', payload: { accountId: owner.session.account.id } },
+          {
+            path: '/platform/accounts/status',
+            payload: {accountId: owner.session.account.id},
+          },
           archivist,
         )
       ).status,
@@ -1013,12 +1235,17 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
   it('第二因素验证码及恢复码不可重复使用', async () => {
     const setup = await call('/me/security/setup', {});
     expect(setup.status).toBe(200);
-    const code = await totp(setup.body.secret, Math.floor(Date.now() / 30000)),
-      confirmed = await call('/me/security/confirm', { code });
+    const code = await totp(setup.body.secret, Math.floor(Date.now() / 30000));
+    const confirmed = await call('/me/security/confirm', {code});
     expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(200);
     expect(
-      (await call('/auth/exchange', { credential: owner.credential, audience: 'staff', code }))
-        .status,
+      (
+        await call('/auth/exchange', {
+          credential: owner.credential,
+          audience: 'staff',
+          code,
+        })
+      ).status,
     ).toBe(401);
     const recovery = confirmed.body.recoveryCodes[0];
     expect(
@@ -1044,12 +1271,17 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     await ageSession();
     const setup = await call('/me/security/setup', {});
     const code = await totp(setup.body.secret, Math.floor(Date.now() / 30000));
-    expect((await call('/me/security/confirm', { code })).status).toBe(200);
+    expect((await call('/me/security/confirm', {code})).status).toBe(200);
     expect((await call('/auth/session')).body.secondFactorEnabled).toBe(true);
     expect((await call('/me/security/disable', {})).status).toBe(200);
     expect((await call('/auth/session')).body.secondFactorEnabled).toBe(false);
     expect(
-      (await call('/auth/exchange', { credential: owner.credential, audience: 'staff' })).status,
+      (
+        await call('/auth/exchange', {
+          credential: owner.credential,
+          audience: 'staff',
+        })
+      ).status,
     ).toBe(200);
     expect(
       await runInDurableObject(platform(), (_instance, state) =>
@@ -1061,7 +1293,7 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     const login = owner;
     const setup = await call('/me/security/setup', {});
     const code = await totp(setup.body.secret, Math.floor(Date.now() / 30000));
-    const confirmed = await call('/me/security/confirm', { code });
+    const confirmed = await call('/me/security/confirm', {code});
     expect(confirmed.status).toBe(200);
     const hash = await digest(login.token);
     await runInDurableObject(platform(), (_instance, state) =>
@@ -1075,11 +1307,17 @@ describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待�
     expect(denied.status).toBe(403);
     expect(denied.body.code).toBe('SECOND_FACTOR_REQUIRED');
     expect(
-      (await call('/auth/reauth', { credential: owner.credential, code: 'invalid' }, login)).status,
+      (
+        await call(
+          '/auth/reauth',
+          {credential: owner.credential, code: 'invalid'},
+          login,
+        )
+      ).status,
     ).toBe(401);
     const verified = await call(
       '/auth/reauth',
-      { credential: owner.credential, code: confirmed.body.recoveryCodes[0] },
+      {credential: owner.credential, code: confirmed.body.recoveryCodes[0]},
       login,
     );
     expect(verified.status, JSON.stringify(verified.body)).toBe(200);

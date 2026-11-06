@@ -38,7 +38,7 @@ export class HttpSource implements DataSource {
         cache: 'no-store',
         headers: {
           Accept: 'application/json',
-          ...(this.matchId ? { 'X-Darkforest-Audience': this.audience } : {}),
+          ...(this.matchId ? {'X-Darkforest-Audience': this.audience} : {}),
           ...(body === undefined
             ? {}
             : {
@@ -46,48 +46,59 @@ export class HttpSource implements DataSource {
                 'X-CSRF-Token': this.session?.csrfToken ?? '',
               }),
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(body === undefined ? {} : {body: JSON.stringify(body)}),
         signal: controller.signal,
       });
-      if (!response.headers.get('content-type')?.includes('application/json'))
+      if (!response.headers.get('content-type')?.includes('application/json')) {
         throw new ApiError(
           '服务暂时不可用，请稍后重新连接。',
           response.status === 200 ? 503 : response.status,
         );
-      const data = (await response.json()) as T & { message?: string; definitive?: boolean };
-      if (!response.ok)
+      }
+      const data = (await response.json()) as T & {
+        message?: string;
+        definitive?: boolean;
+      };
+      if (!response.ok) {
         throw new ApiError(
           data.message ??
-            (response.status === 401 ? '请重新登录。' : '本次操作未完成，请稍后再试。'),
+            (response.status === 401
+              ? '请重新登录。'
+              : '本次操作未完成，请稍后再试。'),
           response.status,
           data.definitive ?? false,
         );
+      }
       return data;
     } finally {
       globalThis.clearTimeout(timeout);
     }
   }
   async read(route: string): Promise<Snapshot> {
-    const snapshot = await this.request<Snapshot>(`/snapshot?route=${encodeURIComponent(route)}`);
+    const snapshot = await this.request<Snapshot>(
+      `/snapshot?route=${encodeURIComponent(route)}`,
+    );
     this.session = snapshot.session;
     return snapshot;
   }
-  exportData(kind: string): Promise<{ fileName: string; text: string }> {
+  exportData(kind: string): Promise<{fileName: string; text: string}> {
     return this.request(`/judge/export?kind=${encodeURIComponent(kind)}`);
   }
-  credential(id: string): Promise<{ accountId: string; credential: string }> {
+  credential(id: string): Promise<{accountId: string; credential: string}> {
     return this.request(`/judge/credentials/${encodeURIComponent(id)}`);
   }
   judgePage(
     kind: 'notices' | 'audits' | 'attacks',
     cursor: string,
   ): ReturnType<NonNullable<DataSource['judgePage']>> {
-    return this.request(`/judge/records/${kind}?before=${encodeURIComponent(cursor)}`);
+    return this.request(
+      `/judge/records/${kind}?before=${encodeURIComponent(cursor)}`,
+    );
   }
   eventsPage(
     route: string,
     cursor: string,
-  ): Promise<{ items: GameEvent[]; nextCursor: string | null }> {
+  ): Promise<{items: GameEvent[]; nextCursor: string | null}> {
     return this.request(
       `/timeline?route=${encodeURIComponent(route)}&before=${encodeURIComponent(cursor)}`,
     );
@@ -103,7 +114,10 @@ export class HttpSource implements DataSource {
     this.session = null;
   }
   submit(operation: Operation): Promise<OperationResult> {
-    return this.request(operation.path, { ...operation.payload, request_id: operation.requestId });
+    return this.request(operation.path, {
+      ...operation.payload,
+      request_id: operation.requestId,
+    });
   }
   async result(requestId: string): Promise<OperationResult> {
     const result = await this.request<OperationResult>(
@@ -111,11 +125,14 @@ export class HttpSource implements DataSource {
     );
     return result.status === 'complete'
       ? result
-      : this.request(`/operations/${encodeURIComponent(requestId)}/resolve`, {});
+      : this.request(
+          `/operations/${encodeURIComponent(requestId)}/resolve`,
+          {},
+        );
   }
   template(kind: string): Promise<string> {
-    return this.request<{ text: string }>(`/player/templates/${encodeURIComponent(kind)}`).then(
-      (r) => r.text,
-    );
+    return this.request<{text: string}>(
+      `/player/templates/${encodeURIComponent(kind)}`,
+    ).then(r => r.text);
   }
 }

@@ -1,4 +1,4 @@
-import type { SiteConfig } from '@darkforest/contracts';
+import type {SiteConfig} from '@darkforest/contracts';
 
 export const DEFAULT_SITE: SiteConfig = {
   version: 1,

@@ -1,11 +1,11 @@
-import type { GameEvent, ResultsState } from '@darkforest/contracts';
-import type { Engine } from './engine';
-import { civilization } from '../projections/snapshot';
+import type {GameEvent, ResultsState} from '@darkforest/contracts';
+import type {Engine} from './engine';
+import {civilization} from '../projections/snapshot';
 import {
   eliminationCopy,
   homeDestroyedCopy,
-} from '../../../../packages/contracts/src/message-copy';
-import type { CodeRow } from '../storage/store';
+} from '../../../../packages/contracts/src/message_copy';
+import type {CodeRow} from '../storage/store';
 
 export function logEvent(
   e: Engine,
@@ -37,7 +37,13 @@ export function logEvent(
     e.now(),
   );
 }
-export function retire(e: Engine, player: string, reason: string, game: number, utc: number): void {
+export function retire(
+  e: Engine,
+  player: string,
+  reason: string,
+  game: number,
+  utc: number,
+): void {
   e.db.exec(
     "UPDATE sighting_codes SET status='retired',retired_game=?,retired_utc=?,retired_reason=? WHERE player_id=? AND status IN ('active','reserved')",
     game,
@@ -56,16 +62,22 @@ export function eliminate(
   utc: number,
   group = source,
 ): void {
-  if (e.db.flight(player).status === 'eliminated') return;
-  if (source.startsWith('judge:') || source === 'hunt_cutoff')
+  if (e.db.flight(player).status === 'eliminated') {
+    return;
+  }
+  if (source.startsWith('judge:') || source === 'hunt_cutoff') {
     e.db.exec(
       'INSERT INTO judge_eliminations(source,player_id,before_json) VALUES(?,?,?)',
       source,
       player,
       JSON.stringify(e.db.flight(player)),
     );
+  }
   retire(e, player, reason, game, utc);
-  e.db.exec("UPDATE flights SET status='eliminated',deadline=NULL WHERE player_id=?", player);
+  e.db.exec(
+    "UPDATE flights SET status='eliminated',deadline=NULL WHERE player_id=?",
+    player,
+  );
   e.db.exec(
     'INSERT INTO eliminations(player_id,game_ms,utc_ms,committed_utc,reason,source,group_id) VALUES(?,?,?,?,?,?,?)',
     player,
@@ -108,9 +120,12 @@ export function destroyHome(
     source,
     player,
   );
-  if (!changed.length) return false;
-  if (!['active', 'eliminated'].includes(e.db.flight(player).status))
+  if (!changed.length) {
+    return false;
+  }
+  if (!['active', 'eliminated'].includes(e.db.flight(player).status)) {
     eliminate(e, player, 'homeworld_destroyed', source, game, utc);
+  }
   e.notice(
     source,
     player,
@@ -122,13 +137,21 @@ export function destroyHome(
 }
 export function survivors(e: Engine): string[] {
   return e.db
-    .all<{ id: string }>(
+    .all<{id: string}>(
       "SELECT p.id FROM players p JOIN flights f ON f.player_id=p.id WHERE p.entry_status='registered' AND p.id IN (SELECT player_id FROM roster_members) AND f.status!='eliminated' ORDER BY p.id",
     )
-    .map((p) => p.id);
+    .map(p => p.id);
 }
-export function finish(e: Engine, reason: string, game: number, utc: number, source: string): void {
-  if (e.db.match().phase === 'ended') return;
+export function finish(
+  e: Engine,
+  reason: string,
+  game: number,
+  utc: number,
+  source: string,
+): void {
+  if (e.db.match().phase === 'ended') {
+    return;
+  }
   const alive = new Set(survivors(e));
   e.db.exec(
     "UPDATE matches SET phase='ended',ended_game=?,ended_utc=?,finish_reason=?",
@@ -137,12 +160,18 @@ export function finish(e: Engine, reason: string, game: number, utc: number, sou
     reason,
   );
   archiveReport(e, '');
-  const registered = e.db.all<{ id: string }>('SELECT player_id AS id FROM roster_members');
-  for (const player of registered) retire(e, player.id, 'match_ended', game, utc);
+  const registered = e.db.all<{id: string}>(
+    'SELECT player_id AS id FROM roster_members',
+  );
+  for (const player of registered) {
+    retire(e, player.id, 'match_ended', game, utc);
+  }
   e.db.exec(
     "UPDATE command_objects SET status='cancelled' WHERE kind='schedule' AND status='pending' AND json_extract(data,'$.afterEnd')='cancel'",
   );
-  e.db.exec("UPDATE command_objects SET status='cancelled' WHERE kind='job' AND status='pending'");
+  e.db.exec(
+    "UPDATE command_objects SET status='cancelled' WHERE kind='job' AND status='pending'",
+  );
   e.db.exec(
     "UPDATE scheduled_events SET status='cancelled' WHERE status='pending' AND NOT (kind='judge_command_task' AND id IN (SELECT id FROM command_objects WHERE kind='schedule' AND status='pending' AND json_extract(data,'$.afterEnd')='keep'))",
   );
@@ -169,20 +198,25 @@ export function finish(e: Engine, reason: string, game: number, utc: number, sou
 }
 export function archiveReport(e: Engine, correctionReason: string): void {
   const alive = new Set(survivors(e));
-  const eliminated = e.db.all<{ player_id: string; seq: number; utc_ms: number; group_id: string }>(
+  const eliminated = e.db.all<{
+    player_id: string;
+    seq: number;
+    utc_ms: number;
+    group_id: string;
+  }>(
     'SELECT player_id,seq,utc_ms,group_id FROM eliminations WHERE valid=1 ORDER BY utc_ms DESC,seq DESC',
   );
-  const registered = e.db.all<{ id: string }>(
+  const registered = e.db.all<{id: string}>(
     "SELECT id FROM players WHERE id IN (SELECT player_id FROM roster_members) AND (entry_status='registered' OR id IN (SELECT player_id FROM eliminations WHERE valid=1)) ORDER BY id",
   );
   // Save ranking facts before retiring codes. Full DTO is rendered from the same immutable finish facts.
   const standings = registered
-    .map(({ id }) => {
-      const kills = e.db.one<{ count: number }>(
+    .map(({id}) => {
+      const kills = e.db.one<{count: number}>(
         "SELECT COUNT(DISTINCT target) AS count FROM attacks WHERE actor=? AND classification='hit' AND valid=1",
         id,
       )!.count;
-      const out = eliminated.find((p) => p.player_id === id);
+      const out = eliminated.find(p => p.player_id === id);
       return {
         id,
         alive: alive.has(id),
@@ -199,21 +233,27 @@ export function archiveReport(e: Engine, correctionReason: string): void {
     );
   const ranked = standings.map((p, i) => {
     const equal = (q: typeof p) =>
-      p.alive === q.alive && (p.alive ? p.kills === q.kills : !!p.group && p.group === q.group);
+      p.alive === q.alive &&
+      (p.alive ? p.kills === q.kills : !!p.group && p.group === q.group);
     const first = standings.findIndex(equal);
-    return { ...p, rank: first + 1, tied: standings.filter(equal).length > 1, index: i };
+    return {
+      ...p,
+      rank: first + 1,
+      tied: standings.filter(equal).length > 1,
+      index: i,
+    };
   });
   e.db.exec(
     'INSERT INTO result_reports(version,reason,created_utc,report,correction_reason,snapshot_json) VALUES((SELECT COALESCE(MAX(version),0)+1 FROM result_reports),?,?,?,?,?)',
     e.db.match().finish_reason,
     e.now(),
     JSON.stringify({
-      champions: ranked.filter((p) => p.alive && p.rank === 1).map((p) => p.id),
+      champions: ranked.filter(p => p.alive && p.rank === 1).map(p => p.id),
       standings: ranked,
     }),
     correctionReason,
     JSON.stringify(
-      ranked.map((p) => ({
+      ranked.map(p => ({
         ...civilization(e, p.id, e.resolvedKeys!, true),
         kills: p.kills,
         rank: p.rank,
@@ -222,12 +262,23 @@ export function archiveReport(e: Engine, correctionReason: string): void {
     ),
   );
 }
-export function autoFinish(e: Engine, game: number, utc: number, source: string): void {
-  if (e.commandBatch) return;
+export function autoFinish(
+  e: Engine,
+  game: number,
+  utc: number,
+  source: string,
+): void {
+  if (e.commandBatch) {
+    return;
+  }
   const match = e.db.match();
-  if (!match.start_settled || match.phase === 'ended') return;
+  if (!match.start_settled || match.phase === 'ended') {
+    return;
+  }
   const count = survivors(e).length;
-  if (count <= 1) finish(e, count ? 'last_survivor' : 'all_eliminated', game, utc, source);
+  if (count <= 1) {
+    finish(e, count ? 'last_survivor' : 'all_eliminated', game, utc, source);
+  }
 }
 export function results(
   e: Engine,
@@ -246,25 +297,28 @@ export function results(
       : 'SELECT * FROM result_reports WHERE version=?',
     ...(version === undefined ? [] : [version]),
   );
-  if (!row) return null;
+  if (!row) {
+    return null;
+  }
   const report = JSON.parse(row.report) as {
     champions: string[];
-    standings: { id: string; rank: number; tied: boolean; kills: number }[];
+    standings: Array<{id: string; rank: number; tied: boolean; kills: number}>;
   };
   const standings = row.snapshot_json
     ? (JSON.parse(row.snapshot_json) as ResultsState['standings'])
-    : report.standings.map((p) => ({
+    : report.standings.map(p => ({
         ...civilization(e, p.id, keys, true),
         rank: p.rank,
         tied: p.tied,
         kills: p.kills,
       }));
-  if (!row.snapshot_json)
+  if (!row.snapshot_json) {
     e.db.exec(
       'UPDATE result_reports SET snapshot_json=? WHERE version=?',
       JSON.stringify(standings),
       row.version,
     );
+  }
   return {
     version: row.version,
     reason:
@@ -282,5 +336,7 @@ export function results(
 }
 export function currentCode(e: Engine, player: string): CodeRow | undefined {
   const id = e.db.flight(player).code_id;
-  return id ? e.db.one<CodeRow>('SELECT * FROM sighting_codes WHERE id=?', id) : undefined;
+  return id
+    ? e.db.one<CodeRow>('SELECT * FROM sighting_codes WHERE id=?', id)
+    : undefined;
 }

@@ -1,11 +1,13 @@
-import { useState } from 'react';
-import { useApp } from '../state';
-import { Button } from '../ui';
-import { ManagementForm } from './judge';
+import {useState} from 'react';
+import {useApp} from '../state';
+import {Button} from '../ui';
+import {ManagementForm} from './judge';
 export function RecoveryTools() {
-  const { data, source } = useApp(),
-    [error, setError] = useState('');
-  if (!data.session?.permissions.includes('system')) return null;
+  const {data, source} = useApp();
+  const [error, setError] = useState('');
+  if (!data.session?.permissions.includes('system')) {
+    return null;
+  }
   return (
     <section>
       <h2>比赛恢复</h2>
@@ -13,9 +15,13 @@ export function RecoveryTools() {
         onClick={async () => {
           try {
             const file = await source.exportData?.('checkpoint');
-            if (!file) return;
-            const url = URL.createObjectURL(new Blob([file.text], { type: 'application/json' })),
-              a = document.createElement('a');
+            if (!file) {
+              return;
+            }
+            const url = URL.createObjectURL(
+              new Blob([file.text], {type: 'application/json'}),
+            );
+            const a = document.createElement('a');
             a.href = url;
             a.download = file.fileName;
             a.click();

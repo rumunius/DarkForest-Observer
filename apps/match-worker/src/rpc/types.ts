@@ -1,5 +1,5 @@
-import type { DarkForestMatch } from '../index';
-import type { DarkForestPlatform } from '../platform/platform';
+import type {DarkForestMatch} from '../index';
+import type {DarkForestPlatform} from '../platform/platform';
 export interface BackendEnv {
   CF_VERSION_METADATA?: WorkerVersionMetadata;
   APP_ENV: string;
