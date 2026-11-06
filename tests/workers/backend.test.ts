@@ -22,7 +22,7 @@ import {decodeArms} from '../../apps/match-worker/src/domain/rules';
 import {retire} from '../../apps/match-worker/src/services/life';
 import {decrypt} from '../../apps/match-worker/src/security/crypto';
 
-const bindings = env as unknown as BackendEnv;
+const bindings: BackendEnv = env;
 const stub = () => bindings.MATCH_DO.getByName('match:integration');
 const password = (id: string) => `integration-credential-for-${id}-long-enough`;
 interface Login {

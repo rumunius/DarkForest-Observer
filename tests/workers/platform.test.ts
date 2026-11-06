@@ -25,7 +25,7 @@ import {
   restoreCheckpointTables,
 } from '../../apps/match-worker/src/services/recovery';
 
-const bindings = env as unknown as BackendEnv;
+const bindings: BackendEnv = env;
 const platform = () => bindings.PLATFORM_DO!.getByName('platform:primary');
 interface Login {
   token: string;
@@ -45,7 +45,7 @@ async function ageSession(login = owner, age = 3600000) {
     ),
   );
 }
-async function call(path: string, body?: unknown, login = owner) {
+async function call(path: string, body?: unknown, login: Login | null = owner) {
   const input: RpcInput = {
     method: body === undefined ? 'GET' : 'POST',
     path,
@@ -58,10 +58,15 @@ async function call(path: string, body?: unknown, login = owner) {
   return {...reply, body: parseJson(reply.body)};
 }
 async function activate(invitation: string, kind = 'staff'): Promise<Login> {
-  const claim = await call('/auth/claim', {invitation});
+  // Credential exchange is anonymous, including before the first owner exists.
+  const claim = await call('/auth/claim', {invitation}, null);
   expect(claim.status, JSON.stringify(claim.body)).toBe(200);
   const credential = jsonString(jsonObject(claim.body).credential);
-  const login = await call('/auth/exchange', {credential, audience: kind});
+  const login = await call(
+    '/auth/exchange',
+    {credential, audience: kind},
+    null,
+  );
   expect(login.status, JSON.stringify(login.body)).toBe(200);
   return {
     token: login.sessionToken!,
@@ -214,7 +219,6 @@ async function running() {
 }
 beforeEach(async () => {
   await reset();
-  owner = undefined as unknown as Login;
   const installed = jsonObject(
     parseJson(
       await platform().bootstrap('integration-platform-maintenance-secret', {

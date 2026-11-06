@@ -34,7 +34,7 @@ import {
   completeRecovery,
 } from '../../apps/match-worker/src/services/recovery';
 
-const bindings = env as unknown as BackendEnv;
+const bindings: BackendEnv = env;
 const stub = () => bindings.MATCH_DO.getByName('match:integration');
 it('encrypts and authenticates backup payloads larger than one megabyte', async () => {
   const key = await secretKey(btoa('k'.repeat(32)), 'AES-GCM');
