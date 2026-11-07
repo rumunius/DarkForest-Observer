@@ -3,13 +3,26 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run all checks, builds and tests
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
+concurrency:
+  # Push and PR events for the same source branch share a cancellation group.
+  # Keep manual validation independent from automatic checks.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'auto' }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -17,5 +30,14 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
-      - run: npm run check
-      - run: npm test
+      - name: Quick checks
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.full }}
+        run: |
+          npm run format:check
+          npm run test:tooling
+          npm run test:unit
+      - name: Full checks and tests
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full }}
+        run: |
+          npm run check
+          npm test
