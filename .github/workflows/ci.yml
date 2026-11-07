@@ -14,9 +14,9 @@ permissions:
   contents: read
 
 concurrency:
-  # Push and PR events for the same source branch share a cancellation group.
-  # Keep manual validation independent from automatic checks.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'auto' }}
+  # Push, PR and manual runs have independent cancellation groups.
+  # Only superseded runs of the same event and source branch are cancelled.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
