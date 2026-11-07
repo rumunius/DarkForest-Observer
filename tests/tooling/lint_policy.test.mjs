@@ -5,7 +5,20 @@ import {ESLint} from 'eslint';
 import {validSourceName} from '../../scripts/check_source_names.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
-const eslint = new ESLint({cwd: root});
+const lintOptions = {
+  cwd: root,
+  overrideConfig: {
+    languageOptions: {
+      parserOptions: {
+        // These tests lint different in-memory snippets at existing file paths.
+        // CI single-run inference would reuse on-disk ASTs on the first parse
+        // and isolated programs without imported types on subsequent parses.
+        disallowAutomaticSingleRunInference: true,
+      },
+    },
+  },
+};
+const eslint = new ESLint(lintOptions);
 
 test('return-only generic contracts require explicit arguments while input inference and overloads remain available', async () => {
   const source = [
@@ -58,7 +71,7 @@ test('module layout rejects late imports without reordering side effects automat
 });
 
 test('module section separation preserves documentation, trailing comments and import groups', async () => {
-  const fixer = new ESLint({cwd: root, fix: true});
+  const fixer = new ESLint({...lintOptions, fix: true});
   const source =
     "import console from 'node:console';\n\nimport 'node:fs'; // required side effect\n/** Explains the implementation boundary. */\nconsole.log('ready');\n";
   const [result] = await fixer.lintText(source, {
@@ -174,7 +187,7 @@ test('framework default-export exceptions still reject erased enums and undocume
 });
 
 test('class spacing fixes preserve documentation and overload groups', async () => {
-  const fixer = new ESLint({cwd: root, fix: true});
+  const fixer = new ESLint({...lintOptions, fix: true});
   const [result] = await fixer.lintText(
     '/** Stores values with documented overloads. */\nexport class Probe {\nvalue = 0;\n/** Reads the current value. */\nread(): number;\nread(fallback: number): number;\nread(fallback = 0) {return this.value || fallback;}\n/** Clears the current value. */\nclear() {this.value = 0;}\n}\n',
     {filePath: 'apps/web/src/data/http.ts'},
