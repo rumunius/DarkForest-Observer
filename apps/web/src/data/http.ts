@@ -7,11 +7,12 @@ import type {
   GameEvent,
 } from '@darkforest/contracts';
 
+/** HTTP失败的用户说明与确定性标志；未知结果不能直接当作已失败重发。 */
 export class ApiError extends Error {
   constructor(
     message: string,
-    public status: number,
-    public definitive = status >= 400 && status < 500 && status !== 408,
+    readonly status: number,
+    readonly definitive = status >= 400 && status < 500 && status !== 408,
   ) {
     super(message);
   }
@@ -23,7 +24,13 @@ export class HttpSource implements DataSource {
     readonly matchId?: string,
     readonly audience: 'player' | 'staff' = 'player',
   ) {}
+
   private session: Session | null = null;
+  private sessionEpoch = 0;
+  private snapshotSequence = 0;
+  private authenticationPending = false;
+
+  /** 为本场请求设置私有同源头和超时，错误保留操作结果的确定性。 */
   private async request<T>(path: string, body?: unknown): Promise<T> {
     const controller = new AbortController();
     const timeout = globalThis.setTimeout(() => controller.abort(), 12000);
@@ -38,7 +45,7 @@ export class HttpSource implements DataSource {
         cache: 'no-store',
         headers: {
           Accept: 'application/json',
-          ...(this.matchId ? { 'X-Darkforest-Audience': this.audience } : {}),
+          ...(this.matchId ? {'X-Darkforest-Audience': this.audience} : {}),
           ...(body === undefined
             ? {}
             : {
@@ -46,76 +53,148 @@ export class HttpSource implements DataSource {
                 'X-CSRF-Token': this.session?.csrfToken ?? '',
               }),
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(body === undefined ? {} : {body: JSON.stringify(body)}),
         signal: controller.signal,
       });
-      if (!response.headers.get('content-type')?.includes('application/json'))
+      if (!response.headers.get('content-type')?.includes('application/json')) {
         throw new ApiError(
           '服务暂时不可用，请稍后重新连接。',
           response.status === 200 ? 503 : response.status,
         );
-      const data = (await response.json()) as T & { message?: string; definitive?: boolean };
-      if (!response.ok)
+      }
+      const data = (await response.json()) as T & {
+        message?: string;
+        definitive?: boolean;
+      };
+      if (!response.ok) {
         throw new ApiError(
           data.message ??
-            (response.status === 401 ? '请重新登录。' : '本次操作未完成，请稍后再试。'),
+            (response.status === 401
+              ? '请重新登录。'
+              : '本次操作未完成，请稍后再试。'),
           response.status,
           data.definitive ?? false,
         );
+      }
       return data;
     } finally {
       globalThis.clearTimeout(timeout);
     }
   }
+
+  /** 读取授权快照，仅由当前认证世代的最新读取更新本场CSRF会话。 */
   async read(route: string): Promise<Snapshot> {
-    const snapshot = await this.request<Snapshot>(`/snapshot?route=${encodeURIComponent(route)}`);
-    this.session = snapshot.session;
+    const epoch = this.sessionEpoch;
+    const sequence = ++this.snapshotSequence;
+    const canUpdateSession = !this.authenticationPending;
+    const snapshot = await this.request<Snapshot>(
+      `/snapshot?route=${encodeURIComponent(route)}`,
+    );
+    if (
+      canUpdateSession &&
+      !this.authenticationPending &&
+      epoch === this.sessionEpoch &&
+      sequence === this.snapshotSequence
+    ) {
+      this.session = snapshot.session;
+    }
     return snapshot;
   }
-  exportData(kind: string): Promise<{ fileName: string; text: string }> {
-    return this.request(`/judge/export?kind=${encodeURIComponent(kind)}`);
+
+  /** 从受限裁判导出入口下载指定资料，不把存储秘密加入普通快照。 */
+  exportData(kind: string): Promise<{fileName: string; text: string}> {
+    return this.request<{fileName: string; text: string}>(
+      `/judge/export?kind=${encodeURIComponent(kind)}`,
+    );
   }
-  credential(id: string): Promise<{ accountId: string; credential: string }> {
-    return this.request(`/judge/credentials/${encodeURIComponent(id)}`);
+
+  /** 按专用交付ID读取本次获授权的新凭据。 */
+  credential(id: string): Promise<{accountId: string; credential: string}> {
+    return this.request<{accountId: string; credential: string}>(
+      `/judge/credentials/${encodeURIComponent(id)}`,
+    );
   }
+
+  /** 按裁判集合和不透明游标请求更早记录。 */
   judgePage(
     kind: 'notices' | 'audits' | 'attacks',
     cursor: string,
   ): ReturnType<NonNullable<DataSource['judgePage']>> {
-    return this.request(`/judge/records/${kind}?before=${encodeURIComponent(cursor)}`);
+    return this.request<
+      Awaited<ReturnType<NonNullable<DataSource['judgePage']>>>
+    >(`/judge/records/${kind}?before=${encodeURIComponent(cursor)}`);
   }
+
+  /** 按当前路由可见性和游标读取更早事件。 */
   eventsPage(
     route: string,
     cursor: string,
-  ): Promise<{ items: GameEvent[]; nextCursor: string | null }> {
-    return this.request(
+  ): Promise<{items: GameEvent[]; nextCursor: string | null}> {
+    return this.request<{items: GameEvent[]; nextCursor: string | null}>(
       `/timeline?route=${encodeURIComponent(route)}&before=${encodeURIComponent(cursor)}`,
     );
   }
+
+  /** 交换本场旧登录凭据并保存返回会话。 */
   async login(credential: string, judge: boolean): Promise<void> {
-    this.session = await this.request<Session>('/auth/exchange', {
-      credential,
-      audience: judge ? 'judge' : 'player',
+    const epoch = ++this.sessionEpoch;
+    this.authenticationPending = true;
+    try {
+      const session = await this.request<Session>('/auth/exchange', {
+        credential,
+        audience: judge ? 'judge' : 'player',
+      });
+      if (epoch === this.sessionEpoch) {
+        this.session = session;
+      }
+    } finally {
+      if (epoch === this.sessionEpoch) {
+        this.authenticationPending = false;
+      }
+    }
+  }
+
+  /** 确认服务端退出后清除当前适配器会话。 */
+  async logout(): Promise<void> {
+    const epoch = ++this.sessionEpoch;
+    this.authenticationPending = true;
+    try {
+      await this.request<unknown>('/auth/logout', {});
+      if (epoch === this.sessionEpoch) {
+        this.session = null;
+      }
+    } finally {
+      if (epoch === this.sessionEpoch) {
+        this.authenticationPending = false;
+      }
+    }
+  }
+
+  /** 提交稳定请求ID和原草稿，网络不确定时由上层查询原结果。 */
+  submit(operation: Operation): Promise<OperationResult> {
+    return this.request<OperationResult>(operation.path, {
+      ...operation.payload,
+      request_id: operation.requestId,
     });
   }
-  async logout(): Promise<void> {
-    await this.request('/auth/logout', {});
-    this.session = null;
-  }
-  submit(operation: Operation): Promise<OperationResult> {
-    return this.request(operation.path, { ...operation.payload, request_id: operation.requestId });
-  }
+
+  /** 查询原操作，必要时使用专用resolve入口取得确定结论。 */
   async result(requestId: string): Promise<OperationResult> {
     const result = await this.request<OperationResult>(
       `/operations/${encodeURIComponent(requestId)}`,
     );
     return result.status === 'complete'
       ? result
-      : this.request(`/operations/${encodeURIComponent(requestId)}/resolve`, {});
+      : this.request<OperationResult>(
+          `/operations/${encodeURIComponent(requestId)}/resolve`,
+          {},
+        );
   }
+
+  /** 读取当前本人状态允许生成的QQ材料正文。 */
   template(kind: string): Promise<string> {
-    return this.request<{ text: string }>(`/player/templates/${encodeURIComponent(kind)}`).then(
-      (r) => r.text,
-    );
+    return this.request<{text: string}>(
+      `/player/templates/${encodeURIComponent(kind)}`,
+    ).then(r => r.text);
   }
 }

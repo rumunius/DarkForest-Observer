@@ -1,4 +1,6 @@
-import { Store } from '../storage/store';
+import {Store} from '../storage/store';
+
+/** 初始化平台SQLite表和迁移，再返回其存储访问封装。 */
 export function platformStore(storage: DurableObjectStorage): Store {
   const db = new Store(storage);
   db.tx(() => {
@@ -21,8 +23,12 @@ export function platformStore(storage: DurableObjectStorage): Store {
       CREATE TABLE IF NOT EXISTS archive_grants(account_id TEXT NOT NULL REFERENCES platform_accounts(id),match_id TEXT NOT NULL REFERENCES match_directory(id),expires INTEGER NOT NULL,PRIMARY KEY(account_id,match_id));
       CREATE TABLE IF NOT EXISTS platform_rate_limits(key TEXT PRIMARY KEY,bucket INTEGER NOT NULL,count INTEGER NOT NULL);
     `);
-    const version = db.one<{ value: string }>("SELECT value FROM platform_meta WHERE key='schema'");
-    if (version && version.value !== '1') throw new Error('PLATFORM_SCHEMA_INCOMPATIBLE');
+    const version = db.one<{value: string}>(
+      "SELECT value FROM platform_meta WHERE key='schema'",
+    );
+    if (version && version.value !== '1') {
+      throw new Error('PLATFORM_SCHEMA_INCOMPATIBLE');
+    }
     db.exec("INSERT OR IGNORE INTO platform_meta VALUES('schema','1')");
   });
   return db;

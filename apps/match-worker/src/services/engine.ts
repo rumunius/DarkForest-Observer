@@ -1,5 +1,7 @@
-import type { OperationResult, Session } from '@darkforest/contracts';
-import { qqCopy } from '../../../../packages/contracts/src/message-copy';
+import {accountPermissions} from '../storage/store';
+import {parseJson} from '../../../../packages/contracts/src/backend';
+import type {OperationResult, Session} from '@darkforest/contracts';
+import {qqCopy} from '../../../../packages/contracts/src/message_copy';
 import {
   ContractError,
   coordinate,
@@ -10,41 +12,68 @@ import {
   strict,
   text,
 } from '../../../../packages/contracts/src/backend';
-import { decodeArms, enumerateCodes, gameTime, uniformInt } from '../domain/rules';
-import { decrypt, digest, encrypt, mac, secretKey, token } from '../security/crypto';
+import {
+  decodeArms,
+  enumerateCodes,
+  gameTime,
+  uniformInt,
+} from '../domain/rules';
+import {
+  decrypt,
+  digest,
+  encrypt,
+  mac,
+  secretKey,
+  token,
+} from '../security/crypto';
+import type {Store} from '../storage/store';
 import {
   DEFAULT_SITE,
   Fault,
-  Store,
   permission,
   requireThat,
   type Actor,
   type CodeRow,
 } from '../storage/store';
-import type { BackendEnv, MatchGrant, RpcInput, RpcReply } from '../rpc/types';
-import { membershipActor } from '../platform/match-control';
-import { derive } from '../platform/security';
-import { projectSnapshot, readEndpoint } from '../projections/snapshot';
-import { playerAction } from './player';
-import { judgeAction, previewAction } from './judge';
-import { commandAction, recordCommand, prepareCommandCredentials } from './commands';
+import type {BackendEnv, MatchGrant, RpcInput, RpcReply} from '../rpc/types';
+import {membershipActor} from '../platform/match_control';
+import {derive} from '../platform/security';
+import {projectSnapshot, readEndpoint} from '../projections/snapshot';
+import {playerAction} from './player';
+import {judgeAction, previewAction} from './judge';
+import {
+  commandAction,
+  recordCommand,
+  prepareCommandCredentials,
+} from './commands';
 import {
   commandSpec,
   parseCommandTree,
   CommandSyntaxError,
 } from '../../../../packages/contracts/src/commands';
-import { settleDue, rearm, EventFailure, recordEventFailure } from '../scheduler/events';
-import { SCHEMA_VERSION } from '../storage/schema';
-import { exportData } from './export';
-import { prepareCredential } from './accounts';
+import {
+  settleDue,
+  rearm,
+  EventFailure,
+  recordEventFailure,
+} from '../scheduler/events';
+import {SCHEMA_VERSION} from '../storage/schema';
+import {exportData} from './export';
+import {prepareCredential} from './accounts';
 
-export type PreparedCode = { id: string; mac: string; ciphertext: string };
-export type Codebook = {
+/** 事务外准备的手环密文及索引，只有权威发行事务能把它交付玩家。 */
+export interface PreparedCode {
+  id: string;
+  mac: string;
+  ciphertext: string;
+}
+/** 本场码本的密码学材料，配合持久发行记录保障永久唯一。 */
+export interface Codebook {
   hmac: CryptoKey;
   encryption: CryptoKey;
   fingerprint: string;
-  codes: { key: string; mac: string }[];
-};
+  codes: Array<{key: string; mac: string}>;
+}
 const HEAD = [
   'overview',
   'homeworlds',
@@ -64,46 +93,83 @@ const HEAD = [
   'settings',
   'account',
 ];
+/** 同一同步写事务使用的原正文、身份摘要、已准备材料和结算前事件集合。 */
+interface PreparedWriteRequest {
+  readonly input: RpcInput;
+  readonly path: string;
+  readonly hash: string;
+  readonly keys: Codebook;
+  readonly body: Record<string, unknown>;
+  readonly id: string;
+  readonly bodyDigest: string;
+  readonly prepared: PreparedCode[];
+  readonly credentialMaterial:
+    Awaited<ReturnType<typeof prepareCredential>> | undefined;
+  readonly commandCiphertext: string | null;
+  readonly pendingEvents: string[];
+}
+/** 本场业务执行器，统一身份、到期屏障、事务、审计和可控时间来源。 */
 export class Engine {
   platformKeys = false;
-  taskAuthorization = new Set<string>();
+  readonly taskAuthorization = new Set<string>();
+
   get matchId(): string {
-    return this.db.one<{ id: string }>('SELECT id FROM matches')?.id ?? this.env.MATCH_ID;
+    return (
+      this.db.one<{id: string}>('SELECT id FROM matches')?.id ??
+      this.env.MATCH_ID
+    );
   }
+
   /** Scoped to one synchronous command transaction; never persisted or exposed to players. */
   commandBatch = false;
   commandPrepared: PreparedCode[] = [];
   commandSnapshot: Record<string, string[]> = {};
-  commandCredentials: Record<string, Awaited<ReturnType<typeof prepareCredential>>> = {};
+  commandCredentials: Record<
+    string,
+    Awaited<ReturnType<typeof prepareCredential>>
+  > = {};
   resolvedKeys: Codebook | undefined;
   private materials:
     | Promise<{
         hmac: CryptoKey;
         encryption: CryptoKey;
         fingerprint: string;
-        codes: { key: string; mac: string }[];
+        codes: Array<{key: string; mac: string}>;
       }>
     | undefined;
+
   constructor(
-    public db: Store,
-    public env: BackendEnv,
-    public grant?: MatchGrant,
+    readonly db: Store,
+    readonly env: BackendEnv,
+    readonly grant?: MatchGrant,
   ) {}
+
+  /** 本场UTC来源；测试可替换此方法而无需真实等待赛程。 */
   now(): number {
     return Date.now();
   }
+
+  /** 根据当前比赛行把UTC转换为暂停时冻结的有效比赛时长。 */
   game(now = this.now()): number {
     return gameTime(this.db.match(), now);
   }
+
+  /** 按当前密钥世代延迟派生并缓存码本材料；失败清除缓存以允许修复后重试。 */
   async keys(): Promise<Codebook> {
-    if (!this.materials)
+    if (!this.materials) {
       this.materials = (async () => {
         const modern =
-          this.platformKeys || !!this.db.one('SELECT id FROM match_identity WHERE key_version=2');
+          this.platformKeys ||
+          !!this.db.one<Record<string, SqlStorageValue>>(
+            'SELECT id FROM match_identity WHERE key_version=2',
+          );
         const [hmacRaw, encryptionRaw] = modern
           ? await Promise.all([
               derive(this.env, `match|${this.matchId}|bracelet`),
-              derive(this.env, `match|${this.matchId}|encryption|${this.env.CODE_ENCRYPTION_KEY}`),
+              derive(
+                this.env,
+                `match|${this.matchId}|encryption|${this.env.CODE_ENCRYPTION_KEY}`,
+              ),
             ])
           : [this.env.CODE_HMAC_KEY, this.env.CODE_ENCRYPTION_KEY];
         const [hmac, encryption] = await Promise.all([
@@ -112,57 +178,88 @@ export class Engine {
         ]);
         const fingerprint = await digest(`${hmacRaw}|${encryptionRaw}`);
         const codes = await Promise.all(
-          enumerateCodes().map(async (key) => ({
+          enumerateCodes().map(async key => ({
             key,
             mac: await mac(hmac, `bracelet|${this.matchId}|${key}`),
           })),
         );
-        const result = { hmac, encryption, fingerprint, codes };
+        const result = {hmac, encryption, fingerprint, codes};
         this.resolvedKeys = result;
         return result;
-      })().catch((error) => {
+      })().catch(error => {
         this.materials = undefined;
         throw error;
       });
+    }
     return this.materials;
   }
+
+  /** 在同步事务外准备未发行候选的密文，真正发行时仍重新检查永久唯一性。 */
   async prepareCode(): Promise<PreparedCode[]> {
     const keys = await this.keys();
     const used = new Set(
-      this.db.all<{ mac: string }>('SELECT mac FROM sighting_codes').map((c) => c.mac),
+      this.db
+        .all<{mac: string}>('SELECT mac FROM sighting_codes')
+        .map(c => c.mac),
     );
-    const available = keys.codes.filter((c) => !used.has(c.mac));
+    const available = keys.codes.filter(c => !used.has(c.mac));
     // Prepare all still-available candidates before the transaction; concurrent issuers recheck SQL.
     return Promise.all(
-      available.map(async (c) => {
+      available.map(async character => {
         const id = crypto.randomUUID();
         return {
           id,
-          mac: c.mac,
-          ciphertext: await encrypt(keys.encryption, c.key, `${this.matchId}|${id}`),
+          mac: character.mac,
+          ciphertext: await encrypt(
+            keys.encryption,
+            character.key,
+            `${this.matchId}|${id}`,
+          ),
         };
       }),
     );
   }
-  arms(code: CodeRow | undefined, codebook: Awaited<ReturnType<Engine['keys']>>) {
-    if (!code) return null;
-    const key = codebook.codes.find((c) => c.mac === code.mac)?.key;
-    if (!key) throw new Error('CODE_KEY_MISMATCH');
+
+  /** 从已验证码本解析授权记录的双臂配置，索引不匹配时拒绝显示错误码。 */
+  arms(
+    code: CodeRow | undefined,
+    codebook: Awaited<ReturnType<Engine['keys']>>,
+  ) {
+    if (!code) {
+      return null;
+    }
+    const key = codebook.codes.find(c => c.mac === code.mac)?.key;
+    if (!key) {
+      throw new Error('CODE_KEY_MISMATCH');
+    }
     return decodeArms(key);
   }
+
+  /** 用SQLite固定时间桶记录请求次数，超限作为明确的业务拒绝。 */
   limit(key: string, max: number, window = 60_000): void {
     const bucket = Math.floor(this.now() / window);
-    const count = this.db.one<{ count: number }>(
+    const count = this.db.one<{count: number}>(
       'INSERT INTO rate_limits(key,bucket,count) VALUES(?,?,1) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN bucket=excluded.bucket THEN count+1 ELSE 1 END,bucket=excluded.bucket RETURNING count',
       key,
       bucket,
     )!.count;
-    requireThat(count <= max, 'RATE_LIMITED', '操作过于频繁，请稍后重试。', 429);
-  }
-  actor(tokenHash: string): Actor {
-    if (this.grant) return membershipActor(this, this.grant);
     requireThat(
-      !this.db.one('SELECT id FROM match_identity'),
+      count <= max,
+      'RATE_LIMITED',
+      '操作过于频繁，请稍后重试。',
+      429,
+    );
+  }
+
+  /** 验证当前平台任职或旧本场会话，拒绝跨场身份和已撤销授权。 */
+  actor(tokenHash: string): Actor {
+    if (this.grant) {
+      return membershipActor(this, this.grant);
+    }
+    requireThat(
+      !this.db.one<Record<string, SqlStorageValue>>(
+        'SELECT id FROM match_identity',
+      ),
       'PLATFORM_LOGIN_REQUIRED',
       '请从长期账号入口登录。',
       401,
@@ -172,32 +269,45 @@ export class Engine {
       tokenHash,
       this.now(),
     );
-    requireThat(actor && actor.match_id === this.matchId, 'UNAUTHENTICATED', '请重新登录。', 401);
+    requireThat(
+      actor && actor.match_id === this.matchId,
+      'UNAUTHENTICATED',
+      '请重新登录。',
+      401,
+    );
     return actor;
   }
+
+  /** 生成页面所需的本场公开会话，不返回登录摘要或密钥。 */
   session(actor: Actor, tokenHash: string): Session {
     const csrf =
       this.grant?.csrf ??
-      this.db.one<{ csrf: string }>('SELECT csrf FROM sessions WHERE token_hash=?', tokenHash)!
-        .csrf;
+      this.db.one<{csrf: string}>(
+        'SELECT csrf FROM sessions WHERE token_hash=?',
+        tokenHash,
+      )!.csrf;
     return {
       id: actor.id,
       matchId: actor.match_id,
       role: actor.role,
       name:
-        actor.role === 'player' ? (this.db.player(actor.id).nickname ?? actor.name) : actor.name,
-      permissions: JSON.parse(actor.permissions) as string[],
+        actor.role === 'player'
+          ? (this.db.player(actor.id).nickname ?? actor.name)
+          : actor.name,
+      permissions: accountPermissions(actor),
       csrfToken: csrf,
     };
   }
+
+  /** 按本人账号和请求ID读取确定结果；没有收据时返回待确认。 */
   result(actor: Actor, id: string): OperationResult {
-    const row = this.db.one<{ result_json: string }>(
+    const row = this.db.one<{result_json: string}>(
       'SELECT result_json FROM request_journal WHERE actor=? AND request_id=?',
       actor.id,
       id,
     );
     return row
-      ? (JSON.parse(row.result_json) as OperationResult)
+      ? (parseJson(row.result_json) as OperationResult)
       : {
           requestId: id,
           status: 'pending',
@@ -206,22 +316,38 @@ export class Engine {
           message: '正在确认上一次操作的结果。',
         };
   }
-  replay(actor: Actor, id: string, path: string, bodyDigest: string): OperationResult | null {
+
+  /** 重放原请求结果前核对路径与摘要，恢复取消记录保持原取消结论。 */
+  replay(
+    actor: Actor,
+    id: string,
+    path: string,
+    bodyDigest: string,
+  ): OperationResult | null {
     const row = this.db.one<{
       digest: string | null;
       path: string | null;
       cancelled: number;
       result_json: string;
-    }>('SELECT * FROM request_journal WHERE actor=? AND request_id=?', actor.id, id);
-    if (!row) return null;
-    if (!row.cancelled)
+    }>(
+      'SELECT * FROM request_journal WHERE actor=? AND request_id=?',
+      actor.id,
+      id,
+    );
+    if (!row) {
+      return null;
+    }
+    if (!row.cancelled) {
       requireThat(
         row.path === path && row.digest === bodyDigest,
         'REQUEST_ID_CONFLICT',
         '本次操作内容有变，请刷新后重新提交。',
       );
-    return JSON.parse(row.result_json) as OperationResult;
+    }
+    return parseJson(row.result_json) as OperationResult;
   }
+
+  /** 在业务事务内保存确定结果，网络重试随后复用该收据。 */
   saveResult(
     actor: Actor,
     id: string,
@@ -240,7 +366,15 @@ export class Engine {
       cancelled,
     );
   }
-  audit(actor: string, action: string, target: string, reason: string, detail: unknown = {}): void {
+
+  /** 写入双时基审计，并在平台成员存在时绑定长期账号和岗位身份。 */
+  audit(
+    actor: string,
+    action: string,
+    target: string,
+    reason: string,
+    detail: unknown = {},
+  ): void {
     this.db.exec(
       'INSERT INTO audit_logs(id,actor,action,target,reason,utc_ms,detail,game_ms) VALUES(?,?,?,?,?,?,?,?)',
       crypto.randomUUID(),
@@ -252,21 +386,35 @@ export class Engine {
       JSON.stringify(detail),
       this.game(),
     );
-    const member = this.db.one<{ account_id: string; assignment_id: string | null; name: string }>(
+    const member = this.db.one<{
+      account_id: string;
+      assignment_id: string | null;
+      name: string;
+    }>(
       'SELECT account_id,assignment_id,name FROM memberships WHERE local_id=?',
       actor,
     );
-    if (member)
+    if (member) {
       this.db.exec(
         'INSERT INTO audit_identities VALUES((SELECT MAX(seq) FROM audit_logs),?,?,?)',
         member.account_id,
         member.assignment_id,
         member.name,
       );
+    }
   }
-  notice(source: string, target: string, title: string, body: string, game = this.game()): void {
+
+  /** 按来源去重生成QQ待办，试玩标记与复制文案不代表实际发送。 */
+  notice(
+    source: string,
+    target: string,
+    title: string,
+    body: string,
+    game = this.game(),
+  ): void {
     const trial =
-      this.db.one<{ kind: string }>('SELECT kind FROM match_identity')?.kind === 'trial';
+      this.db.one<{kind: string}>('SELECT kind FROM match_identity')?.kind ===
+      'trial';
     const heading =
       title === '永久淘汰'
         ? body.includes('本次提交的手环颜色有误')
@@ -279,7 +427,10 @@ export class Engine {
             : title === '统一开赛时间'
               ? '即将开赛'
               : title;
-    const message = target === 'group' || /^C\d+$/.test(target) ? qqCopy(heading, body) : body;
+    const message =
+      target === 'group' || /^C\d+$/.test(target)
+        ? qqCopy(heading, body)
+        : body;
     this.db.exec(
       'INSERT OR IGNORE INTO notice_queue(id,dedup_key,channel,target,title,body,game_ms,priority,ordering_seq) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(ordering_seq),0)+1 FROM notice_queue))',
       crypto.randomUUID(),
@@ -289,13 +440,23 @@ export class Engine {
       trial ? `【试玩】${title}` : title,
       trial ? `本场为试玩比赛。\n${message}` : message,
       game,
-      title === '永久淘汰' ? 100 : title === '飞船被击毁' ? 90 : title === '母星毁灭' ? 80 : 0,
+      title === '永久淘汰'
+        ? 100
+        : title === '飞船被击毁'
+          ? 90
+          : title === '母星毁灭'
+            ? 80
+            : 0,
     );
   }
+
+  /** 生成保留文明编号的可读身份，昵称为空时仍可定位文明。 */
   identity(id: string): string {
     const p = this.db.player(id);
     return p.nickname ? `${id}（${p.nickname}）` : id;
   }
+
+  /** 验证独立初始化秘密并原子建立旧单场夹具，禁止覆盖已存在比赛。 */
   async bootstrap(secret: string, raw: unknown): Promise<RpcReply> {
     requireThat(
       this.env.BOOTSTRAP_SECRET &&
@@ -305,19 +466,32 @@ export class Engine {
       403,
     );
     const body = strict(raw, ['match_id', 'accounts']);
-    requireThat(body.match_id === this.matchId, 'MATCH_MISMATCH', '初始化场次不匹配。', 400);
     requireThat(
-      Array.isArray(body.accounts) && body.accounts.length >= 5 && body.accounts.length <= 353,
+      body.match_id === this.matchId,
+      'MATCH_MISMATCH',
+      '初始化场次不匹配。',
+      400,
+    );
+    requireThat(
+      Array.isArray(body.accounts) &&
+        body.accounts.length >= 5 &&
+        body.accounts.length <= 353,
       'BAD_ROSTER',
       '名单须包含2—350名玩家和3名独立裁判。',
       400,
     );
-    const accounts = body.accounts.map((raw) => {
-      const a = strict(raw, ['id', 'role', 'name', 'credential_hash', 'duty']);
-      const id = text(a.id, 16);
-      const role = text(a.role, 6);
-      const name = text(a.name, 64);
-      const hash = text(a.credential_hash, 44, 44);
+    const accounts = body.accounts.map(raw => {
+      const accountInput = strict(raw, [
+        'id',
+        'role',
+        'name',
+        'credential_hash',
+        'duty',
+      ]);
+      const id = text(accountInput.id, 16);
+      const role = text(accountInput.role, 6);
+      const name = text(accountInput.name, 64);
+      const hash = text(accountInput.credential_hash, 44, 44);
       requireThat(
         /^[A-Za-z0-9+/]{43}=$/.test(hash),
         'BAD_CREDENTIAL_HASH',
@@ -325,14 +499,16 @@ export class Engine {
         400,
       );
       requireThat(
-        (role === 'player' && /^C\d{2,3}$/.test(id)) || (role === 'judge' && /^J\d{2}$/.test(id)),
+        (role === 'player' && /^C\d{2,3}$/.test(id)) ||
+          (role === 'judge' && /^J\d{2}$/.test(id)),
         'BAD_ACCOUNT',
         '账号格式不正确。',
         400,
       );
-      const duty = role === 'judge' ? text(a.duty, 20) : '';
+      const duty = role === 'judge' ? text(accountInput.duty, 20) : '';
       requireThat(
-        role === 'player' || ['head', 'communications', 'events'].includes(duty),
+        role === 'player' ||
+          ['head', 'communications', 'events'].includes(duty),
         'BAD_DUTY',
         '裁判职责不正确。',
         400,
@@ -347,24 +523,32 @@ export class Engine {
           duty === 'head'
             ? HEAD
             : duty === 'communications'
-              ? ['overview', 'homeworlds', 'notices', 'players', 'events', 'account']
+              ? [
+                  'overview',
+                  'homeworlds',
+                  'notices',
+                  'players',
+                  'events',
+                  'account',
+                ]
               : duty === 'events'
                 ? ['overview', 'notices', 'events', 'players', 'account']
                 : [],
       };
     });
-    for (const duty of ['head', 'communications', 'events'])
+    for (const duty of ['head', 'communications', 'events']) {
       requireThat(
         duty === 'head'
-          ? accounts.filter((a) => a.duty === duty).length === 1
-          : accounts.filter((a) => a.duty === duty).length <= 1,
+          ? accounts.filter(a => a.duty === duty).length === 1
+          : accounts.filter(a => a.duty === duty).length <= 1,
         'BAD_DUTY',
         '需要一名总裁判，每种裁判职责最多设置一个账号。',
         400,
       );
+    }
     requireThat(
-      new Set(accounts.map((a) => a.id)).size === accounts.length &&
-        new Set(accounts.map((a) => a.hash)).size === accounts.length,
+      new Set(accounts.map(a => a.id)).size === accounts.length &&
+        new Set(accounts.map(a => a.hash)).size === accounts.length,
       'DUPLICATE_ACCOUNT',
       '账号与凭证须独立。',
       400,
@@ -372,7 +556,7 @@ export class Engine {
     const keys = await this.keys();
     this.db.tx(() => {
       requireThat(
-        !this.db.one('SELECT id FROM matches'),
+        !this.db.one<Record<string, SqlStorageValue>>('SELECT id FROM matches'),
         'ALREADY_INITIALIZED',
         '本场已初始化，禁止覆盖。',
       );
@@ -383,45 +567,62 @@ export class Engine {
         JSON.stringify(DEFAULT_SITE),
         this.now(),
       );
-      for (const a of accounts) {
+      for (const accountInput of accounts) {
         this.db.exec(
           'INSERT INTO accounts(id,match_id,role,name,credential_hash,permissions) VALUES(?,?,?,?,?,?)',
-          a.id,
+          accountInput.id,
           this.matchId,
-          a.role,
-          a.name,
-          a.hash,
-          JSON.stringify(a.permissions),
+          accountInput.role,
+          accountInput.name,
+          accountInput.hash,
+          JSON.stringify(accountInput.permissions),
         );
-        if (a.role === 'player') {
-          this.db.exec('INSERT INTO players(id) VALUES(?)', a.id);
-          this.db.exec('INSERT INTO flights(player_id) VALUES(?)', a.id);
-          this.db.exec('INSERT INTO attack_controls(player_id) VALUES(?)', a.id);
+        if (accountInput.role === 'player') {
+          this.db.exec('INSERT INTO players(id) VALUES(?)', accountInput.id);
+          this.db.exec(
+            'INSERT INTO flights(player_id) VALUES(?)',
+            accountInput.id,
+          );
+          this.db.exec(
+            'INSERT INTO attack_controls(player_id) VALUES(?)',
+            accountInput.id,
+          );
         }
       }
       this.db.exec(
         "INSERT INTO roster_members SELECT id FROM players WHERE entry_status='registered'",
       );
       this.audit('bootstrap', 'initialize', this.matchId, '一次性场次引导', {
-        players: accounts.filter((a) => a.role === 'player').length,
+        players: accounts.filter(a => a.role === 'player').length,
       });
     });
     return {
       status: 201,
-      body: { initialized: true, matchId: this.matchId, schemaVersion: SCHEMA_VERSION },
+      body: {
+        initialized: true,
+        matchId: this.matchId,
+        schemaVersion: SCHEMA_VERSION,
+      },
     };
   }
+
+  /** 执行内部请求并记录受限失败审计，错误响应不泄露密钥、SQL或堆栈。 */
   async call(input: RpcInput): Promise<RpcReply> {
     try {
       return await this.handle(input);
     } catch (error) {
-      if (error instanceof EventFailure) recordEventFailure(this, error);
+      if (error instanceof EventFailure) {
+        recordEventFailure(this, error);
+      }
       if (input.path.startsWith('/judge/command/') && input.token) {
         try {
           const actor = this.actor(await digest(input.token));
           if (actor.role === 'judge') {
-            const body = object(input.body),
-              id = typeof body.request_id === 'string' ? body.request_id.slice(0, 100) : 'unknown';
+            const body = object(input.body);
+            const id =
+              typeof body.request_id === 'string'
+                ? body.request_id.slice(0, 100)
+                : 'unknown';
             const keys = await this.keys();
             const cipher =
               typeof body.command === 'string'
@@ -431,29 +632,10 @@ export class Engine {
                     `command|${this.matchId}|${actor.id}|${id}`,
                   )
                 : null;
-            let rejectedPath = 'unparsed';
-            try {
-              rejectedPath =
-                commandSpec(parseCommandTree(String(body.command)))?.path ?? rejectedPath;
-            } catch {
-              /* Syntax rejection remains unparsed. */
-            }
-            recordCommand(
-              this,
-              actor,
-              id,
-              rejectedPath,
-              'rejected',
-              {
-                code: error instanceof Fault ? error.code : 'BAD_REQUEST',
-                reason: typeof body.reason === 'string' ? body.reason : '裁判指令被拒绝',
-                reference: typeof body.preview_token === 'string' ? body.preview_token : null,
-              },
-              cipher,
-            );
+            this.recordRejectedCommand(actor, id, body, cipher, error);
           }
         } catch {
-          /* Preserve the original authentication or command error. */
+          // Preserve the original authentication or command error.
         }
       }
       if (
@@ -465,47 +647,34 @@ export class Engine {
         try {
           const actor = this.actor(await digest(input.token));
           if (actor.role === 'judge') {
-            const body =
-              input.body && typeof input.body === 'object'
-                ? (input.body as Record<string, unknown>)
-                : {};
-            this.audit(
-              actor.id,
-              input.path,
-              typeof body.target === 'string' ? body.target.slice(0, 180) : this.matchId,
-              typeof body.reason === 'string' ? body.reason.slice(0, 500) : '管理操作失败',
-              {
-                requestId:
-                  typeof body.request_id === 'string' ? body.request_id.slice(0, 100) : null,
-                status: 'failed',
-                error:
-                  error instanceof Fault
-                    ? error.code
-                    : error instanceof ContractError
-                      ? 'BAD_REQUEST'
-                      : 'SERVICE_UNAVAILABLE',
-              },
-            );
+            this.recordRejectedManagement(actor, input, error);
           }
         } catch {
-          /* A failed authentication must not expose or overwrite the original error. */
+          // A failed authentication must not expose or overwrite the original error.
         }
       }
-      if (error instanceof Fault)
+      if (error instanceof Fault) {
         return {
           status: error.status,
           body: {
             code: error.code,
             message:
-              error instanceof EventFailure ? '赛事暂时无法继续，请等待裁判处理。' : error.message,
+              error instanceof EventFailure
+                ? '赛事暂时无法继续，请等待裁判处理。'
+                : error.message,
             definitive: true,
           },
         };
-      if (error instanceof ContractError || error instanceof CommandSyntaxError)
+      }
+      if (
+        error instanceof ContractError ||
+        error instanceof CommandSyntaxError
+      ) {
         return {
           status: 400,
-          body: { code: 'BAD_REQUEST', message: error.message, definitive: true },
+          body: {code: 'BAD_REQUEST', message: error.message, definitive: true},
         };
+      }
       // No stack, credentials, SQL bindings, or secret body enters an HTTP error/log.
       return {
         status: 503,
@@ -517,6 +686,76 @@ export class Engine {
       };
     }
   }
+
+  /** Records a command rejection; the caller keeps audit failures from replacing the original error. */
+  private recordRejectedCommand(
+    actor: Actor,
+    id: string,
+    body: Record<string, unknown>,
+    cipher: string | null,
+    error: unknown,
+  ): void {
+    let rejectedPath = 'unparsed';
+    try {
+      rejectedPath =
+        commandSpec(parseCommandTree(String(body.command)))?.path ??
+        rejectedPath;
+    } catch {
+      // Syntax rejection remains unparsed.
+    }
+    recordCommand(
+      this,
+      actor,
+      id,
+      rejectedPath,
+      'rejected',
+      {
+        code: error instanceof Fault ? error.code : 'BAD_REQUEST',
+        reason:
+          typeof body.reason === 'string' ? body.reason : '裁判指令被拒绝',
+        reference:
+          typeof body.preview_token === 'string' ? body.preview_token : null,
+      },
+      cipher,
+    );
+  }
+
+  /** Projects only allowed failure fields after the caller has authenticated the judge. */
+  private recordRejectedManagement(
+    actor: Actor,
+    input: RpcInput,
+    error: unknown,
+  ): void {
+    const body =
+      input.body && typeof input.body === 'object'
+        ? (input.body as Record<string, unknown>)
+        : {};
+    this.audit(
+      actor.id,
+      input.path,
+      typeof body.target === 'string'
+        ? body.target.slice(0, 180)
+        : this.matchId,
+      typeof body.reason === 'string'
+        ? body.reason.slice(0, 500)
+        : '管理操作失败',
+      {
+        requestId:
+          typeof body.request_id === 'string'
+            ? body.request_id.slice(0, 100)
+            : null,
+        status: 'failed',
+        error:
+          error instanceof Fault
+            ? error.code
+            : error instanceof ContractError
+              ? 'BAD_REQUEST'
+              : 'SERVICE_UNAVAILABLE',
+      },
+    );
+  }
+
+  /** 先结算到期事件；持续故障时只允许明确列出的查询和救援操作。 */
   private settleForRequest(
     actor: Actor | null,
     path: string,
@@ -525,33 +764,44 @@ export class Engine {
     try {
       settleDue(this);
     } catch (error) {
-      if (!(error instanceof EventFailure) || actor?.role !== 'judge') throw error;
+      if (!(error instanceof EventFailure) || actor?.role !== 'judge') {
+        throw error;
+      }
       const url = new URL(path, 'https://internal');
       if (!body) {
         const scope = url.searchParams.get('route') ?? '';
         if (!(
           url.pathname.startsWith('/judge/') ||
           (url.pathname === '/snapshot' && scope.startsWith('/judge'))
-        ))
+        )) {
           throw error;
+        }
         permission(actor, 'overview');
       } else {
         const action = path === '/judge/manage/preview' ? body.path : path;
         let commandAllowed = false;
-        if (path.startsWith('/judge/command/') && typeof body.command === 'string') {
+        if (
+          path.startsWith('/judge/command/') &&
+          typeof body.command === 'string'
+        ) {
           let node = parseCommandTree(body.command);
           if (node.words[0] === 'confirm') {
-            const plan = this.db.one<{ actor: string; data: string; status: string }>(
+            const plan = this.db.one<{
+              actor: string;
+              data: string;
+              status: string;
+            }>(
               "SELECT actor,data,status FROM command_objects WHERE id=? AND kind='plan'",
               node.words[1] ?? '',
             );
-            if (plan?.actor === actor.id && plan.status === 'pending')
-              node = (JSON.parse(plan.data) as { node: typeof node }).node;
+            if (plan?.actor === actor.id && plan.status === 'pending') {
+              node = (parseJson(plan.data) as {node: typeof node}).node;
+            }
           } else if (
             node.words[0] === 'plan' &&
             !['inspect', 'cancel'].includes(node.words[1] ?? '')
           ) {
-            node = { ...node, words: node.words.slice(1) };
+            node = {...node, words: node.words.slice(1)};
           }
           const spec = commandSpec(node);
           commandAllowed =
@@ -567,7 +817,9 @@ export class Engine {
                 'scheduler rearm',
                 'scheduler settle-due',
               ].includes(spec.path));
-          if (commandAllowed) permission(actor, spec!.permission);
+          if (commandAllowed) {
+            permission(actor, spec!.permission);
+          }
         }
         if (!(
           commandAllowed ||
@@ -575,13 +827,18 @@ export class Engine {
           action === '/judge/event-control' ||
           action === '/judge/scheduler/rearm' ||
           action === '/judge/events/settle-due'
-        ))
+        )) {
           throw error;
-        if (!commandAllowed) permission(actor, 'system');
+        }
+        if (!commandAllowed) {
+          permission(actor, 'system');
+        }
       }
       recordEventFailure(this, error);
     }
   }
+
+  /** 恢复准备时阻断普通入口，核对期间继续禁止玩家战局写入。 */
   private requireRecoveryAccess(path: string, write = false): void {
     const state = this.db.match().recovery_state;
     requireThat(
@@ -591,24 +848,31 @@ export class Engine {
       503,
     );
     requireThat(
-      !write || !state || (!path.startsWith('/action/') && path !== '/player/nickname'),
+      !write ||
+        !state ||
+        (!path.startsWith('/action/') && path !== '/player/nickname'),
       'RECOVERY_REVIEW',
       '裁判正在核对比赛恢复结果。',
     );
   }
+
+  /** 按认证、恢复门禁、到期屏障和事务顺序处理请求，异步准备后复核当前状态。 */
   private async handle(input: RpcInput): Promise<RpcReply> {
-    const { path, method } = input;
+    const {path, method} = input;
     const db = this.db;
     const keys = await this.keys();
     this.requireRecoveryAccess(path, method === 'POST');
     const creators = db
-      .all<{ actor: string }>(
+      .all<{actor: string}>(
         "SELECT DISTINCT actor FROM command_objects WHERE kind IN ('schedule','job') AND status='pending'",
       )
-      .map((r) => r.actor);
-    if (path.startsWith('/judge/command/') || creators.length)
+      .map(r => r.actor);
+    if (path.startsWith('/judge/command/') || creators.length) {
       this.commandPrepared = await this.prepareCode();
-    if (creators.length) await prepareCommandCredentials(this, creators);
+    }
+    if (creators.length) {
+      await prepareCommandCredentials(this, creators);
+    }
     requireThat(
       db.match().key_fingerprint === keys.fingerprint,
       'KEY_CONFIGURATION_CHANGED',
@@ -616,49 +880,17 @@ export class Engine {
       503,
     );
     if (path === '/auth/exchange' && method === 'POST') {
-      requireThat(
-        !db.one('SELECT id FROM match_identity'),
-        'PLATFORM_LOGIN_REQUIRED',
-        '请从长期账号入口登录。',
-        401,
-      );
-      this.limit(`login:${input.clientKey}`, 120);
-      const body = strict(input.body, ['credential', 'audience']);
-      requireThat(
-        body.audience === 'player' || body.audience === 'judge',
-        'BAD_AUDIENCE',
-        '登录入口不正确。',
-        400,
-      );
-      const hash = await digest(text(body.credential, 128, 32));
-      this.limit(`credential:${hash}`, 10);
-      const sessionToken = token();
-      const tokenHash = await digest(sessionToken);
-      const csrf = token();
-      return db.tx(() => {
-        this.requireRecoveryAccess(path, true);
-        const actor = db.one<Actor>(
-          'SELECT * FROM accounts WHERE credential_hash=? AND role=? AND enabled=1',
-          hash,
-          body.audience as string,
-        );
-        requireThat(actor, 'INVALID_CREDENTIAL', '登录口令无效。', 401);
-        db.exec(
-          'INSERT INTO sessions VALUES(?,?,?,?,0)',
-          tokenHash,
-          actor.id,
-          csrf,
-          this.now() + 12 * 60 * 60_000,
-        );
-        return { status: 200, body: this.session(actor, tokenHash), sessionToken };
-      });
+      return this.exchangeCredentials(input);
     }
     const hash = input.token ? await digest(input.token) : '';
     this.requireRecoveryAccess(path, method === 'POST');
     let actor: Actor | null = null;
-    if (hash) actor = this.actor(hash);
-    if (path === '/auth/session' && method === 'GET')
-      return { status: 200, body: actor ? this.session(actor, hash) : null };
+    if (hash) {
+      actor = this.actor(hash);
+    }
+    if (path === '/auth/session' && method === 'GET') {
+      return {status: 200, body: actor ? this.session(actor, hash) : null};
+    }
     if (method === 'POST') {
       requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
       requireThat(
@@ -670,77 +902,181 @@ export class Engine {
     }
     if (path === '/auth/logout' && method === 'POST') {
       db.exec('UPDATE sessions SET revoked=1 WHERE token_hash=?', hash);
-      return { status: 200, body: { loggedOut: true }, clearCookie: true };
+      return {status: 200, body: {loggedOut: true}, clearCookie: true};
     }
     this.limit(`readwrite:${actor?.id ?? input.clientKey}`, actor ? 300 : 90);
     if (method === 'GET') {
-      if (/^\/operations\/[A-Za-z0-9_-]+$/.test(path))
-        return { status: 200, body: readEndpoint(this, actor, path, keys) };
-      if (path === '/judge/scheduler/health') {
-        requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
-        permission(actor, 'system');
-        return { status: 200, body: readEndpoint(this, actor, path, keys) };
-      }
-      this.settleForRequest(actor, path);
-      await rearm(this);
-      this.requireRecoveryAccess(path);
-      // All awaited preparation completes before this final synchronous snapshot transaction.
-      if (actor) actor = this.actor(hash);
-      const readUrl = new URL(path, 'https://internal');
-      if (readUrl.pathname.startsWith('/judge/credentials/')) {
-        requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
-        permission(actor, 'system');
-        const deliveryId = readUrl.pathname.slice('/judge/credentials/'.length);
-        const row = db.one<{ actor: string; account_id: string; ciphertext: string }>(
-          'SELECT * FROM credential_deliveries WHERE id=?',
-          deliveryId,
-        );
-        requireThat(row && row.actor === actor.id, 'NOT_FOUND', '口令记录不存在。', 404);
-        const credential = await decrypt(
-          keys.encryption,
-          row.ciphertext,
-          `credential|${this.matchId}|${actor.id}|${deliveryId}`,
-        );
-        permission(this.actor(hash), 'system');
-        return { status: 200, body: { accountId: row.account_id, credential } };
-      }
-      if (readUrl.pathname === '/judge/export') {
-        requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
-        const exported = await exportData(
-          this,
-          actor,
-          readUrl.searchParams.get('kind') ?? 'report',
-          keys,
-        );
-        await rearm(this);
-        permission(
-          this.actor(hash),
-          ['backup', 'checkpoint'].includes(readUrl.searchParams.get('kind') ?? '')
-            ? 'system'
-            : readUrl.searchParams.get('kind') === 'audit'
-              ? 'audit'
-              : 'results',
-        );
-        return { status: 200, body: exported };
-      }
-      // Alarm registration is asynchronous; repeat the barrier after it.
-      this.settleForRequest(actor, path);
-      const body = db.tx(() => {
-        if (path.startsWith('/snapshot')) {
-          const scope = new URL(path, 'https://internal').searchParams.get('route') ?? '/';
-          return projectSnapshot(
-            this,
-            actor,
-            actor ? this.session(actor, hash) : null,
-            scope,
-            keys,
-          );
-        }
-        return readEndpoint(this, actor, path, keys);
-      });
-      return { status: 200, body };
+      return this.readRequest(path, actor, hash, keys);
     }
     requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
+    return this.writeRequest(input, actor, hash, keys, creators);
+  }
+
+  /** 建立旧单场登录会话，事务内再次检查恢复状态及有效账号。 */
+  private async exchangeCredentials(input: RpcInput): Promise<RpcReply> {
+    const db = this.db;
+    const {path} = input;
+
+    requireThat(
+      !db.one<Record<string, SqlStorageValue>>('SELECT id FROM match_identity'),
+      'PLATFORM_LOGIN_REQUIRED',
+      '请从长期账号入口登录。',
+      401,
+    );
+    this.limit(`login:${input.clientKey}`, 120);
+    const body = strict(input.body, ['credential', 'audience']);
+    requireThat(
+      body.audience === 'player' || body.audience === 'judge',
+      'BAD_AUDIENCE',
+      '登录入口不正确。',
+      400,
+    );
+    const hash = await digest(text(body.credential, 128, 32));
+    this.limit(`credential:${hash}`, 10);
+    const sessionToken = token();
+    const tokenHash = await digest(sessionToken);
+    const csrf = token();
+    return db.tx(() => {
+      this.requireRecoveryAccess(path, true);
+      const actor = db.one<Actor>(
+        'SELECT * FROM accounts WHERE credential_hash=? AND role=? AND enabled=1',
+        hash,
+        body.audience as string,
+      );
+      requireThat(actor, 'INVALID_CREDENTIAL', '登录口令无效。', 401);
+      db.exec(
+        'INSERT INTO sessions VALUES(?,?,?,?,0)',
+        tokenHash,
+        actor.id,
+        csrf,
+        this.now() + 12 * 60 * 60_000,
+      );
+      return {
+        status: 200,
+        body: this.session(actor, tokenHash),
+        sessionToken,
+      };
+    });
+  }
+
+  /** 在到期屏障和异步重排后复核身份，再读取授权快照或专用交付。 */
+  private async readRequest(
+    path: string,
+    actor: Actor | null,
+    hash: string,
+    keys: Codebook,
+  ): Promise<RpcReply> {
+    const db = this.db;
+
+    if (/^\/operations\/[A-Za-z0-9_-]+$/.test(path)) {
+      return {status: 200, body: readEndpoint(this, actor, path, keys)};
+    }
+    if (path === '/judge/scheduler/health') {
+      requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
+      permission(actor, 'system');
+      return {status: 200, body: readEndpoint(this, actor, path, keys)};
+    }
+    this.settleForRequest(actor, path);
+    await rearm(this);
+    this.requireRecoveryAccess(path);
+    // All awaited preparation completes before this final synchronous snapshot transaction.
+    if (actor) {
+      actor = this.actor(hash);
+    }
+    const readUrl = new URL(path, 'https://internal');
+    if (readUrl.pathname.startsWith('/judge/credentials/')) {
+      return this.deliverCredential(readUrl, actor, hash, keys);
+    }
+    if (readUrl.pathname === '/judge/export') {
+      return this.readExport(readUrl, actor, hash, keys);
+    }
+    // Alarm registration is asynchronous; repeat the barrier after it.
+    this.settleForRequest(actor, path);
+    const body = db.tx(() => {
+      if (path.startsWith('/snapshot')) {
+        const scope =
+          new URL(path, 'https://internal').searchParams.get('route') ?? '/';
+        return projectSnapshot(
+          this,
+          actor,
+          actor ? this.session(actor, hash) : null,
+          scope,
+          keys,
+        );
+      }
+      return readEndpoint(this, actor, path, keys);
+    });
+    return {status: 200, body};
+  }
+
+  /** 核对专用交付归属并解密，返回前再次复核当前系统职责。 */
+  private async deliverCredential(
+    readUrl: URL,
+    actor: Actor | null,
+    hash: string,
+    keys: Codebook,
+  ): Promise<RpcReply> {
+    const db = this.db;
+
+    requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
+    permission(actor, 'system');
+    const deliveryId = readUrl.pathname.slice('/judge/credentials/'.length);
+    const row = db.one<{
+      actor: string;
+      account_id: string;
+      ciphertext: string;
+    }>('SELECT * FROM credential_deliveries WHERE id=?', deliveryId);
+    requireThat(
+      row && row.actor === actor.id,
+      'NOT_FOUND',
+      '口令记录不存在。',
+      404,
+    );
+    const credential = await decrypt(
+      keys.encryption,
+      row.ciphertext,
+      `credential|${this.matchId}|${actor.id}|${deliveryId}`,
+    );
+    permission(this.actor(hash), 'system');
+    return {status: 200, body: {accountId: row.account_id, credential}};
+  }
+
+  /** 生成已授权导出并重排唤醒，返回前按导出类别复核当前职责。 */
+  private async readExport(
+    readUrl: URL,
+    actor: Actor | null,
+    hash: string,
+    keys: Codebook,
+  ): Promise<RpcReply> {
+    requireThat(actor, 'UNAUTHENTICATED', '请重新登录。', 401);
+    const exported = await exportData(
+      this,
+      actor,
+      readUrl.searchParams.get('kind') ?? 'report',
+      keys,
+    );
+    await rearm(this);
+    permission(
+      this.actor(hash),
+      ['backup', 'checkpoint'].includes(readUrl.searchParams.get('kind') ?? '')
+        ? 'system'
+        : readUrl.searchParams.get('kind') === 'audit'
+          ? 'audit'
+          : 'results',
+    );
+    return {status: 200, body: exported};
+  }
+
+  /** 按原摘要重放并在事务外准备材料，再通过同步事务复核及提交原操作。 */
+  private async writeRequest(
+    input: RpcInput,
+    actor: Actor,
+    hash: string,
+    keys: Codebook,
+    creators: string[],
+  ): Promise<RpcReply> {
+    const db = this.db;
+    const {path} = input;
     const body = object(input.body);
     const resolve = /^\/operations\/([A-Za-z0-9_-]+)\/resolve$/.exec(path);
     if (resolve) {
@@ -749,7 +1085,9 @@ export class Engine {
       return db.tx(() => {
         const current = this.actor(hash);
         const existing = this.result(current, id);
-        if (existing.status === 'complete') return { status: 200, body: existing };
+        if (existing.status === 'complete') {
+          return {status: 200, body: existing};
+        }
         const cancelled: OperationResult = {
           requestId: id,
           status: 'complete',
@@ -758,7 +1096,7 @@ export class Engine {
           message: '上一次操作未提交，你可以重新操作。',
         };
         this.saveResult(current, id, null, null, cancelled, 1);
-        return { status: 200, body: cancelled };
+        return {status: 200, body: cancelled};
       });
     }
     const id = requestId(body.request_id);
@@ -773,7 +1111,9 @@ export class Engine {
     const bodyDigest = await digest(stableJson(digestBody));
     actor = this.actor(hash);
     const old = this.replay(actor, id, path, bodyDigest);
-    if (old) return { status: 200, body: old };
+    if (old) {
+      return {status: 200, body: old};
+    }
     const commandCiphertext = path.startsWith('/judge/command/')
       ? await encrypt(
           keys.encryption,
@@ -800,49 +1140,123 @@ export class Engine {
         ? await prepareCredential(this, actor.id)
         : undefined;
     const pendingEvents = db
-      .all<{ id: string }>("SELECT id FROM scheduled_events WHERE status='pending'")
-      .map((event) => event.id);
-    this.settleForRequest(actor, path, body);
-    const result = db.tx(() => {
-      this.requireRecoveryAccess(path, true);
-      const current = this.actor(hash);
-      const replay = this.replay(current, id, path, bodyDigest);
-      if (replay) return replay;
-      let result: OperationResult;
-      if (path.startsWith('/judge/command/'))
-        result = commandAction(this, current, id, path, body, prepared, keys, commandCiphertext);
-      else if (path === '/judge/manage/preview') result = previewAction(this, current, id, body);
-      else if (path.startsWith('/judge/'))
-        result = judgeAction(this, current, id, path, body, prepared, credentialMaterial);
-      else if (path.startsWith('/action/') || path === '/player/nickname')
-        result = playerAction(this, current, id, path, body, prepared, input.edgeUtc, keys);
-      else throw new Fault(404, 'NOT_FOUND', '未找到这项操作。');
-      if (
-        [
-          '/judge/events/settle-due',
-          '/judge/scheduler/rearm',
-          '/judge/event-control',
-          '/judge/event-trigger',
-        ].includes(path)
+      .all<{id: string}>(
+        "SELECT id FROM scheduled_events WHERE status='pending'",
       )
-        result.scheduler = {
-          settledEvents: db
-            .all<{ id: string }>("SELECT id FROM scheduled_events WHERE status='settled'")
-            .map((event) => event.id)
-            .filter(
-              (event) =>
-                pendingEvents.includes(event) || event.startsWith(`judge:${current.id}:${id}:`),
-            ),
-          remaining: db.one<{ count: number }>(
-            "SELECT COUNT(*) AS count FROM scheduled_events WHERE status='pending'",
-          )!.count,
-        };
-      this.saveResult(current, id, path, bodyDigest, result);
-      return result;
-    });
+      .map(event => event.id);
+    this.settleForRequest(actor, path, body);
+    const preparedRequest: PreparedWriteRequest = {
+      input,
+      path,
+      hash,
+      keys,
+      body,
+      id,
+      bodyDigest,
+      prepared,
+      credentialMaterial,
+      commandCiphertext,
+      pendingEvents,
+    };
+    const result = db.tx(() => this.commitWrite(preparedRequest));
     await rearm(this);
-    return { status: 200, body: result };
+    return {status: 200, body: result};
   }
+
+  /** 在同一同步事务内复核恢复、身份和原收据，并保存调度说明及确定结果。 */
+  private commitWrite(request: PreparedWriteRequest): OperationResult {
+    const db = this.db;
+    const {path, hash, id, bodyDigest, pendingEvents} = request;
+    this.requireRecoveryAccess(path, true);
+    const current = this.actor(hash);
+    const replay = this.replay(current, id, path, bodyDigest);
+    if (replay) {
+      return replay;
+    }
+    const result = this.applyWrite(current, request);
+    if (
+      [
+        '/judge/events/settle-due',
+        '/judge/scheduler/rearm',
+        '/judge/event-control',
+        '/judge/event-trigger',
+      ].includes(path)
+    ) {
+      result.scheduler = {
+        settledEvents: db
+          .all<{id: string}>(
+            "SELECT id FROM scheduled_events WHERE status='settled'",
+          )
+          .map(event => event.id)
+          .filter(
+            event =>
+              pendingEvents.includes(event) ||
+              event.startsWith(`judge:${current.id}:${id}:`),
+          ),
+        remaining: db.one<{count: number}>(
+          "SELECT COUNT(*) AS count FROM scheduled_events WHERE status='pending'",
+        )!.count,
+      };
+    }
+    this.saveResult(current, id, path, bodyDigest, result);
+    return result;
+  }
+
+  /** 分派已在当前事务复核的业务请求，各领域仍负责自身规则与原返回契约。 */
+  private applyWrite(
+    current: Actor,
+    request: PreparedWriteRequest,
+  ): OperationResult {
+    const {
+      path,
+      id,
+      body,
+      prepared,
+      keys,
+      credentialMaterial,
+      commandCiphertext,
+      input,
+    } = request;
+    if (path.startsWith('/judge/command/')) {
+      return commandAction(
+        this,
+        current,
+        id,
+        path,
+        body,
+        prepared,
+        keys,
+        commandCiphertext,
+      );
+    } else if (path === '/judge/manage/preview') {
+      return previewAction(this, current, id, body);
+    } else if (path.startsWith('/judge/')) {
+      return judgeAction(
+        this,
+        current,
+        id,
+        path,
+        body,
+        prepared,
+        credentialMaterial,
+      );
+    } else if (path.startsWith('/action/') || path === '/player/nickname') {
+      return playerAction(
+        this,
+        current,
+        id,
+        path,
+        body,
+        prepared,
+        input.edgeUtc,
+        keys,
+      );
+    } else {
+      throw new Fault(404, 'NOT_FOUND', '未找到这项操作。');
+    }
+  }
+
+  /** 按稳定事件ID登记时基、优先级和负载，重试不创建另一份事件。 */
   schedule(
     id: string,
     kind: string,
@@ -861,11 +1275,15 @@ export class Engine {
       JSON.stringify(payload),
     );
   }
+
+  /** 在当前事务中消费未发行候选并建立航次关联，耗尽时明确失败。 */
   issue(actor: string, id: string, prepared: PreparedCode[]): CodeRow {
     const used = new Set(
-      this.db.all<{ mac: string }>('SELECT mac FROM sighting_codes').map((c) => c.mac),
+      this.db
+        .all<{mac: string}>('SELECT mac FROM sighting_codes')
+        .map(c => c.mac),
     );
-    const candidates = prepared.filter((c) => !used.has(c.mac));
+    const candidates = prepared.filter(c => !used.has(c.mac));
     requireThat(
       candidates.length,
       'CODEBOOK_EXHAUSTED',
@@ -884,24 +1302,33 @@ export class Engine {
       this.now(),
       id,
     );
-    this.db.exec('UPDATE flights SET code_id=?,voyage=voyage+1 WHERE player_id=?', code.id, actor);
+    this.db.exec(
+      'UPDATE flights SET code_id=?,voyage=voyage+1 WHERE player_id=?',
+      code.id,
+      actor,
+    );
     const remaining = 350 - used.size - 1;
-    if ([20, 10, 0].includes(remaining))
+    if ([20, 10, 0].includes(remaining)) {
       this.notice(
         `capacity:${remaining}`,
         'J01',
         '手环码容量预警',
         `剩余可发行配置${remaining}枚，请总裁判核查。`,
       );
-    return this.db.one<CodeRow>('SELECT * FROM sighting_codes WHERE id=?', code.id)!;
+    }
+    return this.db.one<CodeRow>(
+      'SELECT * FROM sighting_codes WHERE id=?',
+      code.id,
+    )!;
   }
 }
+/** 构造已确定完成的操作结果，网络不确定状态不能伪装成此结果。 */
 export function completed(
   id: string,
   title: string,
   message = title,
   extra: Partial<OperationResult> = {},
 ): OperationResult {
-  return { requestId: id, status: 'complete', title, message, ...extra };
+  return {requestId: id, status: 'complete', title, message, ...extra};
 }
-export { coordinate, integer, permission };
+export {coordinate, integer, permission};

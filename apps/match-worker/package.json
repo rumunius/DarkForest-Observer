@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev --ip 127.0.0.1 --port 8787 --persist-to ../../.wrangler/state",
     "build": "wrangler deploy --env preview --dry-run --outdir dist",
-    "cf:types": "node ../../scripts/prepare-types.mjs && wrangler types .wrangler/types/env.d.ts --include-runtime false --env-interface MatchWorkerEnv",
+    "cf:types": "node ../../scripts/prepare_types.mjs && wrangler types .wrangler/types/env.d.ts --include-runtime false --env-interface MatchWorkerEnv",
     "typecheck": "tsc --project tsconfig.json",
     "deploy:preview": "wrangler deploy --env preview"
   },

@@ -1,46 +1,70 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
-import { useApp, useClock } from '../state';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
+import {useApp, useClock} from '../state';
+
+interface DustStyle extends CSSProperties {
+  '--x': string;
+  '--y': string;
+  '--delay': string;
+  '--drift': string;
+}
 
 // A true 4D wireframe: sixteen vertices, joined only along one coordinate.
-const vertices = Array.from({ length: 16 }, (_, i) =>
-  Array.from({ length: 4 }, (_, axis) => (i & (1 << axis) ? 1 : -1)),
+const vertices = Array.from({length: 16}, (_, i) =>
+  Array.from({length: 4}, (_, axis) => (i & (1 << axis) ? 1 : -1)),
 );
 const edges = vertices.flatMap((_, i) =>
-  [0, 1, 2, 3].filter((axis) => !(i & (1 << axis))).map((axis) => [i, i | (1 << axis)]),
+  [0, 1, 2, 3]
+    .filter(axis => !(i & (1 << axis)))
+    .map(axis => [i, i | (1 << axis)]),
 );
 
 function projectHypercube(time: number) {
-  const points = vertices.map((vertex) => {
-    const p: number[] = [...vertex];
-    const rotations: [number, number, number][] = [
+  const points = vertices.map(vertex => {
+    const rotatedVertex: number[] = [...vertex];
+    const rotations: Array<[number, number, number]> = [
       [0, 3, time * 0.12 + 0.4],
       [1, 2, time * 0.07 + 0.3],
       [0, 2, time * 0.04 + 0.45],
     ];
     for (const [a, b, angle] of rotations) {
-      const x = p[a]!,
-        y = p[b]!;
-      p[a] = x * Math.cos(angle) - y * Math.sin(angle);
-      p[b] = x * Math.sin(angle) + y * Math.cos(angle);
+      const x = rotatedVertex[a]!;
+      const y = rotatedVertex[b]!;
+      rotatedVertex[a] = x * Math.cos(angle) - y * Math.sin(angle);
+      rotatedVertex[b] = x * Math.sin(angle) + y * Math.cos(angle);
     }
-    const w = 2.8 / (3.6 - p[3]!);
-    const depth = 3.6 / (4.5 - p[2]! * w);
-    return [p[0]! * w * depth * 112, p[1]! * w * depth * 112];
+    const w = 2.8 / (3.6 - rotatedVertex[3]!);
+    const depth = 3.6 / (4.5 - rotatedVertex[2]! * w);
+    return [
+      rotatedVertex[0]! * w * depth * 112,
+      rotatedVertex[1]! * w * depth * 112,
+    ];
   });
   // Perspective shifts the projected silhouette even when the SVG itself is centered.
-  const center = [0, 1].map((axis) => {
-    const coordinates = points.map((point) => point[axis]!);
+  const center = [0, 1].map(axis => {
+    const coordinates = points.map(point => point[axis]!);
     return (Math.min(...coordinates) + Math.max(...coordinates)) / 2;
   });
-  const centered = points.map((point) => point.map((value, axis) => 300 + value - center[axis]!));
-  return edges.map(([a, b]) => `M${centered[a!]!.join(',')}L${centered[b!]!.join(',')}`).join('');
+  const centered = points.map(point =>
+    point.map((value, axis) => 300 + value - center[axis]!),
+  );
+  return edges
+    .map(([a, b]) => `M${centered[a!]!.join(',')}L${centered[b!]!.join(',')}`)
+    .join('');
 }
 
-function Hypercube({ still }: { still: boolean }) {
+function Hypercube({still}: {still: boolean}) {
   const path = useRef<SVGPathElement>(null);
   const phase = useRef(0);
   useEffect(() => {
-    if (still) return;
+    if (still) {
+      return;
+    }
     let frame = 0;
     let previous = 0;
     const draw = (now: number) => {
@@ -62,15 +86,25 @@ function Hypercube({ still }: { still: boolean }) {
   );
 }
 
-function SignalFracture({ mode, still }: { mode: 'impact' | 'hunt'; still: boolean }) {
+function SignalFracture({
+  mode,
+  still,
+}: {
+  mode: 'impact' | 'hunt';
+  still: boolean;
+}) {
   const [expired, setExpired] = useState(still);
   useEffect(() => {
-    if (mode !== 'impact') return;
+    if (mode !== 'impact') {
+      return;
+    }
     // Consume an interrupted entry effect; never replay it when resuming.
     const timer = setTimeout(() => setExpired(true), still ? 0 : 900);
     return () => clearTimeout(timer);
   }, [mode, still]);
-  if (still || (mode === 'impact' && expired)) return null;
+  if (still || (mode === 'impact' && expired)) {
+    return null;
+  }
   const bands =
     'M0 182h96m12 0h42M890 228h110M0 416h46m9 0h35M918 584h82M0 762h112M864 816h52m12 0h72';
   return (
@@ -87,11 +121,14 @@ function SignalFracture({ mode, still }: { mode: 'impact' | 'hunt'; still: boole
   );
 }
 
+/** 按已发生赛事状态和动效偏好绘制气氛覆盖层，不阻挡页面交互。 */
 export function Atmosphere() {
-  const { data, route, reduced } = useApp();
-  const { utc } = useClock();
+  const {data, route, reduced} = useApp();
+  const {utc} = useClock();
   const attachLayer = useCallback((element: HTMLDivElement | null) => {
-    if (!element) return;
+    if (!element) {
+      return;
+    }
     if (typeof element.showPopover !== 'function') {
       element.removeAttribute('popover');
       return;
@@ -99,18 +136,34 @@ export function Atmosphere() {
     // The native top layer also clears transformed ancestors and modal stacking contexts.
     // A manual, non-focusable popover adds no backdrop, focus trap or light dismissal.
     const lift = () => {
-      if (!element.isConnected) return;
-      if (element.matches(':popover-open')) element.hidePopover();
+      if (!element.isConnected) {
+        return;
+      }
+      if (element.matches(':popover-open')) {
+        element.hidePopover();
+      }
       element.showPopover();
     };
     lift();
-    const dialogs = new MutationObserver((records) => {
-      if (records.some(({ target }) => target instanceof HTMLDialogElement && target.open)) lift();
+    const dialogs = new MutationObserver(records => {
+      if (
+        records.some(
+          ({target}) => target instanceof HTMLDialogElement && target.open,
+        )
+      ) {
+        lift();
+      }
     });
-    dialogs.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['open'] });
+    dialogs.observe(document.body, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['open'],
+    });
     return () => {
       dialogs.disconnect();
-      if (element.matches(':popover-open')) element.hidePopover();
+      if (element.matches(':popover-open')) {
+        element.hidePopover();
+      }
     };
   }, []);
   const [hidden, setHidden] = useState(document.hidden);
@@ -128,37 +181,42 @@ export function Atmosphere() {
       media.removeEventListener('change', preference);
     };
   }, []);
-  const me = data.player;
+  const playerState = data.player;
   const match = data.match;
   if (
     data.session?.role !== 'player' ||
-    !me ||
+    !playerState ||
     !match ||
     match.stage === 'ended' ||
     !/^\/(player|observer)(\/|$)/.test(route)
-  )
+  ) {
     return null;
+  }
 
-  const restricted = me.flight === 'active' && me.attackLockedUntil > utc;
+  const restricted =
+    playerState.flight === 'active' && playerState.attackLockedUntil > utc;
   const state =
-    me.flight === 'eliminated'
-      ? me.observerAllowed
+    playerState.flight === 'eliminated'
+      ? playerState.observerAllowed
         ? 'observer'
         : 'eliminated'
-      : ['returning', 'preparing', 'issued'].includes(me.flight) && me.respawnDeadline !== null
+      : ['returning', 'preparing', 'issued'].includes(playerState.flight) &&
+          playerState.respawnDeadline !== null
         ? 'wreck'
-        : me.flight !== 'active'
+        : playerState.flight !== 'active'
           ? 'none'
           : match.stage === 'transfer' || match.verification
             ? 'transfer'
             : match.stage === 'hunt'
               ? 'hunt'
-              : !me.homeAlive
+              : !playerState.homeAlive
                 ? 'last-life'
                 : restricted
                   ? 'restricted'
                   : 'none';
-  if (state === 'none') return null;
+  if (state === 'none') {
+    return null;
+  }
   const still = reduced || systemReduced || hidden || match.paused;
   return (
     <div
@@ -181,22 +239,22 @@ export function Atmosphere() {
         </svg>
       )}
       <div className="atmosphere-dust">
-        {Array.from({ length: 10 }, (_, i) => (
-          <i
-            key={i}
-            style={
-              {
-                '--x': `${(i * 37 + 7) % 100}%`,
-                '--y': `${(i * 23 + 11) % 100}%`,
-                '--delay': `${-i * 2.7}s`,
-                '--drift': `${(i % 2 ? 1 : -1) * (12 + i * 2)}px`,
-              } as CSSProperties
-            }
-          />
-        ))}
+        {Array.from({length: 10}, (_, index) => {
+          const style: DustStyle = {
+            '--x': `${(index * 37 + 7) % 100}%`,
+            '--y': `${(index * 23 + 11) % 100}%`,
+            '--delay': `${-index * 2.7}s`,
+            '--drift': `${(index % 2 ? 1 : -1) * (12 + index * 2)}px`,
+          };
+          return <i key={index} style={style} />;
+        })}
       </div>
       {(state === 'wreck' || state === 'eliminated' || state === 'hunt') && (
-        <SignalFracture key={state} mode={state === 'hunt' ? 'hunt' : 'impact'} still={still} />
+        <SignalFracture
+          key={state}
+          mode={state === 'hunt' ? 'hunt' : 'impact'}
+          still={still}
+        />
       )}
     </div>
   );

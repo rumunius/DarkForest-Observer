@@ -1,11 +1,20 @@
-import { beforeEach, expect, it } from 'vitest';
-import { env } from 'cloudflare:workers';
-import { reset, runInDurableObject, evictDurableObject } from 'cloudflare:test';
-import type { BackendEnv, RpcInput } from '../../apps/match-worker/src/rpc/types';
-import { Engine } from '../../apps/match-worker/src/services/engine';
-import { Store } from '../../apps/match-worker/src/storage/store';
-import { digest, decrypt } from '../../apps/match-worker/src/security/crypto';
-import type { OperationResult } from '@darkforest/contracts';
+import {
+  parseJson,
+  jsonObject,
+  jsonArray,
+  jsonObjects,
+  jsonString,
+  jsonNumber,
+} from '../helpers/json';
+import {beforeEach, expect, it} from 'vitest';
+import {env} from 'cloudflare:workers';
+import {reset, runInDurableObject, evictDurableObject} from 'cloudflare:test';
+import type {BackendEnv, RpcInput} from '../../apps/match-worker/src/rpc/types';
+import {Engine} from '../../apps/match-worker/src/services/engine';
+import {Store} from '../../apps/match-worker/src/storage/store';
+import {digest, decrypt} from '../../apps/match-worker/src/security/crypto';
+import type {OperationResult} from '@darkforest/contracts';
+import {retire} from '../../apps/match-worker/src/services/life';
 import {
   createCheckpoint,
   openCheckpoint,
@@ -14,12 +23,18 @@ import {
   completeRecovery,
   finishRecovery,
 } from '../../apps/match-worker/src/services/recovery';
-const bindings = env as unknown as BackendEnv,
-  stub = () => bindings.MATCH_DO.getByName('match:integration');
-let sequence = 0,
-  now = Date.now();
-type Login = { token: string; csrf: string };
-let head: Login, communications: Login, player: Login;
+
+const bindings: BackendEnv = env;
+const stub = () => bindings.MATCH_DO.getByName('match:integration');
+let sequence = 0;
+let now = Date.now();
+interface Login {
+  token: string;
+  csrf: string;
+}
+let head: Login;
+let communications: Login;
+let player: Login;
 async function call(path: string, body?: unknown, login?: Login) {
   return runInDurableObject(stub(), async (_instance, state) => {
     const e = new Engine(new Store(state.storage), bindings);
@@ -29,8 +44,8 @@ async function call(path: string, body?: unknown, login?: Login) {
       method: body === undefined ? 'GET' : 'POST',
       clientKey: 'commands',
       edgeUtc: now,
-      ...(body === undefined ? {} : { body }),
-      ...(login ? { token: login.token, csrf: login.csrf } : {}),
+      ...(body === undefined ? {} : {body}),
+      ...(login ? {token: login.token, csrf: login.csrf} : {}),
     } satisfies RpcInput);
   });
 }
@@ -40,15 +55,22 @@ async function login(id: string): Promise<Login> {
     audience: id.startsWith('J') ? 'judge' : 'player',
   });
   expect(r.status, JSON.stringify(r.body)).toBe(200);
-  return { token: r.sessionToken!, csrf: (r.body as { csrfToken: string }).csrfToken };
+  return {
+    token: r.sessionToken!,
+    csrf: (r.body as {csrfToken: string}).csrfToken,
+  };
 }
 async function sql(query: string, ...args: SqlStorageValue[]) {
   return runInDurableObject(stub(), (_instance, state) =>
-    new Store(state.storage).all(query, ...args),
+    new Store(state.storage).all<Record<string, SqlStorageValue>>(
+      query,
+      ...args,
+    ),
   );
 }
-async function command(text: string, l = head, id = `cmd-${++sequence}`) {
-  return call('/judge/command/execute', { request_id: id, command: text }, l);
+async function command(text: string, l = head, suppliedId?: string) {
+  const id = suppliedId === undefined ? `cmd-${++sequence}` : suppliedId;
+  return call('/judge/command/execute', {request_id: id, command: text}, l);
 }
 async function plan(text: string) {
   const r = await command(text);
@@ -75,16 +97,22 @@ beforeEach(async () => {
   now = Date.now();
   const accounts = await Promise.all(
     [
-      ...['C01', 'C02', 'C03', 'C04'].map((id) => ({ id, role: 'player', name: id })),
+      ...['C01', 'C02', 'C03', 'C04'].map(id => ({
+        id,
+        role: 'player',
+        name: id,
+      })),
       ...['head', 'communications', 'events'].map((duty, i) => ({
         id: `J0${i + 1}`,
         role: 'judge',
         name: duty,
         duty,
       })),
-    ].map(async (a) => ({
+    ].map(async a => ({
       ...a,
-      credential_hash: await digest(`command-test-${a.id}-credential-long-enough`),
+      credential_hash: await digest(
+        `command-test-${a.id}-credential-long-enough`,
+      ),
     })),
   );
   const boot = await stub().bootstrap('integration-only-bootstrap-secret', {
@@ -92,23 +120,159 @@ beforeEach(async () => {
     accounts,
   });
   expect(boot.status).toBe(201);
-  for (const [i, id] of ['C01', 'C02', 'C03', 'C04'].entries())
+  for (const [i, id] of ['C01', 'C02', 'C03', 'C04'].entries()) {
     await sql(
       "INSERT INTO homeworlds(player_id,code,status,version) VALUES(?,?,'verified',1)",
       id,
       `00000${i}`,
     );
+  }
   head = await login('J01');
   communications = await login('J02');
   player = await login('C01');
 });
-it('rejects players and checks expanded permissions; communications can query and send', async () => {
-  expect((await call('/snapshot?route=/judge/commands', undefined, communications)).status).toBe(
-    200,
+it('preserves the original secret schedule and reserved codes when relocking the same roster', async () => {
+  await runInDurableObject(stub(), async (_instance, state) => {
+    const engine = new Engine(new Store(state.storage), bindings);
+    engine.now = () => now;
+    const prepared = await engine.prepareCode();
+    engine.db.tx(() => {
+      for (const id of ['C01', 'C02', 'C03', 'C04']) {
+        engine.issue(id, `prepare-${id}`, prepared);
+      }
+      engine.db.exec("UPDATE flights SET status='ready',ready=?", now);
+      engine.db.exec(
+        "UPDATE matches SET phase='outfitting',release_at=?",
+        now - 1000,
+      );
+    });
+  });
+  const original = await plan(
+    `/match arm-start at ${new Date(now + 60_000).toISOString()}`,
   );
+  expect((await confirm(original.token)).status).toBe(200);
+  const schedule = await sql(
+    "SELECT * FROM command_objects WHERE kind='start-plan' ORDER BY id",
+  );
+  const events = await sql(
+    "SELECT id,kind,clock,due,status FROM scheduled_events WHERE clock='game' ORDER BY id",
+  );
+  const codes = await sql('SELECT * FROM sighting_codes ORDER BY id');
+  expect(schedule).toHaveLength(1);
+  expect(events.some(event => event.kind === 'tech_burst')).toBe(true);
+  expect(
+    (await confirm((await plan('/match cancel-start')).token)).status,
+  ).toBe(200);
+  expect(await sql('SELECT phase,started_at FROM matches')).toEqual([
+    {phase: 'outfitting', started_at: null},
+  ]);
+  now += 1000;
+  const relocked = await plan(
+    `/match arm-start at ${new Date(now + 120_000).toISOString()}`,
+  );
+  expect((await confirm(relocked.token)).status).toBe(200);
+  expect(
+    await sql(
+      "SELECT * FROM command_objects WHERE kind='start-plan' ORDER BY id",
+    ),
+  ).toEqual(schedule);
+  expect(
+    await sql(
+      "SELECT id,kind,clock,due,status FROM scheduled_events WHERE clock='game' ORDER BY id",
+    ),
+  ).toEqual(events);
+  expect(await sql('SELECT * FROM sighting_codes ORDER BY id')).toEqual(codes);
+  expect(await sql('SELECT status,ready FROM flights')).toEqual(
+    Array.from({length: 4}, () => ({status: 'ready', ready: now - 1000})),
+  );
+});
+
+it('rejects inherited names as command bindings, settings, palette entries and template fields', async () => {
+  const site = await sql('SELECT site_json FROM matches');
+  for (const name of [
+    'toString',
+    'constructor',
+    '__proto__',
+    'hasOwnProperty',
+  ]) {
+    for (const text of [
+      `/selector inspect ${name}`,
+      `/parameter set ${name} 1`,
+      `/parameter inspect ${name}`,
+      `/setting set ${name} "test"`,
+      `/palette set ${name} "#112233"`,
+      `/template publish "invalid-${name}" "\${${name}}"`,
+    ]) {
+      const reply = await command(text);
+      expect(reply.status, text).toBe(400);
+    }
+  }
+  expect(await sql('SELECT site_json FROM matches')).toEqual(site);
+  expect(
+    await sql(
+      "SELECT id FROM command_objects WHERE kind IN ('plan','template')",
+    ),
+  ).toEqual([]);
+  const valid = await plan('/template publish "合法模板" "文明${id}"');
+  const confirmation = await confirm(valid.token);
+  expect(confirmation.status, JSON.stringify(confirmation.body)).toBe(200);
+});
+
+it('keeps configuration preview dependencies at their original value and rejects real later changes', async () => {
+  for (const text of [
+    '/setting set activity-name "配置预览回归"',
+    '/palette set BK "#112233"',
+  ]) {
+    const original = jsonObject(
+      parseJson(
+        jsonString((await sql('SELECT site_json FROM matches'))[0]!.site_json),
+      ),
+    );
+    const preview = await plan(text);
+    const saved = jsonObject(
+      parseJson(
+        jsonString(
+          (
+            await sql(
+              'SELECT data FROM command_objects WHERE id=?',
+              preview.token,
+            )
+          )[0]!.data,
+        ),
+      ),
+    );
+    expect(jsonObject(saved.dependencies).site).toEqual(original);
+    const confirmation = await confirm(preview.token);
+    expect(confirmation.status, JSON.stringify(confirmation.body)).toBe(200);
+    expect(
+      jsonObject(
+        parseJson(
+          jsonString(
+            (await sql('SELECT site_json FROM matches'))[0]!.site_json,
+          ),
+        ),
+      ).version,
+    ).toBe(jsonNumber(original.version) + 1);
+  }
+  const older = await plan('/setting set activity-name "旧预览"');
+  const newer = await plan('/setting set activity-name "新预览"');
+  expect((await confirm(newer.token)).status).toBe(200);
+  const stale = await confirm(older.token);
+  expect(stale.status).toBe(409);
+  expect(stale.body).toMatchObject({code: 'PLAN_DEPENDENCY_CHANGED'});
+});
+
+it('rejects players and checks expanded permissions; communications can query and send', async () => {
+  expect(
+    (await call('/snapshot?route=/judge/commands', undefined, communications))
+      .status,
+  ).toBe(200);
   expect((await command('/help', player)).status).toBe(403);
   expect((await command('/help', communications)).status).toBe(200);
-  expect((await command('/batch run { player eliminate C01 }', communications)).status).toBe(403);
+  expect(
+    (await command('/batch run { player eliminate C01 }', communications))
+      .status,
+  ).toBe(403);
   const p = await command('/tell C01 "请联系裁判"', communications);
   expect(p.status, JSON.stringify(p.body)).toBe(200);
   expect((p.body as OperationResult).preview).toBeDefined();
@@ -120,71 +284,102 @@ it('人工技术爆炸只在执行时产生本人通知，重试不重复且其�
   expect((await confirm(preview.token, 'notify-tech')).status).toBe(200);
   expect((await confirm(preview.token, 'notify-tech')).status).toBe(200);
   const own = await call('/snapshot?route=/player', undefined, player);
-  const events = (own.body as { events: { title: string; body: string }[] }).events;
-  expect(events.filter((event) => event.title === '技术爆炸')).toEqual([
-    expect.objectContaining({ body: expect.stringContaining('你的文明刚刚发生了技术爆炸') }),
+  const events = (own.body as {events: Array<{title: string; body: string}>})
+    .events;
+  const bodyMatcher: unknown =
+    expect.stringContaining('你的文明刚刚发生了技术爆炸');
+  expect(events.filter(event => event.title === '技术爆炸')).toEqual([
+    expect.objectContaining({
+      body: bodyMatcher,
+    }),
   ]);
-  expect(await sql("SELECT target FROM notice_queue WHERE title='技术爆炸'")).toEqual([
-    { target: 'C01' },
-  ]);
-  const other = await call('/snapshot?route=/player', undefined, await login('C02'));
   expect(
-    (other.body as { events: { title: string }[] }).events.some(
-      (event) => event.title === '技术爆炸',
+    await sql("SELECT target FROM notice_queue WHERE title='技术爆炸'"),
+  ).toEqual([{target: 'C01'}]);
+  const other = await call(
+    '/snapshot?route=/player',
+    undefined,
+    await login('C02'),
+  );
+  expect(
+    (other.body as {events: Array<{title: string}>}).events.some(
+      event => event.title === '技术爆炸',
     ),
   ).toBe(false);
 });
 
 function resultData(reply: Awaited<ReturnType<typeof command>>) {
   expect(reply.status, JSON.stringify(reply.body)).toBe(200);
-  return JSON.parse((reply.body as OperationResult).message);
+  return parseJson((reply.body as OperationResult).message);
 }
 it('F09 records real command before/after state, encrypted input, preview, reason and linked audit', async () => {
   await forest();
   const p = await plan('/penalty wrong-set C01 2 --reason "复核处罚"');
   const reply = await confirm(p.token, 'audit-confirm');
   expect(reply.status).toBe(200);
-  const [row] = await sql("SELECT * FROM judge_command_log WHERE request_id='audit-confirm'");
-  const detail = JSON.parse(String(row!.detail));
+  const [row] = await sql(
+    "SELECT * FROM judge_command_log WHERE request_id='audit-confirm'",
+  );
+  const detail = jsonObject(parseJson(jsonString(row!.detail)));
   expect(detail.reason).toBe('复核处罚');
-  expect(detail.preview.token).toBe(p.token);
+  expect(jsonObject(detail.preview).token).toBe(p.token);
   expect(detail.targets).toEqual(['C01']);
   expect(
-    detail.before.controls.find((p: { player_id: string }) => p.player_id === 'C01').wrong,
+    jsonObject(
+      jsonObjects(jsonObject(detail.before).controls).find(
+        p => p.player_id === 'C01',
+      ),
+    ).wrong,
   ).toBe(0);
   expect(
-    detail.after.controls.find((p: { player_id: string }) => p.player_id === 'C01').wrong,
+    jsonObject(
+      jsonObjects(jsonObject(detail.after).controls).find(
+        p => p.player_id === 'C01',
+      ),
+    ).wrong,
   ).toBe(2);
-  expect(detail.result.status).toBe('complete');
-  expect(await sql('SELECT id FROM audit_logs WHERE id=?', detail.auditId)).toHaveLength(1);
+  expect(jsonObject(detail.result).status).toBe('complete');
+  expect(
+    await sql(
+      'SELECT id FROM audit_logs WHERE id=?',
+      jsonString(detail.auditId),
+    ),
+  ).toHaveLength(1);
   await runInDurableObject(stub(), async (_instance, state) => {
-    const e = new Engine(new Store(state.storage), bindings),
-      keys = await e.keys();
+    const e = new Engine(new Store(state.storage), bindings);
+    const keys = await e.keys();
     expect(
       await decrypt(
         keys.encryption,
-        String(row!.ciphertext),
+        jsonString(row!.ciphertext),
         'command|integration|J01|audit-confirm',
       ),
     ).toBe(`/confirm ${p.token}`);
   });
-  const history = resultData(
-    await command(
-      '/command history --target C01 --kind "penalty wrong-set" --status executed --search "复核处罚"',
+  const history = jsonObject(
+    resultData(
+      await command(
+        '/command history --target C01 --kind "penalty wrong-set" --status executed --search "复核处罚"',
+      ),
     ),
   );
   expect(history.items).toHaveLength(1);
-  expect(history.items[0].request_id).toBe('audit-confirm');
-  expect(history.items[0]).not.toHaveProperty('ciphertext');
+  expect(jsonObject(jsonArray(history.items)[0]).request_id).toBe(
+    'audit-confirm',
+  );
+  expect(jsonArray(history.items)[0]).not.toHaveProperty('ciphertext');
   const http = await call(
-    '/judge/command/history?target=C01&status=executed&search=' + encodeURIComponent('复核处罚'),
+    '/judge/command/history?target=C01&status=executed&search=' +
+      encodeURIComponent('复核处罚'),
     undefined,
     head,
   );
   expect(http.status).toBe(200);
-  expect((http.body as { items: unknown[] }).items).toHaveLength(1);
+  expect((http.body as {items: unknown[]}).items).toHaveLength(1);
   expect(JSON.stringify(http.body)).not.toContain('ciphertext');
-  expect((await call('/judge/command/history', undefined, communications)).status).toBe(403);
+  expect(
+    (await call('/judge/command/history', undefined, communications)).status,
+  ).toBe(403);
   expect(JSON.stringify(detail)).not.toContain('credential_hash');
   expect(JSON.stringify(detail)).not.toContain('token_hash');
 });
@@ -205,10 +400,10 @@ it('F09 records request and plan queries, cancellation, rejection and confirmati
   );
   expect(logs).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ path: 'plan inspect', status: 'queried' }),
-      expect.objectContaining({ path: 'request inspect', status: 'queried' }),
-      expect.objectContaining({ path: 'plan cancel', status: 'cancelled' }),
-      expect.objectContaining({ path: 'confirm', status: 'rejected' }),
+      expect.objectContaining({path: 'plan inspect', status: 'queried'}),
+      expect.objectContaining({path: 'request inspect', status: 'queried'}),
+      expect.objectContaining({path: 'plan cancel', status: 'cancelled'}),
+      expect.objectContaining({path: 'confirm', status: 'rejected'}),
       expect.objectContaining({
         path: 'photon grant',
         status: 'replayed',
@@ -216,31 +411,46 @@ it('F09 records request and plan queries, cancellation, rejection and confirmati
       }),
     ]),
   );
-  expect(logs.filter((r) => r.request_id === 'once')).toHaveLength(1);
+  expect(logs.filter(r => r.request_id === 'once')).toHaveLength(1);
 });
 
 it('F09 retains deferred command outcome, parent, affected targets and before/after audit facts', async () => {
   await forest();
-  const p = await plan('/schedule create utc in 1s run { photon grant C01 } --late run');
+  const p = await plan(
+    '/schedule create utc in 1s run { photon grant C01 } --late run',
+  );
   expect((await confirm(p.token)).status).toBe(200);
   now += 1001;
   await call('/public/match');
   const [row] = await sql(
     "SELECT detail,ciphertext FROM judge_command_log WHERE path='schedule due' AND status='executed'",
   );
-  const detail = JSON.parse(String(row!.detail));
+  const detail = jsonObject(parseJson(jsonString(row!.detail)));
   expect(detail.parent).toMatch(/^SCH-/);
   expect(detail.eventId).toBe(detail.parent);
   expect(detail.targets).toEqual(['C01']);
-  expect(detail.before.players.find((p: { id: string }) => p.id === 'C01').photons).toBe(0);
-  expect(detail.after.players.find((p: { id: string }) => p.id === 'C01').photons).toBe(1);
+  expect(
+    jsonObject(
+      jsonObjects(jsonObject(detail.before).players).find(p => p.id === 'C01'),
+    ).photons,
+  ).toBe(0);
+  expect(
+    jsonObject(
+      jsonObjects(jsonObject(detail.after).players).find(p => p.id === 'C01'),
+    ).photons,
+  ).toBe(1);
   expect(row!.ciphertext).toBeNull();
-  expect(await sql('SELECT id FROM audit_logs WHERE id=?', detail.auditId)).toHaveLength(1);
+  expect(
+    await sql(
+      'SELECT id FROM audit_logs WHERE id=?',
+      jsonString(detail.auditId),
+    ),
+  ).toHaveLength(1);
 });
 it('F09 binds encrypted original text to each concurrent request on the same engine', async () => {
   await runInDurableObject(stub(), async (_instance, state) => {
-    const e = new Engine(new Store(state.storage), bindings),
-      keys = await e.keys();
+    const e = new Engine(new Store(state.storage), bindings);
+    const keys = await e.keys();
     e.now = () => now;
     const inputs = ['/whoami', '/help', '/clock status'];
     const replies = await Promise.all(
@@ -252,18 +462,22 @@ it('F09 binds encrypted original text to each concurrent request on the same eng
           edgeUtc: now,
           token: head.token,
           csrf: head.csrf,
-          body: { request_id: `concurrent-${i}`, command },
+          body: {request_id: `concurrent-${i}`, command},
         }),
       ),
     );
-    expect(replies.map((r) => r.status)).toEqual([200, 200, 200]);
+    expect(replies.map(r => r.status)).toEqual([200, 200, 200]);
     for (const [i, original] of inputs.entries()) {
-      const row = e.db.one<{ ciphertext: string }>(
+      const row = e.db.one<{ciphertext: string}>(
         'SELECT ciphertext FROM judge_command_log WHERE request_id=?',
         `concurrent-${i}`,
       )!;
       expect(
-        await decrypt(keys.encryption, row.ciphertext, `command|integration|J01|concurrent-${i}`),
+        await decrypt(
+          keys.encryption,
+          row.ciphertext,
+          `command|integration|J01|concurrent-${i}`,
+        ),
       ).toBe(original);
     }
   });
@@ -274,19 +488,29 @@ it('F10 reads actual plans and failed diagnostics, distinguishes event facts and
   await sql(
     "INSERT INTO scheduled_events(id,kind,clock,due,priority,payload,last_error,attempt_count) VALUES('future-tech','tech_burst','game',700000,2,'{}','注入故障',3)",
   );
-  const list = resultData(await command('/event list --status failed'));
+  const list = jsonObject(
+    resultData(await command('/event list --status failed')),
+  );
   expect(list.items).toEqual([
-    expect.objectContaining({ id: 'future-tech', last_error: '注入故障', attempt_count: 3 }),
+    expect.objectContaining({
+      id: 'future-tech',
+      last_error: '注入故障',
+      attempt_count: 3,
+    }),
   ]);
-  expect(resultData(await command('/event inspect future-tech')).status).toBe('pending');
-  expect(resultData(await command('/event-log list')).items).toEqual([]);
+  expect(
+    jsonObject(resultData(await command('/event inspect future-tech'))).status,
+  ).toBe('pending');
+  expect(
+    jsonObject(resultData(await command('/event-log list'))).items,
+  ).toEqual([]);
   expect((await command('/event retry future-tech')).status).toBe(400);
   await confirm((await plan('/clock pause')).token);
   await confirm((await plan('/event cancel future-tech')).token);
   expect((await command('/event retry future-tech')).status).toBe(400);
-  expect(await sql("SELECT status FROM scheduled_events WHERE id='future-tech'")).toEqual([
-    { status: 'cancelled' },
-  ]);
+  expect(
+    await sql("SELECT status FROM scheduled_events WHERE id='future-tech'"),
+  ).toEqual([{status: 'cancelled'}]);
 });
 
 it('F10 retries a settled event as a no-op with original facts and does not duplicate random effects', async () => {
@@ -298,35 +522,48 @@ it('F10 retries a settled event as a no-op with original facts and does not dupl
   const facts = await sql("SELECT * FROM event_log WHERE id='due-tech'");
   expect(facts).toHaveLength(1);
   const p = await plan('/event retry due-tech');
-  const r = resultData(await confirm(p.token));
-  expect(r.result.event).toMatchObject({ id: 'due-tech', status: 'settled' });
-  expect(r.result.outcome.id).toBe('due-tech');
-  expect(await sql("SELECT * FROM event_log WHERE id='due-tech'")).toEqual(facts);
-  expect(await sql('SELECT COUNT(*) n FROM players WHERE tech=1')).toEqual([{ n: 1 }]);
+  const r = jsonObject(resultData(await confirm(p.token)));
+  expect(jsonObject(r.result).event).toMatchObject({
+    id: 'due-tech',
+    status: 'settled',
+  });
+  expect(jsonObject(jsonObject(r.result).outcome).id).toBe('due-tech');
+  expect(await sql("SELECT * FROM event_log WHERE id='due-tech'")).toEqual(
+    facts,
+  );
+  expect(await sql('SELECT COUNT(*) n FROM players WHERE tech=1')).toEqual([
+    {n: 1},
+  ]);
   expect(
     await sql(
       "SELECT status FROM judge_command_log WHERE path='event retry' ORDER BY seq DESC LIMIT 1",
     ),
-  ).toEqual([{ status: 'no_op' }]);
+  ).toEqual([{status: 'no_op'}]);
 });
 it('F10 creates one independent singer event through the command and preserves existing plans', async () => {
   await forest();
   await sql(
     "INSERT INTO scheduled_events(id,kind,clock,due,priority,payload) VALUES('natural-tech','tech_burst','game',700000,2,'{}')",
   );
-  const before = await sql("SELECT * FROM scheduled_events WHERE id='natural-tech'");
+  const before = await sql(
+    "SELECT * FROM scheduled_events WHERE id='natural-tech'",
+  );
   const p = await plan('/event trigger singer 000000');
-  expect(await sql("SELECT destroyed_game FROM homeworlds WHERE player_id='C01'")).toEqual([
-    { destroyed_game: null },
-  ]);
+  expect(
+    await sql("SELECT destroyed_game FROM homeworlds WHERE player_id='C01'"),
+  ).toEqual([{destroyed_game: null}]);
   const first = await confirm(p.token, 'manual-singer');
   expect(first.status).toBe(200);
   expect((await confirm(p.token, 'manual-singer')).body).toEqual(first.body);
-  expect(await sql("SELECT COUNT(*) n FROM event_log WHERE kind='singer'")).toEqual([{ n: 1 }]);
-  expect(await sql("SELECT destroyed_game FROM homeworlds WHERE player_id='C01'")).toEqual([
-    { destroyed_game: 600000 },
-  ]);
-  expect(await sql("SELECT * FROM scheduled_events WHERE id='natural-tech'")).toEqual(before);
+  expect(
+    await sql("SELECT COUNT(*) n FROM event_log WHERE kind='singer'"),
+  ).toEqual([{n: 1}]);
+  expect(
+    await sql("SELECT destroyed_game FROM homeworlds WHERE player_id='C01'"),
+  ).toEqual([{destroyed_game: 600000}]);
+  expect(
+    await sql("SELECT * FROM scheduled_events WHERE id='natural-tech'"),
+  ).toEqual(before);
 });
 
 it('F11 resolves living, dead, filtered and random candidates without including non-roster accounts', async () => {
@@ -334,12 +571,21 @@ it('F11 resolves living, dead, filtered and random candidates without including 
   await sql("DELETE FROM roster_members WHERE player_id='C04'");
   await sql("UPDATE flights SET status='returning' WHERE player_id='C02'");
   await sql("UPDATE flights SET status='eliminated' WHERE player_id='C03'");
-  expect(resultData(await command('/selector inspect @alive')).candidates).toEqual(['C01', 'C02']);
-  expect(resultData(await command('/selector inspect @dead')).candidates).toEqual(['C03']);
-  expect(resultData(await command('/selector inspect @a[status=returning]')).candidates).toEqual([
-    'C02',
-  ]);
-  expect(resultData(await command('/selector inspect @random[alive,sort=id]'))).toMatchObject({
+  expect(
+    jsonObject(resultData(await command('/selector inspect @alive')))
+      .candidates,
+  ).toEqual(['C01', 'C02']);
+  expect(
+    jsonObject(resultData(await command('/selector inspect @dead'))).candidates,
+  ).toEqual(['C03']);
+  expect(
+    jsonObject(
+      resultData(await command('/selector inspect @a[status=returning]')),
+    ).candidates,
+  ).toEqual(['C02']);
+  expect(
+    resultData(await command('/selector inspect @random[alive,sort=id]')),
+  ).toMatchObject({
     candidates: ['C01', 'C02'],
     count: 1,
     random: true,
@@ -366,8 +612,10 @@ it('F11 history combines persistent attacks, notifications, penalties, correctio
   await confirm((await plan('/penalty lock C01 for 1m')).token);
   await confirm((await plan('/photon grant {C01,C02}')).token);
   await confirm((await plan('/tell C01 "请核对"')).token);
-  const all = resultData(await command('/history C01 --limit 1000'));
-  expect(all.items.map((r: { source: string }) => r.source)).toEqual(
+  const all = jsonObject(
+    resultData(await command('/history C01 --limit 1000')),
+  );
+  expect(jsonObjects(all.items).map(r => r.source)).toEqual(
     expect.arrayContaining([
       'attacks',
       'attack_corrections',
@@ -376,48 +624,74 @@ it('F11 history combines persistent attacks, notifications, penalties, correctio
       'judge_command_log',
     ]),
   );
-  expect(all.items.some((r: { id: string }) => r.id === 'historic-attack')).toBe(true);
-  expect(resultData(await command('/history C01 kind attack')).items).toEqual(
-    expect.arrayContaining([expect.objectContaining({ id: 'historic-attack' })]),
-  );
-  expect(resultData(await command('/history C01 kind penalty')).items).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ source: 'attacks' }),
-      expect.objectContaining({ source: 'audit_logs' }),
-    ]),
-  );
-  expect(resultData(await command('/history C01 kind correction')).items).toEqual(
-    expect.arrayContaining([expect.objectContaining({ id: 'historic-correction' })]),
-  );
-  const commands = resultData(await command('/history C01 kind command --status executed'));
-  expect(commands.items.every((r: { source: string }) => r.source === 'judge_command_log')).toBe(
+  expect(jsonObjects(all.items).some(r => r.id === 'historic-attack')).toBe(
     true,
   );
   expect(
-    commands.items.some((r: { record: { path: string } }) => r.record.path === 'photon grant'),
-  ).toBe(true);
-  expect(resultData(await command('/inspect C01'))).toHaveProperty('flight');
-  const restricted = resultData(await command('/history C01', communications));
+    jsonObject(resultData(await command('/history C01 kind attack'))).items,
+  ).toEqual(
+    expect.arrayContaining([expect.objectContaining({id: 'historic-attack'})]),
+  );
   expect(
-    restricted.items.every(
-      (r: { source: string }) =>
-        !['attacks', 'audit_logs', 'judge_command_log', 'attack_corrections'].includes(r.source),
+    jsonObject(resultData(await command('/history C01 kind penalty'))).items,
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({source: 'attacks'}),
+      expect.objectContaining({source: 'audit_logs'}),
+    ]),
+  );
+  expect(
+    jsonObject(resultData(await command('/history C01 kind correction'))).items,
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({id: 'historic-correction'}),
+    ]),
+  );
+  const commands = jsonObject(
+    resultData(await command('/history C01 kind command --status executed')),
+  );
+  expect(
+    jsonObjects(commands.items).every(r => r.source === 'judge_command_log'),
+  ).toBe(true);
+  expect(
+    jsonObjects(commands.items).some(
+      r => jsonObject(r.record).path === 'photon grant',
     ),
   ).toBe(true);
-  expect((await command('/history C01 kind penalty', communications)).status).toBe(403);
+  expect(resultData(await command('/inspect C01'))).toHaveProperty('flight');
+  const restricted = jsonObject(
+    resultData(await command('/history C01', communications)),
+  );
+  expect(
+    jsonObjects(restricted.items).every(
+      r =>
+        ![
+          'attacks',
+          'audit_logs',
+          'judge_command_log',
+          'attack_corrections',
+        ].includes(jsonString(r.source)),
+    ),
+  ).toBe(true);
+  expect(
+    (await command('/history C01 kind penalty', communications)).status,
+  ).toBe(403);
   expect((await command('/history C01', player)).status).toBe(403);
 });
 
 it('F11 applies history filters before pagination and keeps source waterlines across later queries', async () => {
   await forest();
-  for (let i = 0; i < 120; i++)
+  for (let i = 0; i < 120; i++) {
     await sql(
       "INSERT INTO event_log(id,kind,title,body,audience,owner,civilization_ids,game_ms,utc_ms,committed_utc) VALUES(?,'notice','历史','分页证据','personal','C01','[\"C01\"]',0,?,?)",
       `old-${i}`,
       now,
       now,
     );
-  const first = resultData(await command('/history C01 --limit 10 --search "分页证据"'));
+  }
+  const first = jsonObject(
+    resultData(await command('/history C01 --limit 10 --search "分页证据"')),
+  );
   expect(first.items).toHaveLength(10);
   expect(first.nextCursor).toBeTruthy();
   await sql(
@@ -425,32 +699,84 @@ it('F11 applies history filters before pagination and keeps source waterlines ac
     now,
     now,
   );
-  const second = resultData(
-    await command(`/history C01 --limit 10 --search "分页证据" --before ${first.nextCursor}`),
+  const second = jsonObject(
+    resultData(
+      await command(
+        `/history C01 --limit 10 --search "分页证据" --before ${jsonString(first.nextCursor)}`,
+      ),
+    ),
   );
   expect(second.items).toHaveLength(10);
   expect(second.watermark).toBe(first.watermark);
   expect(
-    second.items.some(
-      (r: { id: string }) =>
-        first.items.some((p: { id: string }) => p.id === r.id) || r.id === 'later',
+    jsonObjects(second.items).some(
+      r =>
+        jsonObjects(first.items).some(p => p.id === r.id) || r.id === 'later',
     ),
   ).toBe(false);
-  expect((await command(`/history C02 --before ${first.nextCursor}`)).status).toBe(400);
-  const old = resultData(await command('/history C01 --search "old-0"'));
-  expect(old.items.some((r: { id: string }) => r.id === 'old-0')).toBe(true);
+  expect(
+    (await command(`/history C02 --before ${jsonString(first.nextCursor)}`))
+      .status,
+  ).toBe(400);
+  const old = jsonObject(
+    resultData(await command('/history C01 --search "old-0"')),
+  );
+  expect(jsonObjects(old.items).some(r => r.id === 'old-0')).toBe(true);
 });
+it('rejects malformed history cursor fields before comparing or querying records', async () => {
+  await forest();
+  for (let index = 0; index < 2; index++) {
+    await sql(
+      "INSERT INTO event_log(id,kind,title,body,audience,owner,civilization_ids,game_ms,utc_ms,committed_utc) VALUES(?,'notice','游标边界','历史证据','personal','C01','[\"C01\"]',0,?,?)",
+      `cursor-${index}`,
+      now,
+      now,
+    );
+  }
+  const first = jsonObject(resultData(await command('/history C01 --limit 1')));
+  const cursor = jsonObject(parseJson(atob(jsonString(first.nextCursor))));
+  const before = jsonArray(cursor.before);
+  const variants = [
+    null,
+    [],
+    {...cursor, query: 'another query'},
+    {...cursor, before: [before[0], before[1]]},
+    {...cursor, before: [before[0], null, before[2]]},
+    {...cursor, before: [before[0], '', before[2]]},
+    {...cursor, before: ['not-a-time', before[1], before[2]]},
+    {...cursor, before: [-1, before[1], before[2]]},
+    {...cursor, before: [before[0], before[1], 0.5]},
+    {...cursor, before: [before[0], before[1], 0]},
+    {...cursor, ceilings: []},
+    {...cursor, ceilings: null},
+    {...cursor, ceilings: {event_log: 'not-a-number'}},
+    {...cursor, ceilings: {event_log: Number.MAX_SAFE_INTEGER + 1}},
+    {...cursor, ceilings: {event_log: -1}},
+    {...cursor, watermark: -1},
+    {...cursor, watermark: '1'},
+    {...cursor, watermark: Number.MAX_SAFE_INTEGER + 1},
+  ];
+  for (const variant of variants) {
+    const reply = await command(
+      `/history C01 --limit 1 --before ${btoa(JSON.stringify(variant))}`,
+    );
+    expect(reply.status, JSON.stringify(variant)).toBe(400);
+  }
+});
+
 it('previews without committing; explicit target plans survive unrelated activity and time', async () => {
   await forest();
   const p = await plan('/photon grant C01');
-  expect(await sql('SELECT photons FROM players WHERE id=?', 'C01')).toEqual([{ photons: 0 }]);
+  expect(await sql('SELECT photons FROM players WHERE id=?', 'C01')).toEqual([
+    {photons: 0},
+  ]);
   await sql("UPDATE players SET nickname='无关行动' WHERE id='C04'");
   await sql('UPDATE matches SET revision=revision+1');
   now += 180000;
   const r = await confirm(p.token);
   expect(r.status, JSON.stringify(r.body)).toBe(200);
   expect(await sql("SELECT tech,photons FROM players WHERE id='C01'")).toEqual([
-    { tech: 1, photons: 1 },
+    {tech: 1, photons: 1},
   ]);
 });
 it('invalidates changed dependencies and never accepts a different operator', async () => {
@@ -458,62 +784,79 @@ it('invalidates changed dependencies and never accepts a different operator', as
   const p = await plan('/resource set C01 broadcasts 2');
   await sql("UPDATE players SET broadcasts=1 WHERE id='C01'");
   expect((await confirm(p.token)).status).toBe(409);
-  expect((await command('/confirm ' + p.token, communications)).status).toBe(400);
+  expect((await command('/confirm ' + p.token, communications)).status).toBe(
+    400,
+  );
 });
 it('executes a whole elimination batch before deciding final population, replays one result', async () => {
   await forest();
   const p = await plan('/player eliminate @alive');
-  expect(await sql('SELECT COUNT(*) n FROM eliminations')).toEqual([{ n: 0 }]);
+  expect(await sql('SELECT COUNT(*) n FROM eliminations')).toEqual([{n: 0}]);
   const r = await confirm(p.token, 'same-confirm');
   expect(r.status, JSON.stringify(r.body)).toBe(200);
-  expect(await sql('SELECT COUNT(*) n FROM eliminations WHERE valid=1')).toEqual([{ n: 4 }]);
+  expect(
+    await sql('SELECT COUNT(*) n FROM eliminations WHERE valid=1'),
+  ).toEqual([{n: 4}]);
   expect(await sql('SELECT phase,finish_reason FROM matches')).toEqual([
-    { phase: 'ended', finish_reason: 'all_eliminated' },
+    {phase: 'ended', finish_reason: 'all_eliminated'},
   ]);
   expect((await confirm(p.token, 'same-confirm')).body).toEqual(r.body);
-  expect(await sql('SELECT COUNT(*) n FROM eliminations')).toEqual([{ n: 4 }]);
+  expect(await sql('SELECT COUNT(*) n FROM eliminations')).toEqual([{n: 4}]);
 });
 it('rejects a later invalid batch step and rolls back prior resources and notifications', async () => {
   await forest();
-  const r = await command('/batch run { photon grant C01; resource add C02 photons 2 }');
+  const r = await command(
+    '/batch run { photon grant C01; resource add C02 photons 2 }',
+  );
   expect(r.status).toBe(400);
-  expect(await sql('SELECT SUM(photons) n FROM players')).toEqual([{ n: 0 }]);
-  expect(await sql('SELECT COUNT(*) n FROM notice_queue')).toEqual([{ n: 0 }]);
+  expect(await sql('SELECT SUM(photons) n FROM players')).toEqual([{n: 0}]);
+  expect(await sql('SELECT COUNT(*) n FROM notice_queue')).toEqual([{n: 0}]);
 });
 it('restores arbitrary eliminated players through new codes in a paused batch without premature finish', async () => {
   await forest();
   await sql("UPDATE matches SET paused_at=?,pause_reason='review'", now);
-  await sql("INSERT INTO clock_pauses(opened,reason,actor) VALUES(?,'review','J01')", now);
+  await sql(
+    "INSERT INTO clock_pauses(opened,reason,actor) VALUES(?,'review','J01')",
+    now,
+  );
   const p = await plan(
     '/batch run { player eliminate @alive; player restore C01; player restore C02 }',
   );
   const r = await confirm(p.token);
   expect(r.status, JSON.stringify(r.body)).toBe(200);
   expect(
-    await sql('SELECT id,status FROM players JOIN flights ON player_id=id ORDER BY id'),
+    await sql(
+      'SELECT id,status FROM players JOIN flights ON player_id=id ORDER BY id',
+    ),
   ).toEqual([
-    { id: 'C01', status: 'issued' },
-    { id: 'C02', status: 'issued' },
-    { id: 'C03', status: 'eliminated' },
-    { id: 'C04', status: 'eliminated' },
+    {id: 'C01', status: 'issued'},
+    {id: 'C02', status: 'issued'},
+    {id: 'C03', status: 'eliminated'},
+    {id: 'C04', status: 'eliminated'},
   ]);
-  expect(await sql('SELECT phase FROM matches')).toEqual([{ phase: 'forest' }]);
-  expect(await sql("SELECT COUNT(*) n FROM sighting_codes WHERE status='reserved'")).toEqual([
-    { n: 2 },
-  ]);
+  expect(await sql('SELECT phase FROM matches')).toEqual([{phase: 'forest'}]);
+  expect(
+    await sql("SELECT COUNT(*) n FROM sighting_codes WHERE status='reserved'"),
+  ).toEqual([{n: 2}]);
 });
 it('parses selectors, tags, score ranges and true boolean precedence', async () => {
   await forest();
   await command('/tag add {C01,C02} "奖励"');
   await sql("UPDATE attack_controls SET wrong=2 WHERE player_id='C02'");
-  const q = await command('/selector inspect @alive[tag="奖励",scores={wrong=1..2,photons=0}]');
-  expect(JSON.parse((q.body as OperationResult).message).candidates).toEqual(['C02']);
+  const q = await command(
+    '/selector inspect @alive[tag="奖励",scores={wrong=1..2,photons=0}]',
+  );
+  expect(
+    jsonObject(parseJson((q.body as OperationResult).message)).candidates,
+  ).toEqual(['C02']);
   const p = await plan(
     '/execute as @alive if (tag @s "奖励" and not score @s wrong matches 0) run { photon grant @s }',
   );
   const r = await confirm(p.token);
   expect(r.status, JSON.stringify(r.body)).toBe(200);
-  expect(await sql('SELECT id FROM players WHERE photons=1')).toEqual([{ id: 'C02' }]);
+  expect(await sql('SELECT id FROM players WHERE photons=1')).toEqual([
+    {id: 'C02'},
+  ]);
 });
 it('binds macro target parameters once and rejects recursive definitions', async () => {
   await forest();
@@ -526,32 +869,93 @@ it('binds macro target parameters once and rejects recursive definitions', async
   expect(r.status, JSON.stringify(r.body)).toBe(200);
   const winners = await sql('SELECT id FROM players WHERE photons=1');
   expect(winners).toHaveLength(1);
-  const messages = await sql("SELECT owner FROM event_log WHERE title='赛事通知'");
-  expect(messages).toEqual([{ owner: winners[0]!.id }]);
-  expect((await command('/macro define "循环" run { macro run "循环" }')).status).toBe(400);
+  const messages = await sql(
+    "SELECT owner FROM event_log WHERE title='赛事通知'",
+  );
+  expect(messages).toEqual([{owner: winners[0]!.id}]);
+  expect(
+    (await command('/macro define "循环" run { macro run "循环" }')).status,
+  ).toBe(400);
+});
+it('restores outer target bindings after a nested macro with the same parameter name', async () => {
+  await forest();
+  expect(
+    (
+      await command(
+        '/macro define "内层" params (who:target) run { photon grant $who; tell $who "内层通知" }',
+      )
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await command(
+        '/macro define "外层" params (who:target) run { macro run "内层" (C02); photon grant $who; tell $who "外层通知" }',
+      )
+    ).status,
+  ).toBe(200);
+  const preview = await plan('/macro run "外层" (C01)');
+  expect(await sql('SELECT SUM(photons) n FROM players')).toEqual([{n: 0}]);
+  const result = await confirm(preview.token);
+  expect(result.status, JSON.stringify(result.body)).toBe(200);
+  expect(
+    await sql('SELECT id FROM players WHERE photons=1 ORDER BY id'),
+  ).toEqual([{id: 'C01'}, {id: 'C02'}]);
+  expect(
+    await sql(
+      "SELECT owner FROM event_log WHERE title='赛事通知' ORDER BY seq",
+    ),
+  ).toEqual([{owner: 'C02'}, {owner: 'C01'}]);
 });
 it('schedules persistent UTC messages and game tasks freeze while paused', async () => {
   await forest();
-  const p = await plan('/schedule create utc in 1m run { tell C01 "到点通知" }');
+  const p = await plan(
+    '/schedule create utc in 1m run { tell C01 "到点通知" }',
+  );
   expect((await confirm(p.token)).status).toBe(200);
   await evictDurableObject(stub());
   now += 60001;
   await call('/public/match');
-  expect(await sql("SELECT body FROM notice_queue WHERE title='赛事通知'")).toEqual([
-    { body: '【赛事通知】\n到点通知' },
-  ]);
+  expect(
+    await sql("SELECT body FROM notice_queue WHERE title='赛事通知'"),
+  ).toEqual([{body: '【赛事通知】\n到点通知'}]);
   await call('/public/match');
-  expect(await sql("SELECT COUNT(*) n FROM notice_queue WHERE title='赛事通知'")).toEqual([
-    { n: 1 },
-  ]);
-  await sql("UPDATE matches SET paused_at=?,pause_reason='test'", now);
-  const g = await plan('/schedule create game in 1m run { tell C02 "游戏通知" }');
+  expect(
+    await sql("SELECT COUNT(*) n FROM notice_queue WHERE title='赛事通知'"),
+  ).toEqual([{n: 1}]);
+  expect((await confirm((await plan('/clock pause')).token)).status).toBe(200);
+  const g = await plan(
+    '/schedule create game in 1m run { tell C02 "游戏通知" }',
+  );
   expect((await confirm(g.token)).status).toBe(200);
   now += 120000;
   await call('/public/match');
-  expect(await sql("SELECT COUNT(*) n FROM notice_queue WHERE body='游戏通知'")).toEqual([
-    { n: 0 },
-  ]);
+  expect(
+    await sql(
+      "SELECT COUNT(*) n FROM notice_queue WHERE body='【赛事通知】\n游戏通知'",
+    ),
+  ).toEqual([{n: 0}]);
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
+  ).toEqual(expect.arrayContaining([{status: 'pending'}]));
+  expect((await confirm((await plan('/clock resume')).token)).status).toBe(200);
+  now += 59999;
+  await call('/public/match');
+  expect(
+    await sql(
+      "SELECT COUNT(*) n FROM notice_queue WHERE body='【赛事通知】\n游戏通知'",
+    ),
+  ).toEqual([{n: 0}]);
+  now += 1;
+  await call('/public/match');
+  await call('/public/match');
+  expect(
+    await sql(
+      "SELECT target,body FROM notice_queue WHERE body='【赛事通知】\n游戏通知'",
+    ),
+  ).toEqual([{target: 'C02', body: '【赛事通知】\n游戏通知'}]);
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
+  ).toEqual([{status: 'complete'}, {status: 'complete'}]);
 });
 it('puts late strong tasks into review and respects revoked creator permissions', async () => {
   await forest();
@@ -559,35 +963,74 @@ it('puts late strong tasks into review and respects revoked creator permissions'
   expect((await confirm(p.token)).status).toBe(200);
   now += 60001;
   await call('/public/match');
-  expect(await sql("SELECT status FROM command_objects WHERE kind='schedule'")).toEqual([
-    { status: 'review' },
-  ]);
-  expect(await sql('SELECT SUM(photons) n FROM players')).toEqual([{ n: 0 }]);
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
+  ).toEqual([{status: 'review'}]);
+  expect(await sql('SELECT SUM(photons) n FROM players')).toEqual([{n: 0}]);
 });
 it('preserves freeze and original secrets when cancelling and relocking future starts', async () => {
   await sql("UPDATE flights SET status='staged',departed=?,staged=?", now, now);
-  const p = await plan(`/match arm-release at "${new Date(now + 60000).toISOString()}"`);
+  const p = await plan(
+    `/match arm-release at "${new Date(now + 60000).toISOString()}"`,
+  );
   expect((await confirm(p.token)).status).toBe(200);
   const cancel = await plan('/match cancel-release');
   expect((await confirm(cancel.token)).status).toBe(200);
   expect(await sql('SELECT phase,release_at FROM matches')).toEqual([
-    { phase: 'armed', release_at: null },
+    {phase: 'armed', release_at: null},
   ]);
   expect((await command('/parameter set singer-percent 10')).status).toBe(409);
-  const relock = await plan(`/match arm-release at "${new Date(now + 120000).toISOString()}"`);
+  const relock = await plan(
+    `/match arm-release at "${new Date(now + 120000).toISOString()}"`,
+  );
   expect((await confirm(relock.token)).status).toBe(200);
 });
-it('projects civilization secrets by duty and hides other authors templates', async () => {
+it('projects nonempty civilization secrets by duty', async () => {
+  await forest();
+  const arms = await runInDurableObject(stub(), async (_instance, state) => {
+    const engine = new Engine(new Store(state.storage), bindings);
+    engine.now = () => now;
+    const keys = await engine.keys();
+    const prepared = await engine.prepareCode();
+    return engine.db.tx(() => {
+      const previous = engine.issue('C01', 'history-code', prepared);
+      engine.db.exec(
+        "UPDATE sighting_codes SET status='active',activated_game=0,activated_utc=? WHERE id=?",
+        now - 600000,
+        previous.id,
+      );
+      retire(engine, 'C01', 'hit', 300000, now - 300000);
+      const current = engine.issue('C01', 'current-code', prepared);
+      engine.db.exec(
+        "UPDATE sighting_codes SET status='active',activated_game=300000,activated_utc=? WHERE id=?",
+        now - 300000,
+        current.id,
+      );
+      return engine.arms(current, keys);
+    });
+  });
+  const full = jsonObject(resultData(await command('/inspect C01')));
+  expect(full.arms).toEqual(arms);
+  expect(full.arms).not.toBeNull();
+  expect(full.voyages).toHaveLength(2);
+  expect(full.homeworld).toBe('000000');
   const result = await command('/inspect C01', communications);
   expect(result.status).toBe(200);
-  const detail = JSON.parse((result.body as OperationResult).message);
+  const detail = jsonObject(
+    parseJson((result.body as OperationResult).message),
+  );
   expect(detail.arms).toBeNull();
   expect(detail.voyages).toEqual([]);
+  expect(detail.homeworld).toBe(full.homeworld);
   const events = await login('J03');
-  const limited = JSON.parse(
-    ((await command('/inspect C01', events)).body as OperationResult).message,
+  const limited = jsonObject(
+    parseJson(
+      ((await command('/inspect C01', events)).body as OperationResult).message,
+    ),
   );
   expect(limited.homeworld).toBeNull();
+  expect(limited.arms).toBeNull();
+  expect(limited.voyages).toEqual([]);
   expect((await command('/codebook list', communications)).status).toBe(403);
   expect((await command('/command history', communications)).status).toBe(403);
 });
@@ -599,36 +1042,52 @@ it('allows fault queries and individual recovery actions but blocks composed bat
   );
   expect((await command('/scheduler health')).status).toBe(200);
   expect((await command('/photon grant C01')).status).toBe(503);
-  expect((await command('/batch run { clock pause; photon grant C01 }')).status).toBe(503);
+  expect(
+    (await command('/batch run { clock pause; photon grant C01 }')).status,
+  ).toBe(503);
   const p = await plan('/clock pause');
   expect((await confirm(p.token)).status).toBe(200);
-  expect(await sql('SELECT paused_at FROM matches')).toEqual([{ paused_at: now }]);
+  expect(await sql('SELECT paused_at FROM matches')).toEqual([
+    {paused_at: now},
+  ]);
   const cancel = await plan('/event cancel broken');
   expect((await confirm(cancel.token)).status).toBe(200);
-  expect(await sql("SELECT status FROM scheduled_events WHERE id='broken'")).toEqual([
-    { status: 'cancelled' },
-  ]);
+  expect(
+    await sql("SELECT status FROM scheduled_events WHERE id='broken'"),
+  ).toEqual([{status: 'cancelled'}]);
 });
 it('retains message tasks after the match ends and cancels battle tasks', async () => {
   await forest();
-  const message = await plan('/schedule create utc in 1m run { tell C01 "赛后集合" }');
+  const message = await plan(
+    '/schedule create utc in 1m run { tell C01 "赛后集合" }',
+  );
   expect((await confirm(message.token)).status).toBe(200);
-  const battle = await plan('/schedule create utc in 1m run { photon grant C01 } --late run');
+  const battle = await plan(
+    '/schedule create utc in 1m run { photon grant C01 } --late run',
+  );
   expect((await confirm(battle.token)).status).toBe(200);
   const end = await plan('/player eliminate @alive');
   expect((await confirm(end.token)).status).toBe(200);
   now += 60001;
   await call('/public/match');
-  expect(await sql("SELECT body FROM notice_queue WHERE body='【赛事通知】\n赛后集合'")).toEqual([
-    { body: '【赛事通知】\n赛后集合' },
-  ]);
   expect(
-    await sql("SELECT status FROM command_objects WHERE kind='schedule' ORDER BY created_utc,id"),
-  ).toEqual(expect.arrayContaining([{ status: 'complete' }, { status: 'cancelled' }]));
+    await sql(
+      "SELECT body FROM notice_queue WHERE body='【赛事通知】\n赛后集合'",
+    ),
+  ).toEqual([{body: '【赛事通知】\n赛后集合'}]);
+  expect(
+    await sql(
+      "SELECT status FROM command_objects WHERE kind='schedule' ORDER BY created_utc,id",
+    ),
+  ).toEqual(
+    expect.arrayContaining([{status: 'complete'}, {status: 'cancelled'}]),
+  );
 });
 it('rechecks task creator authority and stops a sequential job at its failed step', async () => {
   await forest();
-  const task = await plan('/schedule create utc in 1m run { photon grant C01 } --late run');
+  const task = await plan(
+    '/schedule create utc in 1m run { photon grant C01 } --late run',
+  );
   expect((await confirm(task.token)).status).toBe(200);
   const job = await plan(
     '/batch run { photon grant C02; resource add C03 photons 2; photon grant C04 } --mode sequential',
@@ -638,45 +1097,108 @@ it('rechecks task creator authority and stops a sequential job at its failed ste
   await call('/public/match');
   now += 2;
   await call('/public/match');
-  expect(await sql("SELECT status FROM command_objects WHERE kind='job'")).toEqual([
-    { status: 'failed' },
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='job'"),
+  ).toEqual([{status: 'failed'}]);
+  expect(await sql('SELECT id FROM players WHERE photons=1')).toEqual([
+    {id: 'C02'},
   ]);
-  expect(await sql('SELECT id FROM players WHERE photons=1')).toEqual([{ id: 'C02' }]);
   await sql("UPDATE accounts SET permissions='[\"overview\"]' WHERE id='J01'");
   now += 60000;
   await call('/public/match');
-  expect(await sql("SELECT status FROM command_objects WHERE kind='schedule'")).toEqual([
-    { status: 'failed' },
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
+  ).toEqual([{status: 'failed'}]);
+  expect(await sql("SELECT photons FROM players WHERE id='C01'")).toEqual([
+    {photons: 0},
   ]);
-  expect(await sql("SELECT photons FROM players WHERE id='C01'")).toEqual([{ photons: 0 }]);
 });
 it('preserves authorized tasks through checkpoint rollback and waits for recovery review', async () => {
   const checkpoint = await runInDurableObject(stub(), (_i, state) =>
     createCheckpoint(new Engine(new Store(state.storage), bindings)),
   );
-  const task = await plan('/schedule create utc in 1m run { tell C01 "恢复后仍按原时刻" }');
+  const task = await plan(
+    '/schedule create utc in 1m run { tell C01 "恢复后仍按原时刻" }',
+  );
   expect((await confirm(task.token)).status).toBe(200);
   await runInDurableObject(stub(), async (_i, state) => {
     const e = new Engine(new Store(state.storage), bindings);
     e.now = () => now;
-    const carry = await prepareRecovery(e, { target: checkpoint, reason: '指令任务恢复回归' });
+    const carry = await prepareRecovery(e, {
+      target: checkpoint,
+      reason: '指令任务恢复回归',
+    });
     const target = await openCheckpoint(e, checkpoint);
     restoreCheckpointTables(e, target.tables);
     await completeRecovery(e, carry);
   });
   now += 60001;
   await call('/public/match');
-  expect(await sql("SELECT body FROM notice_queue WHERE body='恢复后仍按原时刻'")).toEqual([]);
+  expect(
+    await sql(
+      "SELECT body FROM notice_queue WHERE body='【赛事通知】\n恢复后仍按原时刻'",
+    ),
+  ).toEqual([]);
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
+  ).toEqual([{status: 'pending'}]);
   await runInDurableObject(stub(), (_i, state) =>
     finishRecovery(new Engine(new Store(state.storage), bindings)),
   );
   await call('/public/match');
+  await call('/public/match');
   expect(
-    await sql("SELECT body FROM notice_queue WHERE body='【赛事通知】\n恢复后仍按原时刻'"),
-  ).toEqual([{ body: '【赛事通知】\n恢复后仍按原时刻' }]);
-  expect(await sql("SELECT status FROM command_objects WHERE kind='schedule'")).toEqual([
-    { status: 'complete' },
+    await sql(
+      "SELECT body FROM notice_queue WHERE body='【赛事通知】\n恢复后仍按原时刻'",
+    ),
+  ).toEqual([{body: '【赛事通知】\n恢复后仍按原时刻'}]);
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
+  ).toEqual([{status: 'complete'}]);
+});
+it('rolls back a failed snapshot task and clears its shared execution state', async () => {
+  await forest();
+  await command('/tag add C01 "原范围"');
+  const preview = await plan(
+    '/schedule create utc in 1m run { photon grant @alive[tag="原范围"]; resource add C02 photons 1 } --targets snapshot --late run',
+  );
+  expect((await confirm(preview.token)).status).toBe(200);
+  // This changes an execution-time resource dependency after the task is saved.
+  await sql("UPDATE players SET photons=1,tech=1 WHERE id='C02'");
+  now += 60001;
+  const execution = await runInDurableObject(
+    stub(),
+    async (_instance, state) => {
+      const engine = new Engine(new Store(state.storage), bindings);
+      engine.now = () => now;
+      const reply = await engine.call({
+        method: 'GET',
+        path: '/public/match',
+        clientKey: 'commands',
+        edgeUtc: now,
+      });
+      return {
+        status: reply.status,
+        snapshot: engine.commandSnapshot,
+        batch: engine.commandBatch,
+      };
+    },
+  );
+  expect(execution).toEqual({status: 200, snapshot: {}, batch: false});
+  expect(
+    await sql('SELECT id FROM players WHERE photons=1 ORDER BY id'),
+  ).toEqual([{id: 'C02'}]);
+  expect(await sql('SELECT COUNT(*) AS count FROM notice_queue')).toEqual([
+    {count: 0},
   ]);
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
+  ).toEqual([{status: 'failed'}]);
+  expect(
+    await sql(
+      "SELECT status,ciphertext FROM judge_command_log WHERE path='schedule due'",
+    ),
+  ).toEqual([{status: 'failed', ciphertext: null}]);
 });
 it('keeps snapshot target scope while live tasks see later eligible players', async () => {
   await forest();
@@ -696,12 +1218,12 @@ it('keeps snapshot target scope while live tasks see later eligible players', as
     await sql(
       "SELECT target FROM notice_queue WHERE body='【赛事通知】\n创建时范围' ORDER BY target",
     ),
-  ).toEqual([{ target: 'C01' }]);
+  ).toEqual([{target: 'C01'}]);
   expect(
     await sql(
       "SELECT target FROM notice_queue WHERE body='【赛事通知】\n执行时范围' ORDER BY target",
     ),
-  ).toEqual([{ target: 'C01' }, { target: 'C02' }]);
+  ).toEqual([{target: 'C01'}, {target: 'C02'}]);
 });
 it('pins the previewed macro version when a later definition is published', async () => {
   await forest();
@@ -709,5 +1231,71 @@ it('pins the previewed macro version when a later definition is published', asyn
   const p = await plan('/macro run "版本"');
   await command('/macro define "版本" run { photon grant C02 }');
   expect((await confirm(p.token)).status).toBe(200);
-  expect(await sql('SELECT id FROM players WHERE photons=1')).toEqual([{ id: 'C01' }]);
+  expect(await sql('SELECT id FROM players WHERE photons=1')).toEqual([
+    {id: 'C01'},
+  ]);
+});
+
+it('numeric macro versions reject invalid values instead of selecting the active version', async () => {
+  await forest();
+  await command('/macro define "数值边界" run { tell C01 "第一版" }');
+  await command('/macro define "数值边界" run { tell C01 "第二版" }');
+  expect(
+    jsonObject(resultData(await command('/macro inspect "数值边界"'))).version,
+  ).toBe(2);
+  expect(
+    jsonObject(resultData(await command('/macro inspect "数值边界" version 1')))
+      .version,
+  ).toBe(1);
+  for (const version of [
+    '0',
+    'NaN',
+    'Infinity',
+    '1.5',
+    '9007199254740992',
+    '""',
+  ]) {
+    for (const action of ['inspect', 'run']) {
+      const reply = await command(
+        `/macro ${action} "数值边界" version ${version}`,
+      );
+      expect(
+        reply.status,
+        `${action} version ${version}: ${JSON.stringify(reply.body)}`,
+      ).toBe(400);
+    }
+  }
+  expect(
+    await sql("SELECT COUNT(*) AS count FROM event_log WHERE title='赛事通知'"),
+  ).toEqual([{count: 0}]);
+});
+
+it('numeric selector bounds stay within safe integer limits', async () => {
+  await forest();
+  const safe = jsonObject(
+    resultData(await command('/selector inspect @alive[scores={wrong=0..0}]')),
+  );
+  expect(safe.candidates).toEqual(['C01', 'C02', 'C03', 'C04']);
+  for (const bound of ['9007199254740992', '9'.repeat(400)]) {
+    const range = await command(
+      `/selector inspect @alive[scores={wrong=0..${bound}}]`,
+    );
+    expect(range.status, JSON.stringify(range.body)).toBe(400);
+  }
+});
+
+it('numeric SQL cursors reject unsafe or overflowing integers before querying', async () => {
+  await forest();
+  for (const bound of ['9007199254740992', '9'.repeat(400)]) {
+    const cursor = await command(`/macro list --before ${bound}`);
+    expect(cursor.status, JSON.stringify(cursor.body)).toBe(400);
+  }
+});
+
+it('numeric validation keeps template preview target IDs separate from macro versions', async () => {
+  await forest();
+  const preview = await plan('/template publish "边界模板" "固定模板正文"');
+  expect((await confirm(preview.token)).status).toBe(200);
+  const reply = await command('/template preview "边界模板" for C01');
+  expect(resultData(reply)).toBe('固定模板正文');
 });

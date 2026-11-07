@@ -1,10 +1,12 @@
-import { permission, requireThat, type Actor } from '../storage/store';
-import type { Engine } from './engine';
-import { encrypt } from '../security/crypto';
-import { events } from '../projections/snapshot';
-import { results } from './life';
-import { SCHEMA_VERSION } from '../storage/schema';
-import { createCheckpoint } from './recovery';
+import {permission, requireThat, type Actor} from '../storage/store';
+import type {Engine} from './engine';
+import {encrypt} from '../security/crypto';
+import {events} from '../projections/snapshot';
+import {results} from './life';
+import {SCHEMA_VERSION} from '../storage/schema';
+import {createCheckpoint} from './recovery';
+
+/** 检查点允许捕获的固定表清单；恢复不得从输入扩展到任意表。 */
 export const BACKUP_TABLES = [
   'schema_meta',
   'matches',
@@ -50,40 +52,57 @@ export const BACKUP_TABLES = [
   'audit_identities',
   'participation_history',
 ] as const;
+/** 按裁判权限生成指定导出；秘密备份与公开战报保持不同访问范围。 */
 export async function exportData(
-  e: Engine,
+  engine: Engine,
   actor: Actor,
   kind: string,
   keys: Awaited<ReturnType<Engine['keys']>>,
-  options: { omitSessionData?: boolean } = {},
-): Promise<{ fileName: string; text: string }> {
+  options: {omitSessionData?: boolean} = {},
+): Promise<{fileName: string; text: string}> {
   permission(
     actor,
-    kind === 'backup' || kind === 'checkpoint' ? 'system' : kind === 'audit' ? 'audit' : 'results',
+    kind === 'backup' || kind === 'checkpoint'
+      ? 'system'
+      : kind === 'audit'
+        ? 'audit'
+        : 'results',
   );
-  const now = e.now(),
-    match = e.db.match();
-  if (kind === 'checkpoint')
+  const now = engine.now();
+  const match = engine.db.match();
+  if (kind === 'checkpoint') {
     return {
       fileName: `${match.id}-${now}-恢复检查点.json`,
-      text: JSON.stringify(await createCheckpoint(e), null, 2),
+      text: JSON.stringify(await createCheckpoint(engine), null, 2),
     };
+  }
   if (kind === 'backup') {
     requireThat(
-      match.phase === 'setup' || match.phase === 'ended' || match.paused_at !== null,
+      match.phase === 'setup' ||
+        match.phase === 'ended' ||
+        match.paused_at !== null,
       'PAUSE_REQUIRED',
       '请先暂停比赛。',
     );
-    const snapshot = e.db.tx(() =>
+    const snapshot = engine.db.tx(() =>
       Object.fromEntries(
         BACKUP_TABLES.filter(
-          (table) =>
+          table =>
             !options.omitSessionData ||
-            !['sessions', 'credential_deliveries', 'control_operations'].includes(table),
-        ).map((table) => [table, e.db.all(`SELECT * FROM ${table}`)]),
+            ![
+              'sessions',
+              'credential_deliveries',
+              'control_operations',
+            ].includes(table),
+        ).map(table => [
+          table,
+          engine.db.all<Record<string, SqlStorageValue>>(
+            `SELECT * FROM ${table}`,
+          ),
+        ]),
       ),
     );
-    const bookmark = await e.db.storage.getCurrentBookmark();
+    const bookmark = await engine.db.storage.getCurrentBookmark();
     const envelope = {
       format: 'darkforest-backup-v1',
       matchId: match.id,
@@ -97,43 +116,48 @@ export async function exportData(
         `backup|${match.id}|${now}`,
       ),
     };
-    e.audit(actor.id, 'export_backup', match.id, '导出加密备份', { revision: match.revision });
+    engine.audit(actor.id, 'export_backup', match.id, '导出加密备份', {
+      revision: match.revision,
+    });
     return {
       fileName: `${match.id}-${now}-加密备份.json`,
       text: JSON.stringify(envelope, null, 2),
     };
   }
-  if (kind === 'audit')
+  if (kind === 'audit') {
     return {
       fileName: '裁判操作记录.json',
       text: JSON.stringify(
-        e.db.all(
+        engine.db.all<Record<string, SqlStorageValue>>(
           'SELECT id,actor,action,target,reason,utc_ms,game_ms,detail FROM audit_logs ORDER BY seq',
         ),
         null,
         2,
       ),
     };
+  }
   requireThat(
     kind === 'report' && match.phase === 'ended',
     'RESULTS_NOT_READY',
     '比赛结束后可导出正式战报。',
   );
-  const report = results(e, keys)!;
+  const report = results(engine, keys)!;
   return {
     fileName:
-      e.db.one<{ kind: string }>('SELECT kind FROM match_identity')?.kind === 'trial'
+      engine.db.one<{kind: string}>('SELECT kind FROM match_identity')?.kind ===
+      'trial'
         ? '试玩战报.json'
         : '正式战报.json',
     text: JSON.stringify(
       {
         matchId: match.id,
         matchKind:
-          e.db.one<{ kind: string }>('SELECT kind FROM match_identity')?.kind ?? 'official',
+          engine.db.one<{kind: string}>('SELECT kind FROM match_identity')
+            ?.kind ?? 'official',
         version: report.version,
         reason: report.reason,
         champions: report.champions,
-        standings: report.standings.map((p) => ({
+        standings: report.standings.map(p => ({
           id: p.id,
           nickname: p.nickname,
           rank: p.rank,
@@ -142,12 +166,17 @@ export async function exportData(
           eliminatedAt: p.eliminatedAt,
           eliminationReason: p.eliminationReason,
         })),
-        events: events(e, actor, false, Number.MAX_SAFE_INTEGER, 100000)
-          .filter((event) => event.audience === 'public')
-          .map(({ actor: eventActor, ...event }) => ({
-            ...event,
-            ...(event.kind === 'broadcast' && eventActor ? { actor: eventActor } : {}),
-          })),
+        events: events(engine, actor, false, Number.MAX_SAFE_INTEGER, 100000)
+          .filter(event => event.audience === 'public')
+          .map(publicEvent => {
+            const {actor: eventActor, ...event} = publicEvent;
+            return {
+              ...event,
+              ...(event.kind === 'broadcast' && eventActor
+                ? {actor: eventActor}
+                : {}),
+            };
+          }),
       },
       null,
       2,

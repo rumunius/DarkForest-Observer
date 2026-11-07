@@ -1,16 +1,20 @@
-import { describe, expect, it } from 'vitest';
-import { validArms, validCode, type Arms } from '@darkforest/contracts';
-import { canAct } from '../../apps/web/src/permissions';
-import { MockSource } from '../../apps/web/src/dev/mock-source';
-import { ApiError } from '../../apps/web/src/data/http';
-import { moveBracelet } from '../../apps/web/src/bracelets';
+import {describe, expect, it} from 'vitest';
+import {validArms, validCode, type Arms} from '@darkforest/contracts';
+import {canAct} from '../../apps/web/src/permissions';
+import {MockSource} from '../../apps/web/src/dev/mock_source';
+import {ApiError} from '../../apps/web/src/data/http';
+import {moveBracelet} from '../../apps/web/src/bracelets';
 
 describe('bracelet overflow', () => {
-  it.each([0, 1])('spills into the other arm when arm %i is full', (target) => {
-    const arms: Arms = target === 0 ? [['BK', 'WH', 'GY'], []] : [[], ['BK', 'WH', 'GY']];
+  it.each([0, 1])('spills into the other arm when arm %i is full', target => {
+    const arms: Arms =
+      target === 0 ? [['BK', 'WH', 'GY'], []] : [[], ['BK', 'WH', 'GY']];
     const result = moveBracelet(arms, 'YL', target);
     expect(result).toEqual({
-      arms: target === 0 ? [['BK', 'WH', 'GY'], ['YL']] : [['YL'], ['BK', 'WH', 'GY']],
+      arms:
+        target === 0
+          ? [['BK', 'WH', 'GY'], ['YL']]
+          : [['YL'], ['BK', 'WH', 'GY']],
       target: target === 0 ? 1 : 0,
       overflow: true,
     });
@@ -18,7 +22,7 @@ describe('bracelet overflow', () => {
   });
   it('rejects a fifth bracelet without losing the existing draft', () => {
     const arms: Arms = [['BK', 'WH', 'GY'], ['YL']];
-    expect(moveBracelet(arms, 'OR', 0)).toEqual({ error: '最多选择4条手环。' });
+    expect(moveBracelet(arms, 'OR', 0)).toEqual({error: '最多选择4条手环。'});
     expect(arms).toEqual([['BK', 'WH', 'GY'], ['YL']]);
   });
   it('moves across arms atomically and removes a bracelet to the palette', () => {
@@ -50,6 +54,65 @@ describe('bracelet overflow', () => {
 });
 
 describe('frontend input and authorized disclosure', () => {
+  it('rejects malformed preview arm inputs before accepting or recording an attack', async () => {
+    const source = new MockSource();
+    const before = await source.read('/player');
+    for (const payload of [
+      {arm_a: 'BK', arm_b: ['WH']},
+      {arm_a: null, arm_b: ['WH']},
+      {arm_a: ['BK', 'invalid'], arm_b: ['WH']},
+      {arm_a: ['BK', 'WH'], arm_b: {length: 1}},
+    ]) {
+      await expect(
+        source.submit({
+          path: '/action/sighting',
+          requestId: 'invalid-arms',
+          payload,
+        }),
+      ).rejects.toMatchObject({status: 422, message: '手环颜色组合不完整。'});
+    }
+    const after = await source.read('/player');
+    expect(after.match!.revision).toBe(before.match!.revision);
+    expect(after.player).toEqual(before.player);
+    expect((await source.result('invalid-arms')).status).toBe('pending');
+  });
+
+  it('validates every preview elimination row before changing any civilization', async () => {
+    const source = new MockSource();
+    source.reset('chief', 'verification');
+    const before = await source.read('/judge');
+    const living = before.civilizations.find(
+      civilization => civilization.flight === 'active',
+    )!;
+    await expect(
+      source.submit({
+        path: '/judge/hunt-finalize',
+        requestId: 'invalid-eliminations',
+        payload: {
+          eliminations: [{id: living.id, reason: 'outside_at_cutoff'}, null],
+        },
+      }),
+    ).rejects.toBeInstanceOf(ApiError);
+    const after = await source.read('/judge');
+    expect(after.civilizations).toEqual(before.civilizations);
+    expect(after.match!.verification).toBe(true);
+    expect(after.match!.revision).toBe(before.match!.revision);
+  });
+
+  it('rejects malformed preview site settings without replacing the valid configuration', async () => {
+    const source = new MockSource();
+    source.reset('chief', 'registration');
+    const before = await source.read('/judge');
+    await expect(
+      source.submit({
+        path: '/judge/site-config',
+        requestId: 'invalid-site',
+        payload: {site: {...before.site, colors: {BK: 42}}},
+      }),
+    ).rejects.toBeInstanceOf(ApiError);
+    expect((await source.read('/judge')).site).toEqual(before.site);
+  });
+
   it.each<Arms>([
     [['BK', 'OR'], ['WH']],
     [
@@ -61,6 +124,30 @@ describe('frontend input and authorized disclosure', () => {
     expect(validArms([a, b])).toBe(true);
     expect(validArms([b, [...a].reverse()])).toBe(true);
   });
+  it('rejects malformed unknown bracelet groups without throwing', () => {
+    const sparseArm = ['BK', 'WH'];
+    Reflect.deleteProperty(sparseArm, 1);
+    const malformed: unknown[] = [
+      null,
+      undefined,
+      false,
+      7,
+      'BK',
+      {left: ['BK'], right: ['WH', 'GY']},
+      [],
+      [['BK']],
+      [['BK'], ['WH', 'GY'], []],
+      [['BK'], null],
+      ['BK', ['WH', 'GY']],
+      [['BK'], ['WH', 7]],
+      [['BK'], ['WH', ['GY']]],
+      [sparseArm, ['GY']],
+    ];
+    for (const value of malformed) {
+      expect(validArms(value)).toBe(false);
+    }
+  });
+
   it('rejects duplicate colors and incomplete drafts without submitting', () => {
     expect(validArms([['BK', 'WH'], ['BK']])).toBe(false);
     expect(validArms([['BK'], ['WH']])).toBe(false);
@@ -80,9 +167,11 @@ describe('frontend input and authorized disclosure', () => {
     const data = await new MockSource().read('/player');
     expect(data.civilizations).toEqual([]);
     expect(data.judge).toBeNull();
-    expect(data.events.filter((e) => e.kind === 'photon').every((e) => e.actor === undefined)).toBe(
-      true,
-    );
+    expect(
+      data.events
+        .filter(e => e.kind === 'photon')
+        .every(e => e.actor === undefined),
+    ).toBe(true);
   });
   it('removes combat inputs while returning even with photon inventory', async () => {
     const source = new MockSource();
@@ -94,7 +183,7 @@ describe('frontend input and authorized disclosure', () => {
     await expect(
       source.submit({
         path: '/action/photon',
-        payload: { code: '001234' },
+        payload: {code: '001234'},
         requestId: 'forbidden',
       }),
     ).rejects.toBeInstanceOf(ApiError);
@@ -116,18 +205,28 @@ describe('frontend input and authorized disclosure', () => {
     source.reset('player', 'no-champion');
     const ended = await source.read('/results');
     expect(ended.results?.champions).toEqual([]);
-    expect(ended.results?.standings.every((c) => c.flight === 'eliminated')).toBe(true);
+    expect(ended.results?.standings.every(c => c.flight === 'eliminated')).toBe(
+      true,
+    );
   });
   it('does not charge a duplicate request twice', async () => {
     const source = new MockSource();
-    const op = { path: '/action/broadcast', payload: { code: '000019' }, requestId: 'stable-id' };
+    const op = {
+      path: '/action/broadcast',
+      payload: {code: '000019'},
+      requestId: 'stable-id',
+    };
     expect(await source.submit(op)).toEqual(await source.submit(op));
     expect((await source.read('/player')).player?.broadcasts).toBe(1);
   });
   it('recovers an uncertain operation using its original request identifier', async () => {
     const source = new MockSource();
     source.setFault('unknown');
-    const op = { path: '/action/broadcast', payload: { code: '000029' }, requestId: 'unknown-id' };
+    const op = {
+      path: '/action/broadcast',
+      payload: {code: '000029'},
+      requestId: 'unknown-id',
+    };
     expect((await source.submit(op)).status).toBe('pending');
     expect((await source.result(op.requestId)).status).toBe('complete');
     expect((await source.result(op.requestId)).status).toBe('complete');
@@ -138,7 +237,7 @@ describe('frontend input and authorized disclosure', () => {
     source.reset('player', 'registration');
     await source.submit({
       path: '/action/homeworld-submit',
-      payload: { code: '000001' },
+      payload: {code: '000001'},
       requestId: 'homeworld',
     });
     const data = await source.read('/player/homeworld');

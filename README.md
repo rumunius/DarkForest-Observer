@@ -6,6 +6,8 @@
 
 云端开站、领取账号和日常办赛请看[办赛快速上手](docs/办赛快速上手.md)。
 
+代码规范、工具与人工评审分工见[代码规范](docs/代码规范.md)，当前迁移范围和剩余审计见[规范迁移记录](docs/规范迁移记录_2026-11-06.md)。
+
 ## 本地开发
 
 使用 Node.js 24 与 npm 11 或以上版本。依赖版本由根目录 `package-lock.json` 锁定。
@@ -49,9 +51,10 @@ npm run dev:preview
 | `npm run admin:wizard`         | 中文安装、旧场接入、检查点恢复与所有者救援向导 |
 | `npm run dev:preview`          | 只启动前端并打开独立模拟数据预览               |
 | `npm run check`                | 格式、ESLint、类型与构建检查，不部署云端       |
+| `npm run lint:audit`           | 输出全库类型感知报告；任何问题均返回失败       |
 | `npm run build`                | 构建前端，并 dry-run 打包 preview Worker       |
 | `npm run cf:types`             | 根据 Wrangler 配置重新生成绑定类型             |
-| `npm test`                     | 执行单元测试及真实Workers集成测试              |
+| `npm test`                     | 执行规范工具、单元及真实Workers集成测试        |
 | `npm run test:workers`         | 执行SQLite、RPC、Alarm及业务集成测试           |
 | `npm run test:acceptance`      | 对尚未开始的本地场次执行一次HTTP首航验收       |
 | `npm run cf:login`             | 手动登录 Cloudflare，需要浏览器授权            |
