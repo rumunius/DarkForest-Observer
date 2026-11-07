@@ -19,6 +19,7 @@ import {
 } from '../../apps/match-worker/src/security/crypto';
 import {
   eliminate,
+  archiveReport,
   finish,
   retire,
 } from '../../apps/match-worker/src/services/life';
@@ -416,6 +417,92 @@ it('keeps report versions immutable while corrections recalculate rankings', asy
     ).status,
   ).toBe(409);
 });
+it('counts distinct valid sighting targets for personal scores and tied champions', async () => {
+  const players = await Promise.all([login('C01'), login('C02')]);
+  const head = await login('J01');
+  await runInDurableObject(stub(), async (_instance, state) => {
+    const engine = new Engine(new Store(state.storage), bindings);
+    await engine.keys();
+    engine.db.exec("UPDATE flights SET status='active'");
+    engine.db.exec(
+      "UPDATE matches SET phase='forest',started_at=?,start_settled=?",
+      Date.now(),
+      Date.now(),
+    );
+    for (const [id, actor, target, classification, valid] of [
+      ['first-voyage', 'C01', 'C02', 'hit', 1],
+      ['second-voyage', 'C01', 'C02', 'hit', 1],
+      ['other-player', 'C02', 'C01', 'hit', 1],
+      ['withdrawn-hit', 'C01', 'C02', 'hit', 0],
+      ['failed-sighting', 'C01', 'C02', 'reserved_code', 1],
+    ] as const) {
+      engine.db.exec(
+        'INSERT INTO attacks(id,actor,target,request_id,classification,valid,edge_utc,committed_utc,game_ms) VALUES(?,?,?,?,?,?,1,1,1)',
+        id,
+        actor,
+        target,
+        id,
+        classification,
+        valid,
+      );
+    }
+  });
+  for (const player of players) {
+    expect(
+      jsonObject((await call('/player/self', undefined, player)).body).kills,
+    ).toBe(1);
+  }
+  const selected = await action('/judge/command/execute', head, {
+    command: '/selector inspect @alive[scores={kills=1}]',
+  });
+  expect(selected.status, JSON.stringify(selected.body)).toBe(200);
+  expect(
+    jsonObject(parseJson(jsonString(jsonObject(selected.body).message)))
+      .candidates,
+  ).toEqual(['C01', 'C02']);
+  await runInDurableObject(stub(), async (_instance, state) => {
+    const engine = new Engine(new Store(state.storage), bindings);
+    await engine.keys();
+    finish(engine, 'regulation', 7200000, Date.now(), 'distinct-targets');
+  });
+  const report = jsonObject(
+    (await call('/results/report?version=1', undefined, players[0])).body,
+  );
+  expect(report.champions).toEqual(['C01', 'C02']);
+  expect(
+    jsonObjects(report.standings).map(({id, kills, rank, tied}) => ({
+      id,
+      kills,
+      rank,
+      tied,
+    })),
+  ).toEqual([
+    {id: 'C01', kills: 1, rank: 1, tied: true},
+    {id: 'C02', kills: 1, rank: 1, tied: true},
+  ]);
+  await runInDurableObject(stub(), async (_instance, state) => {
+    const engine = new Engine(new Store(state.storage), bindings);
+    await engine.keys();
+    engine.db.exec(
+      "UPDATE attacks SET valid=0 WHERE id IN ('first-voyage','second-voyage')",
+    );
+    archiveReport(engine, '撤销两次有效击毁');
+  });
+  expect(
+    jsonObject((await call('/player/self', undefined, players[0])).body).kills,
+  ).toBe(0);
+  const corrected = jsonObject(
+    (await call('/results/report?version=2', undefined, players[0])).body,
+  );
+  expect(corrected.champions).toEqual(['C02']);
+  expect(
+    jsonObject(jsonObjects(corrected.standings).find(row => row.id === 'C01'))
+      .kills,
+  ).toBe(0);
+  expect(
+    (await call('/results/report?version=1', undefined, players[0])).body,
+  ).toEqual(report);
+});
 it('recalculates champions and elimination rankings without changing earlier reports', async () => {
   const head = await login('J01');
   await runInDurableObject(stub(), async (_i, state) => {
@@ -627,6 +714,11 @@ it('rolls back every recovery merge when preserved code evidence conflicts with 
 });
 
 it('restores checkpoint data, preserves every issued code, invalidates late requests and sessions, and reauthenticates evidence', async () => {
+  const oldPlayer = await login('C01');
+  const oldHead = await login('J01');
+  for (const session of [oldPlayer, oldHead]) {
+    expect((await call('/auth/session', undefined, session)).status).toBe(200);
+  }
   await runInDurableObject(stub(), async (_i, state) => {
     const e = new Engine(new Store(state.storage), bindings);
     await e.keys();
@@ -637,6 +729,8 @@ it('restores checkpoint data, preserves every issued code, invalidates late requ
     });
     const checkpoint = await createCheckpoint(e);
     const target = await openCheckpoint(e, checkpoint);
+    expect(target.tables.sessions).toHaveLength(2);
+    expect(target.tables.sessions!.every(row => row.revoked === 0)).toBe(true);
     e.db.tx(() => {
       retire(e, 'C01', 'hit', 0, Date.now());
       e.issue('C01', 'after', prepared);
@@ -677,6 +771,9 @@ it('restores checkpoint data, preserves every issued code, invalidates late requ
         'SELECT * FROM sessions WHERE revoked=0',
       ),
     ).toHaveLength(0);
+    expect(e.db.all<{revoked: number}>('SELECT revoked FROM sessions')).toEqual(
+      [{revoked: 1}, {revoked: 1}],
+    );
     expect((await completeRecovery(e, carry)).issuedCount).toBe(2);
     const keys = await e.keys();
     const plaintext = await decrypt(
@@ -692,4 +789,13 @@ it('restores checkpoint data, preserves every issued code, invalidates late requ
     ).length;
     expect(reportCount).toBe(0);
   });
+  for (const session of [oldPlayer, oldHead]) {
+    const denied = await call('/auth/session', undefined, session);
+    expect(denied.status).toBe(401);
+    expect(jsonObject(denied.body).code).toBe('UNAUTHENTICATED');
+  }
+  for (const id of ['C01', 'J01']) {
+    const fresh = await login(id);
+    expect((await call('/auth/session', undefined, fresh)).status).toBe(200);
+  }
 });

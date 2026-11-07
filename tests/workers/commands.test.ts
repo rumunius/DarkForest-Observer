@@ -14,6 +14,7 @@ import {Engine} from '../../apps/match-worker/src/services/engine';
 import {Store} from '../../apps/match-worker/src/storage/store';
 import {digest, decrypt} from '../../apps/match-worker/src/security/crypto';
 import type {OperationResult} from '@darkforest/contracts';
+import {retire} from '../../apps/match-worker/src/services/life';
 import {
   createCheckpoint,
   openCheckpoint,
@@ -921,7 +922,7 @@ it('schedules persistent UTC messages and game tasks freeze while paused', async
   expect(
     await sql("SELECT COUNT(*) n FROM notice_queue WHERE title='赛事通知'"),
   ).toEqual([{n: 1}]);
-  await sql("UPDATE matches SET paused_at=?,pause_reason='test'", now);
+  expect((await confirm((await plan('/clock pause')).token)).status).toBe(200);
   const g = await plan(
     '/schedule create game in 1m run { tell C02 "游戏通知" }',
   );
@@ -929,8 +930,32 @@ it('schedules persistent UTC messages and game tasks freeze while paused', async
   now += 120000;
   await call('/public/match');
   expect(
-    await sql("SELECT COUNT(*) n FROM notice_queue WHERE body='游戏通知'"),
+    await sql(
+      "SELECT COUNT(*) n FROM notice_queue WHERE body='【赛事通知】\n游戏通知'",
+    ),
   ).toEqual([{n: 0}]);
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
+  ).toEqual(expect.arrayContaining([{status: 'pending'}]));
+  expect((await confirm((await plan('/clock resume')).token)).status).toBe(200);
+  now += 59999;
+  await call('/public/match');
+  expect(
+    await sql(
+      "SELECT COUNT(*) n FROM notice_queue WHERE body='【赛事通知】\n游戏通知'",
+    ),
+  ).toEqual([{n: 0}]);
+  now += 1;
+  await call('/public/match');
+  await call('/public/match');
+  expect(
+    await sql(
+      "SELECT target,body FROM notice_queue WHERE body='【赛事通知】\n游戏通知'",
+    ),
+  ).toEqual([{target: 'C02', body: '【赛事通知】\n游戏通知'}]);
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
+  ).toEqual([{status: 'complete'}, {status: 'complete'}]);
 });
 it('puts late strong tasks into review and respects revoked creator permissions', async () => {
   await forest();
@@ -960,7 +985,35 @@ it('preserves freeze and original secrets when cancelling and relocking future s
   );
   expect((await confirm(relock.token)).status).toBe(200);
 });
-it('projects civilization secrets by duty and hides other authors templates', async () => {
+it('projects nonempty civilization secrets by duty', async () => {
+  await forest();
+  const arms = await runInDurableObject(stub(), async (_instance, state) => {
+    const engine = new Engine(new Store(state.storage), bindings);
+    engine.now = () => now;
+    const keys = await engine.keys();
+    const prepared = await engine.prepareCode();
+    return engine.db.tx(() => {
+      const previous = engine.issue('C01', 'history-code', prepared);
+      engine.db.exec(
+        "UPDATE sighting_codes SET status='active',activated_game=0,activated_utc=? WHERE id=?",
+        now - 600000,
+        previous.id,
+      );
+      retire(engine, 'C01', 'hit', 300000, now - 300000);
+      const current = engine.issue('C01', 'current-code', prepared);
+      engine.db.exec(
+        "UPDATE sighting_codes SET status='active',activated_game=300000,activated_utc=? WHERE id=?",
+        now - 300000,
+        current.id,
+      );
+      return engine.arms(current, keys);
+    });
+  });
+  const full = jsonObject(resultData(await command('/inspect C01')));
+  expect(full.arms).toEqual(arms);
+  expect(full.arms).not.toBeNull();
+  expect(full.voyages).toHaveLength(2);
+  expect(full.homeworld).toBe('000000');
   const result = await command('/inspect C01', communications);
   expect(result.status).toBe(200);
   const detail = jsonObject(
@@ -968,6 +1021,7 @@ it('projects civilization secrets by duty and hides other authors templates', as
   );
   expect(detail.arms).toBeNull();
   expect(detail.voyages).toEqual([]);
+  expect(detail.homeworld).toBe(full.homeworld);
   const events = await login('J03');
   const limited = jsonObject(
     parseJson(
@@ -975,6 +1029,8 @@ it('projects civilization secrets by duty and hides other authors templates', as
     ),
   );
   expect(limited.homeworld).toBeNull();
+  expect(limited.arms).toBeNull();
+  expect(limited.voyages).toEqual([]);
   expect((await command('/codebook list', communications)).status).toBe(403);
   expect((await command('/command history', communications)).status).toBe(403);
 });
@@ -1079,11 +1135,17 @@ it('preserves authorized tasks through checkpoint rollback and waits for recover
   now += 60001;
   await call('/public/match');
   expect(
-    await sql("SELECT body FROM notice_queue WHERE body='恢复后仍按原时刻'"),
+    await sql(
+      "SELECT body FROM notice_queue WHERE body='【赛事通知】\n恢复后仍按原时刻'",
+    ),
   ).toEqual([]);
+  expect(
+    await sql("SELECT status FROM command_objects WHERE kind='schedule'"),
+  ).toEqual([{status: 'pending'}]);
   await runInDurableObject(stub(), (_i, state) =>
     finishRecovery(new Engine(new Store(state.storage), bindings)),
   );
+  await call('/public/match');
   await call('/public/match');
   expect(
     await sql(

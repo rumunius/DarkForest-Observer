@@ -6,7 +6,7 @@ import {
   jsonString,
   platformSession,
 } from '../helpers/json';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {env} from 'cloudflare:workers';
 import {reset, runInDurableObject} from 'cloudflare:test';
 import type {BackendEnv, RpcInput} from '../../apps/match-worker/src/rpc/types';
@@ -233,6 +233,208 @@ beforeEach(async () => {
   owner = await activate(jsonString(installed.invitation));
 });
 describe('跨比赛平台与身份边界（可控时钟，无实时赛程等待）', () => {
+  it('长期账号通过真实HTTP与平台授权完成首航、目击重放、重生和裁判暂停', async () => {
+    let now = Date.now() + 60000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const {id, p1, p2} = await running();
+      const request = async (
+        path: string,
+        body?: unknown,
+        actor = owner,
+        csrf = actor.session.csrfToken,
+      ) => {
+        const audience =
+          actor.session.account.kind === 'player' ? 'player' : 'staff';
+        const response = await gateway(
+          new Request(`http://game.test/api/matches/${id}${path}`, {
+            method: body === undefined ? 'GET' : 'POST',
+            headers: {
+              Origin: 'http://game.test',
+              'Content-Type': 'application/json',
+              'X-Darkforest-Audience': audience,
+              'X-CSRF-Token': csrf,
+              Cookie: `df_${audience}_local=${actor.token}`,
+            },
+            ...(body === undefined ? {} : {body: JSON.stringify(body)}),
+          }),
+          {
+            APP_ENV: 'local',
+            MATCH_ID: 'integration',
+            TRUSTED_ORIGINS: 'http://game.test',
+            MATCH_DO: bindings.MATCH_DO,
+            PLATFORM_DO: bindings.PLATFORM_DO!,
+          },
+        );
+        return {
+          status: response.status,
+          body: parseJson(await response.text()),
+        };
+      };
+      const write = async (
+        path: string,
+        actor: Login,
+        payload: Record<string, unknown> = {},
+        suppliedId?: string,
+      ) => {
+        const reply = await request(
+          path,
+          {
+            ...payload,
+            request_id: suppliedId ?? crypto.randomUUID(),
+          },
+          actor,
+        );
+        expect(reply.status, `${path}: ${JSON.stringify(reply.body)}`).toBe(
+          200,
+        );
+        return jsonObject(reply.body);
+      };
+      const manage = async (
+        path: string,
+        payload: Record<string, unknown> = {},
+      ) => {
+        const current = await request('/snapshot?route=/judge');
+        expect(current.status, JSON.stringify(current.body)).toBe(200);
+        const revision = jsonObject(jsonObject(current.body).match).revision;
+        const preview = jsonObject(
+          (
+            await write('/judge/manage/preview', owner, {
+              path,
+              ...payload,
+              reason: '正式入口回归',
+              expected_revision: revision,
+            })
+          ).preview,
+        );
+        return write(path, owner, {
+          ...payload,
+          reason: '正式入口回归',
+          expected_revision: preview.revision,
+          preview_token: preview.token,
+        });
+      };
+      const denied = await request(
+        '/player/nickname',
+        {
+          nickname: '不应写入',
+          request_id: 'bad-csrf',
+        },
+        p1,
+        'incorrect-csrf',
+      );
+      expect(denied.status).toBe(403);
+      expect(jsonObject(denied.body).code).toBe('CSRF_REJECTED');
+      for (const [index, actor] of [p1, p2].entries()) {
+        const localId = `C0${index + 1}`;
+        const code = `00000${index + 1}`;
+        await write('/player/nickname', actor, {
+          nickname: `入口文明${index + 1}`,
+        });
+        await write('/action/homeworld-submit', actor, {code});
+        await write(`/judge/homeworld/${localId}/verify`, owner, {
+          expected_version: 1,
+          expected_code: code,
+          decision: 'approve',
+        });
+        await write('/action/preflight-depart', actor);
+        await write('/action/preflight-stage', actor);
+      }
+      await manage('/judge/roster', {members: ['C01', 'C02']});
+      await manage('/judge/arm-code-release', {
+        time: now + 2000,
+        expected_roster: ['C01', 'C02'],
+      });
+      now += 2000;
+      for (const actor of [p1, p2]) {
+        await write('/action/preflight-issue-code', actor);
+        await write('/action/preflight-ready', actor);
+      }
+      await manage('/judge/arm-start', {
+        time: now + 2000,
+        expected_roster: ['C01', 'C02'],
+      });
+      now += 2000;
+      const self = await request('/player/self', undefined, p2);
+      expect(self.status, JSON.stringify(self.body)).toBe(200);
+      expect(self.body).toMatchObject({flight: 'active', flightNumber: 1});
+      const arms = jsonArray(jsonObject(self.body).arms);
+      const payload = {arm_a: arms[0], arm_b: arms[1]};
+      const hit = await write('/action/sighting', p1, payload, 'platform-hit');
+      expect(jsonObject(hit.outcome).target).toBe('C02');
+      expect(
+        await write('/action/sighting', p1, payload, 'platform-hit'),
+      ).toEqual(hit);
+      const operation = await request(
+        '/operations/platform-hit',
+        undefined,
+        p1,
+      );
+      expect(operation.status).toBe(200);
+      expect(operation.body).toEqual(hit);
+      expect((await request('/player/self', undefined, p2)).body).toMatchObject(
+        {
+          flight: 'returning',
+          respawnDeadline: 900000,
+        },
+      );
+      now += 5000;
+      await write('/action/return-confirm', p2);
+      await write('/action/issue-code', p2);
+      await write('/action/launch', p2);
+      const respawned = await request('/player/self', undefined, p2);
+      expect(respawned.body).toMatchObject({
+        flight: 'active',
+        flightNumber: 2,
+        respawnDeadline: null,
+      });
+      expect(jsonObject(respawned.body).arms).not.toEqual(arms);
+      const intelligence = await request('/player/intel', undefined, p1);
+      expect(intelligence.status).toBe(200);
+      expect(jsonObjects(intelligence.body)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            civilization: 'C02',
+            code: '000002',
+            source: '击毁飞船',
+          }),
+        ]),
+      );
+      await manage('/judge/pause');
+      expect(
+        jsonObject((await request('/snapshot?route=/judge')).body).match,
+      ).toMatchObject({
+        paused: true,
+        gameMs: 5000,
+      });
+      const matchState = jsonObject(
+        jsonObject((await request('/snapshot?route=/judge')).body).match,
+      );
+      const forbidden = await request(
+        '/judge/manage/preview',
+        {
+          path: '/judge/resume',
+          reason: '越权',
+          expected_revision: matchState.revision,
+          request_id: 'forbidden-management',
+        },
+        p1,
+      );
+      expect(forbidden.status).toBe(403);
+      await runInDurableObject(
+        bindings.MATCH_DO.getByName(`match:${id}`),
+        (_instance, state) => {
+          expect(
+            new Store(state.storage).all<{count: number}>(
+              "SELECT COUNT(*) AS count FROM attacks WHERE actor='C01' AND classification='hit'",
+            ),
+          ).toEqual([{count: 1}]);
+        },
+      );
+    } finally {
+      clock.mockRestore();
+    }
+  });
   it('草稿可移除未接受、已接受及已绑定成员，释放中间编号且不串用身份数据', async () => {
     const id = await match('移除成员草稿');
     const pending = await account('尚未接受', 'player');

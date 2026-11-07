@@ -1657,7 +1657,36 @@ describe('real Workers SQLite and RPC', () => {
     ).toBe(200);
   });
   it('freezes game deadlines during a pause while UTC penalties continue', async () => {
-    const {head, players, startUtc} = await start();
+    const {head, players, arms, startUtc} = await start();
+    expect(
+      (
+        await action('/action/sighting', players[0]!, {
+          arm_a: arms[1]![0],
+          arm_b: arms[1]![1],
+        })
+      ).status,
+    ).toBe(200);
+    const lockedUntil = startUtc + 300000;
+    await inEngine(engine =>
+      engine.db.exec(
+        "UPDATE attack_controls SET wrong=1,locked_until=? WHERE player_id='C03'",
+        lockedUntil,
+      ),
+    );
+    expect(
+      (await call('/player/self', undefined, players[1])).body,
+    ).toMatchObject({
+      flight: 'returning',
+      respawnDeadline: 900000,
+    });
+    expect(
+      (
+        await action('/action/sighting', players[2]!, {
+          arm_a: arms[2]![0],
+          arm_b: arms[2]![1],
+        })
+      ).status,
+    ).toBe(409);
     testUtc = startUtc + 10000;
     expect((await manage('/judge/pause', head)).status).toBe(200);
     testUtc += 600000;
@@ -1668,11 +1697,43 @@ describe('real Workers SQLite and RPC', () => {
     expect(
       (await action('/action/broadcast', players[0]!, {code: '123456'})).status,
     ).toBe(409);
+    expect(
+      (await call('/player/self', undefined, players[1])).body,
+    ).toMatchObject({
+      flight: 'returning',
+      respawnDeadline: 900000,
+    });
+    expect(
+      (await call('/player/self', undefined, players[2])).body,
+    ).toMatchObject({
+      attackLockedUntil: lockedUntil,
+    });
     expect((await manage('/judge/resume', head)).status).toBe(200);
+    expect(
+      (
+        await action('/action/sighting', players[2]!, {
+          arm_a: arms[2]![0],
+          arm_b: arms[2]![1],
+        })
+      ).status,
+    ).toBe(200);
     testUtc += 1000;
     expect((await call('/public/match')).body).toMatchObject({
       gameMs: 11000,
       paused: false,
+    });
+    testUtc = startUtc + 600000 + 899999;
+    expect(
+      (await call('/player/self', undefined, players[1])).body,
+    ).toMatchObject({
+      flight: 'returning',
+      respawnDeadline: 900000,
+    });
+    testUtc += 1;
+    expect(
+      (await call('/player/self', undefined, players[1])).body,
+    ).toMatchObject({
+      flight: 'eliminated',
     });
   });
   it('finishes at 120 effective minutes after the 98-minute review pause and preserves tied champions', async () => {
